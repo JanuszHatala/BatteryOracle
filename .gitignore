@@ -1,0 +1,48 @@
+# Environment files & credentials
+.env
+*.env
+*.env.*
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.class
+*.so
+
+# Local SQLite databases & volume data
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+*.sqlite3
+data/
+
+# Android bugreports and archives
+*.zip
+*.tar
+*.gz
+*.txt
+!requirements.txt
+*.log
+bugreport/
+bugreport.zip
+bugreport-*.txt
+
+# Project trash / scratch files
+_trash/
+scratch/
+test_*.txt
+inventory_test.txt
+profile_ai.txt
+full_device_inventory.txt
+batterystats_extracted.txt
+summary_input.txt
+
+# IDE / Editor configuration
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker local overrides
+.dockerignore

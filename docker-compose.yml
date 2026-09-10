@@ -1,0 +1,17 @@
+services:
+  battery-oracle:
+    build: .
+    container_name: battery-oracle
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      - BATTERY_ORACLE_DB_PATH=/app/data/battery_oracle.db
+      - GEMINI_API_KEY=
+      - OPENROUTER_API_KEY=
+      - OPENAI_API_KEY=
+    volumes:
+      - battery_oracle_data:/app/data
+
+volumes:
+  battery_oracle_data:
