@@ -1,0 +1,2761 @@
+import os
+import re
+import zipfile
+import tempfile
+import time
+from datetime import datetime, timedelta
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from dotenv import load_dotenv
+
+import importlib
+import db
+import parser
+import llm_manager
+import web_search
+
+importlib.reload(db)
+importlib.reload(parser)
+importlib.reload(llm_manager)
+importlib.reload(web_search)
+
+
+# Load environment variables
+load_dotenv()
+
+st.set_page_config(
+    page_title="Battery Oracle",
+    page_icon="🔋",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Hide top-right 'Deploy' button and Streamlit decoration
+st.markdown("""
+<style>
+.stAppDeployButton,
+div[data-testid="stDeployButton"],
+[data-testid="stToolbarActions"],
+[data-testid="stHeader"] button[title="Deploy this app"] {
+    display: none !important;
+}
+
+/* Prevent browser password managers & autofill extensions from displaying hover badges/overlays on selectboxes */
+[data-baseweb="select"] input {
+    autocomplete: off !important;
+}
+div[data-testid="stSelectbox"] input {
+    background-image: none !important;
+}
+
+/* Compact sidebar uploader padding */
+div[data-testid="stFileUploader"] section {
+    padding: 0.5rem 0.5rem !important;
+}
+div[data-testid="stFileUploader"] section > input + div {
+    padding: 0.3rem !important;
+}
+
+/* Allow metric values to wrap gracefully and scale font cleanly without truncation */
+div[data-testid="stMetricValue"] > div {
+    font-size: 1.15rem !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+    line-height: 1.35 !important;
+}
+
+div[data-testid="stMetricLabel"] > div {
+    white-space: normal !important;
+    word-break: break-word !important;
+    font-size: 0.82rem !important;
+}
+
+/* Sleek compact disclosure toggle on top-left of chat messages */
+div[data-testid="column"]:has(div[class*="st-key-tog_"]) {
+    min-width: 26px !important;
+    max-width: 28px !important;
+    flex: 0 0 26px !important;
+    width: 26px !important;
+}
+div[class*="st-key-tog_"] button {
+    padding: 0px !important;
+    min-height: 20px !important;
+    height: 20px !important;
+    width: 20px !important;
+    min-width: 20px !important;
+    font-size: 11px !important;
+    line-height: 1 !important;
+    border: none !important;
+    background: transparent !important;
+    color: #94a3b8 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+div[class*="st-key-tog_"] button:hover {
+    color: #38bdf8 !important;
+    background: rgba(56, 189, 248, 0.12) !important;
+    border-radius: 4px !important;
+}
+
+/* Sleek compact delete button on top-right of chat messages */
+div[data-testid="column"]:has(div[class*="st-key-delmsg_"]) {
+    min-width: 26px !important;
+    max-width: 28px !important;
+    flex: 0 0 26px !important;
+    width: 26px !important;
+}
+div[class*="st-key-delmsg_"] button {
+    padding: 0px !important;
+    min-height: 20px !important;
+    height: 20px !important;
+    width: 20px !important;
+    min-width: 20px !important;
+    font-size: 11px !important;
+    line-height: 1 !important;
+    border: none !important;
+    background: transparent !important;
+    color: #94a3b8 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    opacity: 0.6 !important;
+    transition: opacity 0.15s ease, color 0.15s ease !important;
+}
+div[class*="st-key-delmsg_"] button:hover {
+    opacity: 1 !important;
+    color: #ef4444 !important;
+    background: rgba(239, 68, 68, 0.12) !important;
+    border-radius: 4px !important;
+}
+
+/* Distinct, subtle styling for AI-powered sections using Streamlit native containers */
+div[class*="st-key-ai_zone_"] {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(168, 85, 247, 0.04) 50%, rgba(56, 189, 248, 0.03) 100%) !important;
+    border: 1px solid rgba(139, 92, 246, 0.28) !important;
+    border-left: 4px solid #8b5cf6 !important;
+    border-radius: 10px !important;
+    padding: 16px 20px !important;
+    margin: 10px 0 18px 0 !important;
+    box-shadow: 0 2px 12px rgba(139, 92, 246, 0.05) !important;
+}
+
+/* Explicit diagnostic alert card for AI API and quota failures */
+div[class*="st-key-ai_err_zone_"] {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.06) 0%, rgba(245, 158, 11, 0.04) 100%) !important;
+    border: 1px solid rgba(239, 68, 68, 0.35) !important;
+    border-left: 4px solid #ef4444 !important;
+    border-radius: 10px !important;
+    padding: 16px 20px !important;
+    margin: 10px 0 18px 0 !important;
+    width: 100% !important;
+    box-shadow: 0 2px 12px rgba(239, 68, 68, 0.06) !important;
+}
+
+.ai-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(139, 92, 246, 0.14);
+    border: 1px solid rgba(139, 92, 246, 0.35);
+    color: #c084fc;
+    font-size: 0.76rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 6px;
+    letter-spacing: 0.02em;
+    vertical-align: middle;
+    margin-left: 8px;
+}
+
+/* Subtle, recognizable tint for AI chat messages */
+div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.06) 0%, rgba(168, 85, 247, 0.04) 100%) !important;
+    border: 1px solid rgba(139, 92, 246, 0.2) !important;
+    border-left: 3px solid #a855f7 !important;
+    border-radius: 10px !important;
+    margin-bottom: 8px !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# Initialize database
+db.init_db()
+
+# Retrieve saved timezone setting (default: Europe/Warsaw)
+timezone = db.get_setting("device_timezone", "Europe/Warsaw")
+
+# --- Helper Functions & Export Generators ---
+
+def parse_llm_error(error: Exception):
+    """Inspect LLM exception and return structured diagnostic details with actionable recovery suggestions."""
+    err_str = str(error)
+    err_lower = err_str.lower()
+    
+    # Defaults
+    category = "API Error"
+    title = "AI Service Request Failed"
+    icon = "⚠️"
+    suggestions = []
+    retry_delay_sec = None
+    
+    # 1. Check for Rate Limit / Quota Exhaustion (429)
+    if "ratelimit" in err_lower or "429" in err_lower or "resource_exhausted" in err_lower or "quota" in err_lower:
+        category = "Rate Limit & Quota Exhausted (429)"
+        title = "AI Model Quota / Rate Limit Exceeded"
+        icon = "⏳"
+        
+        # Try to extract retry delay from Gemini / LiteLLM error string (e.g. "retry in 29.103s" or "retryDelay': '29s'")
+        m_delay = re.search(r"retry\s+(?:in\s+)?([0-9]+(?:\.[0-9]+)?)\s*s", err_str, re.IGNORECASE)
+        if not m_delay:
+            m_delay = re.search(r"retryDelay['\"]?\s*:\s*['\"]?([0-9]+)s?", err_str, re.IGNORECASE)
+        if m_delay:
+            try:
+                retry_delay_sec = int(float(m_delay.group(1)))
+            except Exception:
+                retry_delay_sec = None
+
+        if retry_delay_sec:
+            suggestions.append(f"⏱️ **Wait {retry_delay_sec} seconds** for the provider's rate-limiting window to roll over, then retry.")
+        else:
+            suggestions.append("⏱️ **Wait 30–60 seconds** for your API provider's rate-limit window to reset, then retry.")
+            
+        suggestions.append("🔄 **Switch Model**: Open **⚙️ AI & LLM Settings** in the left sidebar and select a model with higher free allowances (e.g., `gemini-2.5-flash` instead of `gemini-3.7-flash`).")
+        suggestions.append("🔑 **Add / Switch Provider Key**: Switch to an **OpenRouter**, **OpenAI**, or **Groq** key in Settings to bypass provider-specific quotas.")
+
+    # 2. Check for Authentication / Bad Key (401 / 403)
+    elif "auth" in err_lower or "401" in err_lower or "unauthorized" in err_lower or "api_key" in err_lower or "forbidden" in err_lower:
+        category = "Authentication / Invalid API Key (401/403)"
+        title = "AI Provider Authentication Failed"
+        icon = "🔑"
+        suggestions.append("🔑 **Check API Key**: Open **⚙️ AI & LLM Settings** in the left sidebar and verify your API key is correctly pasted without leading/trailing whitespace.")
+        suggestions.append("🌐 **Verify Provider Account**: Confirm your API key is active and not revoked in your provider's developer dashboard.")
+
+    # 3. Check for Context Window Exceeded / Prompt Too Long
+    elif "context_length_exceeded" in err_lower or "maximum context length" in err_lower or "context window" in err_lower or "too large" in err_lower:
+        category = "Context Length Exceeded"
+        title = "Telemetry Exceeds Model Context Window"
+        icon = "📜"
+        suggestions.append("✂️ **Narrow Filter Scope**: Try selecting a specific **Night Standby** or **Screen-Off** interval rather than a multi-day full window.")
+        suggestions.append("🧠 **Switch to High-Context Model**: Switch to `gemini-2.5-flash` or `gemini-2.5-pro` (up to 1M–2M token context window) in **⚙️ AI & LLM Settings**.")
+
+    # 4. Check for Service Unavailable / High Demand / Capacity (503)
+    elif "serviceunavailable" in err_lower or "503" in err_lower or "high demand" in err_lower or "unavailable" in err_lower:
+        category = "Model High Demand / Service Unavailable (503)"
+        title = "Model Temporarily Overloaded (503 High Demand)"
+        icon = "🔥"
+        suggestions.append("⏱️ **Wait a Moment & Retry**: Spikes in demand on preview/experimental models are temporary. Wait 10–30 seconds and click the button again.")
+        suggestions.append("🔄 **Switch Model**: In **⚙️ AI & LLM Settings**, switch to a stable production model (e.g. `gemini-2.5-flash` or `gemini-2.5-pro`) which has dedicated capacity.")
+        suggestions.append("🔑 **Try Another Provider**: If Google Gemini is congested, switch provider to **OpenRouter** or **OpenAI** in settings.")
+
+    # 5. Check for Connection / Timeout / Network
+    elif "timeout" in err_lower or "connection" in err_lower or "connecterror" in err_lower:
+        category = "Network / Connection Timeout"
+        title = "Cannot Connect to AI Provider"
+        icon = "🌐"
+        suggestions.append("📡 **Check Internet Connection**: Verify your machine has outbound internet connectivity to API endpoints.")
+        suggestions.append("🖥️ **Local LLM (Ollama)**: If using Ollama, ensure the Ollama service is running (`ollama serve`) on `http://localhost:11434`.")
+        suggestions.append("🔄 **Retry**: The provider may be experiencing temporary network latency. Try clicking the button again.")
+        
+    else:
+        suggestions.append("🔄 **Retry**: Check your network connection and click the operation again.")
+        suggestions.append("⚙️ **Check Provider Status**: Open **⚙️ AI & LLM Settings** in the sidebar to verify your provider and model configuration.")
+
+    return {
+        "category": category,
+        "title": title,
+        "icon": icon,
+        "raw_error": err_str,
+        "suggestions": suggestions,
+        "retry_delay_sec": retry_delay_sec
+    }
+
+def render_ai_error(error: Exception, action_description: str = "generating AI analysis", key_suffix: str = "err"):
+    """Render an explicit, rich alert window with clear diagnostics and practical recovery suggestions."""
+    diag = parse_llm_error(error)
+    with st.container(border=True, key=f"ai_err_zone_{key_suffix}"):
+        st.markdown(f"### {diag['icon']} {diag['title']}")
+        st.markdown(f"**Failed while {action_description}.** Category: `{diag['category']}`")
+        
+        st.markdown("#### 💡 Recommended Next Steps:")
+        for s in diag["suggestions"]:
+            st.markdown(f"- {s}")
+            
+        with st.expander("🔍 View Raw Error Details & Technical Trace", expanded=False):
+            st.code(diag["raw_error"], language="text")
+
+def render_ai_block(content_markdown: str, key_suffix: str = "default"):
+    """Renders AI markdown content inside a styled, border-contained block without breaking markdown syntax."""
+    # Clean leading newline and raw HTML breaks if any to ensure clean table & heading rendering
+    clean_md = parser.clean_markdown_breaks(content_markdown.strip()) if content_markdown else ""
+    with st.container(border=True, key=f"ai_zone_{key_suffix}"):
+        st.markdown(clean_md)
+
+def highlight_search_query(text: str, query: str):
+    """Safely highlights case-insensitive search matches in text/markdown without breaking HTML tags or code blocks."""
+    if not query or not query.strip() or not text:
+        return text, 0
+    q = query.strip()
+    p = re.compile(f"({re.escape(q)})", re.IGNORECASE)
+    parts = re.split(r"(```[\s\S]*?```|<[^>]+>)", text)
+    count = 0
+    res = []
+    mark_open = '<mark style="background-color: #f59e0b; color: #000000; padding: 1px 4px; border-radius: 3px; font-weight: 700;">'
+    for part in parts:
+        if part.startswith("```") or (part.startswith("<") and part.endswith(">")):
+            res.append(part)
+        else:
+            c = len(p.findall(part))
+            count += c
+            if c:
+                part = p.sub(lambda m: f"{mark_open}{m.group(1)}</mark>", part)
+            res.append(part)
+    return "".join(res), count
+
+def build_compact_summary(rep, filter_mode="full", n_start=23, n_end=7, custom_start_dt=None, custom_end_dt=None):
+    """Build a high-signal condensed summary for comparative analysis, respecting the active scope."""
+    lines = []
+    df_h = rep.get("history_data")
+    summary_text = rep.get("summary_text", "")
+    
+    if df_h is not None and not df_h.empty and "Time" in df_h.columns and "Level" in df_h.columns:
+        if filter_mode == "night":
+            if custom_start_dt and custom_end_dt:
+                s_dt, e_dt = custom_start_dt, custom_end_dt
+            elif rep.get("custom_night_start") and rep.get("custom_night_end"):
+                s_dt, e_dt = rep["custom_night_start"], rep["custom_night_end"]
+            else:
+                min_t = df_h["Time"].min()
+                max_t = df_h["Time"].max()
+                s_dt, e_dt = parser.get_latest_night_window(min_t, max_t, n_start, n_end)
+            df_target = parser.slice_timeline_range(df_h, s_dt, e_dt)
+            scope_desc = f"🌙 Night Window ({s_dt.strftime('%H:%M')} - {e_dt.strftime('%H:%M')})"
+        else:
+            df_target = df_h
+            scope_desc = "🌐 Full Recording Window"
+            
+        kpis = parser.compute_window_kpis(df_target)
+        lines.append(f"• Scope: {scope_desc} | Window: {kpis['start_time']} -> {kpis['end_time']}")
+        lines.append(f"• Discharge: {kpis['start_level']}% -> {kpis['end_level']}% (Drop: {kpis['drop_pct']}%, Duration: {kpis['duration_hrs']:.1f} hrs, Avg Rate: {kpis['rate_per_hr']:.2f}%/hr)")
+        lines.append(f"• Health Assessment: {kpis['status']}")
+    
+    if filter_mode in ["night", "screen_off"]:
+        standby_df = parser.extract_screen_off_chart_data(summary_text)
+        if standby_df is not None and not standby_df.empty:
+            clean_s = parser.clean_chart_dataframe(standby_df, summary_text)
+            lines.append("• Top Standby / Screen-Off Consumers (mAh):")
+            for _, row in clean_s.head(10).iterrows():
+                lines.append(f"    - {row['Component']}: {row['mAh']} mAh")
+        else:
+            df_c = rep.get("chart_data")
+            if df_c is not None and not df_c.empty:
+                lines.append("• Top Power Consumers (mAh):")
+                for _, row in df_c.head(10).iterrows():
+                    lines.append(f"    - {row['Component']}: {row['mAh']} mAh")
+    else:
+        df_c = rep.get("chart_data")
+        if df_c is not None and not df_c.empty:
+            lines.append("• Top Power Consumers (mAh):")
+            for _, row in df_c.head(10).iterrows():
+                lines.append(f"    - {row['Component']}: {row['mAh']} mAh")
+            
+    if summary_text:
+        uid_map = parser.extract_uid_mapping_from_text(summary_text)
+        text_lines = parser.replace_uids_safely([l for l in summary_text.splitlines() if l.strip()], uid_map)
+        lines.append("• Key Telemetry & Wakelock Excerpt:")
+        lines.extend([f"    {l}" for l in text_lines[:35]])
+        
+    return "\n".join(lines)
+
+def build_single_report_markdown(report, filter_mode, kpis, diagnosis_text):
+    """Generate clean, publication-quality Markdown document for a single report."""
+    md = []
+    md.append(f"# 🔋 Battery Oracle Diagnostic Report: {report['custom_name']}\n")
+    md.append(f"- **Captured:** `{report['timestamp_str']}`")
+    md.append(f"- **Source File:** `{report['filename']}`")
+    md.append(f"- **Device Profile:** `{report.get('device_info', 'Android Device')}`")
+    if report.get('description'):
+        md.append(f"- **User Notes:** *{report['description']}*")
+    md.append(f"- **Analysis Scope:** `{filter_mode.upper()}`\n")
+    
+    md.append("## 📊 Telemetry & Discharge Metrics")
+    md.append(f"| Metric | Value |")
+    md.append(f"| :--- | :--- |")
+    md.append(f"| **Active Window** | {kpis['start_time']} → {kpis['end_time']} |")
+    md.append(f"| **Battery Level Delta** | {kpis['start_level']}% → {kpis['end_level']}% |")
+    md.append(f"| **Total Drop** | {kpis['drop_pct']}% over {kpis['duration_hrs']:.1f} hrs |")
+    md.append(f"| **Discharge Velocity** | **{kpis['rate_per_hr']:.2f}% / hour** |")
+    md.append(f"| **Standby Health Status** | {kpis['status']} |\n")
+    
+    df_c = report.get("chart_data")
+    if df_c is not None and not df_c.empty:
+        clean_df = parser.clean_chart_dataframe(df_c, report.get("summary_text", ""))
+        md.append("## ⚡ Top Power Consumers (mAh)")
+        md.append("| App / Component | Energy Consumption (mAh) |")
+        md.append("| :--- | :--- |")
+        for _, row in clean_df.head(15).iterrows():
+            md.append(f"| {row['Component']} | {row['mAh']} mAh |")
+        md.append("")
+        
+    md.append("## 🔮 AI Diagnostic Evaluation & Action Plan\n")
+    md.append(diagnosis_text or "No diagnosis generated.")
+    md.append("\n---\n*Generated by Battery Oracle on " + datetime.now().strftime("%Y-%m-%d %H:%M") + "*")
+    return "\n".join(md)
+
+def build_comparative_markdown(reports, filter_mode, analysis_text):
+    """Generate clean Markdown document for comparative multi-report evaluation."""
+    md = []
+    md.append("# 🔀 Battery Oracle: Multi-Report Comparative Analysis\n")
+    md.append(f"- **Generated:** `{datetime.now().strftime('%Y-%m-%d %H:%M')}`")
+    md.append(f"- **Compared Reports:** {len(reports)} sessions")
+    md.append(f"- **Comparative Scope:** `{filter_mode.upper()}`\n")
+    
+    md.append("## 📋 Session Breakdown Matrix")
+    md.append("| Session Name | Capture Time | Device | Notes |")
+    md.append("| :--- | :--- | :--- | :--- |")
+    for r in reports:
+        md.append(f"| {r['custom_name']} | {r['timestamp_str']} | {r.get('device_info', 'Android')} | {r.get('description', '')} |")
+    md.append("\n## 🔮 Comparative AI Synthesis & Optimization Impact\n")
+    md.append(analysis_text or "No comparative synthesis available.")
+    md.append("\n---\n*Generated by Battery Oracle*")
+    return "\n".join(md)
+
+
+def add_night_shading(fig, df_time, night_start=23, night_end=7):
+    """Add subtle dark shading over nighttime hours on timeline chart."""
+    if df_time is None or df_time.empty or "Time" not in df_time.columns:
+        return fig
+    min_time = df_time["Time"].min()
+    max_time = df_time["Time"].max()
+    
+    current_date = min_time.floor('D')
+    end_date = max_time.ceil('D')
+    
+    while current_date <= end_date:
+        n_start = current_date + pd.Timedelta(hours=night_start)
+        n_end = current_date + pd.Timedelta(days=1 if night_start > night_end else 0, hours=night_end)
+        
+        if n_end >= min_time and n_start <= max_time:
+            x0 = max(n_start, min_time)
+            x1 = min(n_end, max_time)
+            fig.add_vrect(
+                x0=x0, x1=x1,
+                fillcolor="rgba(30, 41, 59, 0.20)",
+                layer="below",
+                line_width=0,
+                annotation_text="🌙 Night",
+                annotation_position="top left",
+                annotation_font_size=10,
+                annotation_font_color="gray"
+            )
+        current_date += pd.Timedelta(days=1)
+        
+    return fig
+
+@st.fragment
+def render_chat_message_item(msg, rep_id=None, active_th_id=None, thread_dict=None, is_global=False, search_query=""):
+    """Renders a single chat message inside an independent Streamlit fragment for instantaneous toggling and search highlighting."""
+    msg_id = msg["id"]
+    state_key = f"msg_col_{msg_id}"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = bool(msg.get("is_collapsed", 0))
+    is_col = st.session_state[state_key]
+
+    raw_content = msg.get("content", "")
+    highlighted_content = raw_content
+    match_count = 0
+    if search_query and search_query.strip():
+        highlighted_content, match_count = highlight_search_query(raw_content, search_query)
+        # If message contains searched string, automatically expand so the match is visible
+        if match_count > 0:
+            is_col = False
+
+    with st.chat_message(msg["role"]):
+        ts_str = msg.get("created_at", "")
+        if ts_str and len(ts_str) >= 16:
+            display_ts = ts_str[:16].replace("T", " ")
+        else:
+            display_ts = ts_str
+
+        col_toggle, col_meta, col_del = st.columns([0.03, 0.94, 0.03], vertical_alignment="center")
+        with col_toggle:
+            toggle_icon = "▶" if is_col else "▼"
+            tooltip = "Click to expand message" if is_col else "Click to collapse message"
+            btn_key = f"tog_gmsg_{msg_id}" if is_global else f"tog_msg_{msg_id}"
+            if st.button(toggle_icon, key=btn_key, type="tertiary", help=tooltip):
+                new_state = not is_col
+                st.session_state[state_key] = new_state
+                db.toggle_message_collapsed(msg_id, new_state)
+                st.rerun(scope="fragment")
+
+        with col_meta:
+            if is_col:
+                first_line = raw_content.strip().split("\n")[0][:85]
+                if search_query and search_query.strip():
+                    first_line, _ = highlight_search_query(first_line, search_query)
+                parts = []
+                if display_ts:
+                    parts.append(f"🕒 `{display_ts}`")
+                parts.append(f"*(Collapsed: {first_line}...)*")
+                st.caption(" &nbsp;•&nbsp; ".join(parts), unsafe_allow_html=True)
+            else:
+                header_parts = []
+                if display_ts:
+                    header_parts.append(f"🕒 `{display_ts}`")
+                if msg.get("filter_context"):
+                    header_parts.append(f"🎯 *Scope: {msg['filter_context']}*")
+                if match_count > 0:
+                    header_parts.append(f"🔍 **{match_count} match{'es' if match_count > 1 else ''}**")
+                if msg["role"] == "assistant":
+                    header_parts.append('<span class="ai-badge">✨ AI ASSISTANT</span>')
+                if header_parts:
+                    st.caption(" &nbsp;•&nbsp; ".join(header_parts), unsafe_allow_html=True)
+
+        with col_del:
+            del_key = f"del_gmsg_{msg_id}" if is_global else f"delmsg_{msg_id}"
+            if st.button("🗑️", key=del_key, type="tertiary", help="Delete message from history"):
+                db.delete_chat_message(msg_id)
+                st.rerun(scope="app")
+
+        if not is_col:
+            st.markdown(highlighted_content, unsafe_allow_html=True)
+            
+            # Fork option for assistant messages in Single Report view
+            if msg["role"] == "assistant" and not is_global and active_th_id and thread_dict:
+                col_spacer, col_fork = st.columns([4, 1])
+                with col_fork:
+                    if st.button("🔀 Fork from here", key=f"fork_{msg_id}"):
+                        forked_id = db.fork_thread(
+                            source_thread_id=active_th_id,
+                            from_message_id=msg_id,
+                            new_title=f"Branch: {thread_dict.get(active_th_id, 'Thread')[:15]}..."
+                        )
+                        st.session_state.active_thread_id = forked_id
+                        st.success("Forked into a new thread!")
+                        st.rerun(scope="app")
+
+# --- Session State Initialization ---
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = "single"
+if "selected_report_id" not in st.session_state:
+    st.session_state.selected_report_id = None
+if "active_thread_id" not in st.session_state:
+    st.session_state.active_thread_id = None
+if "confirm_delete_id" not in st.session_state:
+    st.session_state.confirm_delete_id = None
+if "handled_upload_hashes" not in st.session_state:
+    st.session_state.handled_upload_hashes = set()
+if "inspect_package" not in st.session_state:
+    st.session_state.inspect_package = None
+if "inv_upload_counter" not in st.session_state:
+    st.session_state.inv_upload_counter = 0
+if "inv_upload_success_msg" not in st.session_state:
+    st.session_state.inv_upload_success_msg = None
+
+# Get active LLM configuration
+active_llm_cfg = llm_manager.get_active_config()
+night_start_cfg = int(db.get_setting("night_start_hour", "23"))
+night_end_cfg = int(db.get_setting("night_end_hour", "7"))
+
+# --- Sidebar Configuration & Reports Manager ---
+@st.dialog("⚙️ LLM & Prompt Configuration Studio", width="large")
+def show_llm_config_dialog(active_cfg, n_start_val, n_end_val):
+    st.caption("Manage AI providers, test credentials, and customize specialized diagnostic prompts with generous editing space.")
+    settings_tab1, settings_tab2, settings_tab3 = st.tabs(["🤖 LLM Provider & Credentials", "✍️ Prompt Studio (Expert Prompts)", "🌙 Night Standby Settings"])
+    
+    with settings_tab1:
+        st.markdown("#### Provider & Model Credentials")
+        provider_list = list(llm_manager.PROVIDER_PRESETS.keys())
+        current_provider = active_cfg["provider"]
+        prov_idx = provider_list.index(current_provider) if current_provider in provider_list else 0
+        
+        c_prov, c_model = st.columns([1, 1])
+        with c_prov:
+            selected_prov = st.selectbox("Provider Preset", provider_list, index=prov_idx, key="cfg_provider_select")
+            preset_info = llm_manager.PROVIDER_PRESETS[selected_prov]
+        
+        # Prepare dynamic model list from session cache or preset
+        cache_key = f"models_{selected_prov}"
+        if cache_key not in st.session_state:
+            st.session_state[cache_key] = list(preset_info.get("models", []))
+            
+        available_models = st.session_state[cache_key]
+        
+        with c_model:
+            if available_models:
+                current_model = active_cfg["model"]
+                mod_idx = available_models.index(current_model) if current_model in available_models else 0
+                selected_model = st.selectbox(
+                    "Model",
+                    available_models,
+                    index=mod_idx,
+                    format_func=lambda m: f"{m}  —  [{llm_manager.get_model_pricing(m)}]",
+                    key="cfg_model_select"
+                )
+            else:
+                selected_model = st.text_input(
+                    "Custom Model ID",
+                    value=active_cfg["model"],
+                    placeholder="e.g., openrouter/anthropic/claude-3.5-sonnet",
+                    autocomplete="off"
+                )
+            
+        c_key, c_base = st.columns([1, 1])
+        with c_key:
+            api_key_val = st.text_input(
+                "API Key (Masked)",
+                type="password",
+                value=active_cfg["api_key"],
+                placeholder="Enter API key or leave blank if using local",
+                key="cfg_api_key_input",
+                autocomplete="new-password"
+            )
+        with c_base:
+            api_base_val = st.text_input(
+                "API Base URL (Optional)",
+                value=active_cfg["api_base"] or (preset_info.get("default_base") or ""),
+                placeholder="e.g., http://localhost:11434 for Ollama",
+                key="cfg_api_base_input",
+                autocomplete="off"
+            )
+            
+        # Model discovery button row
+        col_fetch, col_info = st.columns([1, 2])
+        with col_fetch:
+            if st.button("🔄 Fetch Live Models", key="btn_fetch_live_models", use_container_width=True):
+                with st.spinner(f"Querying {selected_prov} API..."):
+                    discovered_models, fetch_msg = llm_manager.fetch_available_models(
+                        selected_prov,
+                        api_key=api_key_val,
+                        api_base=api_base_val
+                    )
+                    st.session_state[cache_key] = discovered_models
+                    if "✅" in fetch_msg:
+                        st.toast(fetch_msg, icon="✅")
+                    elif "⚠️" in fetch_msg:
+                        st.warning(fetch_msg)
+                    else:
+                        st.info(fetch_msg)
+                    st.rerun()
+        with col_info:
+            active_pricing = llm_manager.get_model_pricing(selected_model)
+            st.caption(f"**Selected Model Standard Pricing:** `{active_pricing}`\n\n*Total available:* **{len(available_models)}** models for {selected_prov}.")
+        
+        st.divider()
+        col_test, col_save = st.columns([1, 1])
+        with col_test:
+            if st.button("🧪 Test Connection", key="btn_test_conn", use_container_width=True):
+                with st.spinner("Pinging model..."):
+                    is_ok, msg = llm_manager.test_connection(selected_model, api_key_val, api_base_val)
+                    if is_ok:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
+        with col_save:
+            if st.button("💾 Save & Apply Credentials", type="primary", key="btn_save_conn", use_container_width=True):
+                db.set_setting("llm_provider", selected_prov)
+                db.set_setting("llm_model", selected_model)
+                db.set_setting("llm_api_key", api_key_val)
+                db.set_setting("llm_api_base", api_base_val)
+                st.success("Settings saved! Reloading...")
+                time.sleep(0.5)
+                st.rerun()
+                
+    with settings_tab2:
+        st.markdown("#### ✍️ Expert Prompt Studio")
+        st.caption("Customize instructions sent to the AI. Available placeholders: `{report_name}`, `{timestamp_str}`, `{device_info}`, `{timezone_info}`, `{telemetry_data}`, `{reports_summary}`, `{filter_context}`.")
+        
+        st.markdown("**1. Single Report Diagnosis System Prompt**")
+        p_single = st.text_area(
+            "Instructions for single bugreport evaluation:",
+            value=llm_manager.get_prompt_template("single_diagnosis"),
+            height=260,
+            key="prompt_single_area"
+        )
+        
+        st.markdown("**2. Comparative Evaluation System Prompt**")
+        p_comp = st.text_area(
+            "Instructions for multi-report comparative synthesis:",
+            value=llm_manager.get_prompt_template("comparison"),
+            height=260,
+            key="prompt_comp_area"
+        )
+        
+        st.markdown("**3. Chat Assistant System Prompt**")
+        p_chat = st.text_area(
+            "Instructions for interactive inquiry assistant:",
+            value=llm_manager.get_prompt_template("chat_assistant"),
+            height=200,
+            key="prompt_chat_area"
+        )
+        
+        st.markdown("**4. Master Experiment Synthesis System Prompt**")
+        p_master = st.text_area(
+            "Instructions for multi-day retrospective synthesis:",
+            value=llm_manager.get_prompt_template("master_synthesis"),
+            height=260,
+            key="prompt_master_area"
+        )
+        
+        st.divider()
+        col_psave, col_preset = st.columns([1, 1])
+        with col_psave:
+            if st.button("💾 Save All Prompts", type="primary", key="btn_save_prompts", use_container_width=True):
+                llm_manager.set_prompt_template("single_diagnosis", p_single)
+                llm_manager.set_prompt_template("comparison", p_comp)
+                llm_manager.set_prompt_template("chat_assistant", p_chat)
+                llm_manager.set_prompt_template("master_synthesis", p_master)
+                st.success("Custom prompts saved to database!")
+        with col_preset:
+            if st.button("🔄 Reset Prompts to Factory Defaults", key="btn_reset_prompts", use_container_width=True):
+                llm_manager.reset_prompt_templates()
+                st.success("Reset all prompts to factory defaults!")
+                st.rerun()
+                
+    with settings_tab3:
+        st.markdown("#### 🌙 Night Standby & Regional Settings")
+        st.caption("Configure idle analysis hours and regional timezone preferences.")
+        c_n1, c_n2 = st.columns(2)
+        with c_n1:
+            n_start = st.number_input("Night Start Hour (24h)", min_value=0, max_value=23, value=n_start_val)
+        with c_n2:
+            n_end = st.number_input("Night End Hour (24h)", min_value=0, max_value=23, value=n_end_val)
+            
+        tz_options = ["UTC", "Europe/London", "Europe/Warsaw", "Europe/Berlin", "America/New_York", "America/Los_Angeles", "Asia/Tokyo"]
+        cur_tz = db.get_setting("device_timezone", "Europe/Warsaw")
+        tz_idx = tz_options.index(cur_tz) if cur_tz in tz_options else 2
+        selected_tz = st.selectbox("Preferred Timezone", tz_options, index=tz_idx, key="cfg_tz_select")
+        
+        if st.button("Save Settings", key="btn_save_night_hours", use_container_width=True):
+            db.set_setting("night_start_hour", str(n_start))
+            db.set_setting("night_end_hour", str(n_end))
+            db.set_setting("device_timezone", selected_tz)
+            st.success("Night window and timezone updated!")
+            st.rerun()
+
+with st.sidebar:
+    st.markdown("## 🔋 Battery Oracle")
+    st.caption("AI-Powered Android Battery Telemetry & Diagnostics")
+    
+    # 1. Unified Reports & Import Section (Top of sidebar, concise & compact)
+    all_reports = db.get_all_reports_summary()
+    st.markdown(f"### 📁 Reports & Import ({len(all_reports)})")
+    
+    if all_reports:
+        report_options = {r["id"]: f"{r['custom_name']} ({r['timestamp_str']})" for r in all_reports}
+        if st.session_state.selected_report_id not in report_options:
+            st.session_state.selected_report_id = all_reports[0]["id"]
+            
+        selected_idx = list(report_options.keys()).index(st.session_state.selected_report_id)
+        selected_id = st.selectbox(
+            "Active Report:",
+            options=list(report_options.keys()),
+            format_func=lambda x: report_options[x],
+            index=selected_idx,
+            label_visibility="collapsed"
+        )
+        st.session_state.selected_report_id = selected_id
+    else:
+        st.info("No saved reports found yet.")
+        
+    uploaded_files = st.file_uploader(
+        "Upload new bugreport (.zip/.txt)",
+        type=['zip', 'txt'],
+        accept_multiple_files=True,
+        key="bugreport_uploader",
+        help="Upload bugreports created via 'adb bugreport bugreport.zip'"
+    )
+    
+    st.divider()
+    
+    # 2. Workspace View Switcher
+    st.markdown("### 🧭 Workspace View")
+    view_options = ["📄 Single Report View ✨", "🔀 Merged & Compare View ✨", "📱 Device Profile & Audit ✨", "🧪 Master Experiment Synthesis ✨", "📊 Token & Cost Accounting"]
+    cur_view_idx = 0
+    if st.session_state.active_tab == "merged":
+        cur_view_idx = 1
+    elif st.session_state.active_tab == "profile":
+        cur_view_idx = 2
+    elif st.session_state.active_tab == "master":
+        cur_view_idx = 3
+    elif st.session_state.active_tab == "accounting":
+        cur_view_idx = 4
+        
+    mode = st.radio("Select View:", view_options, index=cur_view_idx, key="mode_radio", label_visibility="collapsed")
+    if "Single" in mode:
+        st.session_state.active_tab = "single"
+    elif "Merged" in mode:
+        st.session_state.active_tab = "merged"
+    elif "Device Profile" in mode:
+        st.session_state.active_tab = "profile"
+    elif "Master" in mode:
+        st.session_state.active_tab = "master"
+    else:
+        st.session_state.active_tab = "accounting"
+        
+    st.divider()
+    
+    # 3. Visualization Controls
+    st.markdown("### 📊 Display & Charts")
+    chart_type = st.radio("Drain Chart Type", ["Bar Chart", "Pie Chart"], horizontal=True)
+    show_night_shading = st.checkbox("Show 🌙 Night Shading", value=True)
+    
+    st.divider()
+    
+    # 4. LLM Engine & Configuration (Bottom)
+    st.markdown("### ⚙️ Engine & Settings")
+    st.info(f"**Provider:** {active_llm_cfg['provider']}\n\n**Model:** `{active_llm_cfg['model']}`\n\n**Timezone:** `{timezone}`", icon="🤖")
+    
+    if st.button("⚙️ Configure LLM & Prompts", use_container_width=True):
+        show_llm_config_dialog(active_llm_cfg, night_start_cfg, night_end_cfg)
+        
+    st.caption("💡 *Tip: Run `adb bugreport bugreport.zip` in your terminal to create bug reports.*")
+
+# --- Centered Modal Progress Dialog for Bugreport Import ---
+@st.dialog("📥 Processing Android Bugreport", width="medium")
+def process_upload_modal(uploaded_file, file_bytes, file_hash):
+    st.caption(f"Analyzing `{uploaded_file.name}` and extracting deep batterystats telemetry...")
+    progress_bar = st.progress(0, text="📦 Unpacking archive...")
+    status_box = st.empty()
+    
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        file_path = os.path.join(tmpdirname, uploaded_file.name)
+        with open(file_path, "wb") as f:
+            f.write(file_bytes)
+            
+        target_txt = file_path
+        file_timestamp = parser.parse_filename_timestamp(uploaded_file.name)
+        
+        # Step 1: Unzip
+        progress_bar.progress(20, text=f"📦 Unzipping {uploaded_file.name}...")
+        status_box.info(f"Unpacking bugreport archive: `{uploaded_file.name}`")
+        if uploaded_file.name.endswith('.zip'):
+            with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                for name in zip_ref.namelist():
+                    if name.startswith('bugreport-') and name.endswith('.txt'):
+                        zip_ref.extract(name, tmpdirname)
+                        target_txt = os.path.join(tmpdirname, name)
+                        file_timestamp = parser.parse_filename_timestamp(name)
+                        break
+                        
+        # Step 2: Deep UID Extraction
+        progress_bar.progress(40, text="🔍 Scanning package mappings (UIDs)...")
+        status_box.info("Resolving system and user app packages...")
+        uid_map = parser.extract_uid_mapping(target_txt)
+        
+        # Step 3: Extract Batterystats
+        progress_bar.progress(60, text="⚡ Extracting power metrics & wakelocks...")
+        status_box.info("Parsing estimated power use and partial wakelocks...")
+        power_lines, wake_lines, device_info_str = parser.extract_batterystats(target_txt)
+        
+        # Safely replace UIDs with real package names using word boundaries
+        power_lines = parser.replace_uids_safely(power_lines, uid_map)
+        wake_lines = parser.replace_uids_safely(wake_lines, uid_map)
+        
+        summary_text = "Estimated Power Use:\n" + "".join(power_lines)
+        summary_text += "\n\nPartial Wakelocks:\n" + "".join(wake_lines)
+        chart_df = parser.extract_chart_data(power_lines, uid_map)
+        
+        # Step 4: Extract Timeline
+        progress_bar.progress(75, text="📈 Extracting battery discharge timeline...")
+        status_box.info("Parsing battery discharge timeline curves...")
+        year_match = re.search(r'(\d{4})', file_timestamp)
+        base_year = year_match.group(1) if year_match else "2026"
+        history_df = parser.extract_battery_history(target_txt, base_year=base_year)
+        
+        # Step 5: Initial AI Analysis
+        progress_bar.progress(85, text="🔮 Oracle is diagnosing battery telemetry...")
+        status_box.info(f"Calling AI diagnostic model ({active_llm_cfg['model']})...")
+        
+        diag_prompt_tmpl = llm_manager.get_prompt_template("single_diagnosis")
+        
+        # Inject active device profile inventory if available
+        active_inv_profile = db.get_latest_device_profile()
+        profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+        combined_telemetry = summary_text[:30000]
+        if profile_summary:
+            combined_telemetry = f"{profile_summary}\n\n{combined_telemetry}"
+
+        formatted_diag_prompt = diag_prompt_tmpl.format(
+            report_name=uploaded_file.name,
+            timestamp_str=file_timestamp,
+            device_info=device_info_str,
+            timezone_info=timezone,
+            telemetry_data=combined_telemetry
+        )
+        
+        thinking_trace = ""
+        try:
+            initial_analysis = llm_manager.call_llm_tracked(
+                messages=[{"role": "system", "content": formatted_diag_prompt}],
+                action_type="initial_diagnosis"
+            )
+            initial_analysis = parser.sanitize_ai_output(initial_analysis, summary_text)
+            thinking_trace = f"Analyzed {len(power_lines)} power records and {len(wake_lines)} wakelocks for {device_info_str}."
+        except Exception as e:
+            diag_err = parse_llm_error(e)
+            initial_analysis = f"### {diag_err['icon']} {diag_err['title']}\n\n**Failed during initial diagnosis import.** Category: `{diag_err['category']}`\n\n#### 💡 Suggestions:\n" + "\n".join([f"- {s}" for s in diag_err["suggestions"]]) + f"\n\n```text\n{diag_err['raw_error']}\n```"
+            thinking_trace = f"AI Analysis failed: {e}"
+                
+        # Step 6: Save to SQLite
+        progress_bar.progress(95, text="💾 Persisting report to SQLite...")
+        status_box.info("Saving processed report and metrics to local database...")
+        custom_name = uploaded_file.name.replace(".zip", "").replace(".txt", "")
+        
+        new_id = db.save_report(
+            file_hash=file_hash,
+            filename=uploaded_file.name,
+            custom_name=custom_name,
+            description="",
+            timestamp_str=file_timestamp,
+            device_info=device_info_str,
+            summary_text=summary_text,
+            chart_df=chart_df,
+            history_df=history_df,
+            initial_analysis=initial_analysis,
+            reasoning_trace=thinking_trace
+        )
+        
+        progress_bar.progress(100, text="✅ Import finished successfully!")
+        status_box.success("🎉 Import complete! Loading report workspace...")
+        st.session_state.selected_report_id = new_id
+        st.session_state.active_tab = "single"
+        st.session_state.upload_to_process = None
+        time.sleep(1.0)
+        st.rerun()
+
+# --- Processing Uploaded Files with Centered Modal & Deduplication ---
+if not uploaded_files:
+    st.session_state.handled_upload_hashes.clear()
+else:
+    for uploaded_file in uploaded_files:
+        file_bytes = uploaded_file.getvalue()
+        file_hash = parser.calculate_sha256(file_bytes)
+        
+        if file_hash in st.session_state.handled_upload_hashes:
+            continue
+            
+        st.session_state.handled_upload_hashes.add(file_hash)
+        
+        # Deduplication check against DB
+        existing_report = db.get_report_by_hash(file_hash)
+        if existing_report:
+            st.toast(f"ℹ️ '{uploaded_file.name}' was already imported as '{existing_report['custom_name']}'. Switched to it!", icon="📁")
+            st.session_state.selected_report_id = existing_report["id"]
+            st.session_state.active_tab = "single"
+            st.rerun()
+            continue
+            
+        # Trigger centered modal
+        process_upload_modal(uploaded_file, file_bytes, file_hash)
+
+
+# Reload fresh report list
+all_reports = db.get_all_reports()
+
+# ==============================================================================
+# VIEW 1: SINGLE REPORT VIEW
+# ==============================================================================
+if st.session_state.active_tab == "single":
+    if not all_reports:
+        st.title("🔋 Battery Oracle")
+        st.info("👋 Welcome! Please upload an Android bugreport (`.zip` or `.txt`) using the sidebar to begin.")
+    else:
+        active_report = db.get_report_by_id(st.session_state.selected_report_id)
+        if not active_report:
+            active_report = all_reports[0]
+            st.session_state.selected_report_id = active_report["id"]
+            
+        rep_id = active_report["id"]
+        
+        # --- Top Header & Metadata Badges ---
+        col_title, col_actions = st.columns([5, 3])
+        with col_title:
+            st.markdown(f"## 📱 {active_report['custom_name']}")
+        
+        with col_actions:
+            # Side-by-side action buttons aligned with title
+            act_col1, act_col2 = st.columns([1, 1])
+            with act_col1:
+                with st.popover("✏️ Edit Notes", use_container_width=True):
+                    new_name = st.text_input("Report Name", value=active_report["custom_name"], key=f"name_{rep_id}")
+                    new_desc = st.text_area("Description / Notes", value=active_report.get("description", ""), placeholder="e.g., 5G disabled, bedtime standby...", key=f"desc_{rep_id}")
+                    if st.button("Save Changes", key=f"save_meta_{rep_id}", use_container_width=True):
+                        db.update_report_metadata(rep_id, new_name, new_desc)
+                        st.success("Updated!")
+                        st.rerun()
+            with act_col2:
+                if st.button("🗑️ Delete", type="secondary", key=f"del_btn_{rep_id}", use_container_width=True):
+                    st.session_state.confirm_delete_id = rep_id
+                    
+            if st.session_state.confirm_delete_id == rep_id:
+                st.warning("Are you sure you want to delete this report?")
+                col_yes, col_no = st.columns(2)
+                with col_yes:
+                    if st.button("Yes, Delete", type="primary", key="confirm_del", use_container_width=True):
+                        db.delete_report(rep_id)
+                        st.session_state.confirm_delete_id = None
+                        st.session_state.selected_report_id = None
+                        st.success("Report deleted.")
+                        st.rerun()
+                with col_no:
+                    if st.button("Cancel", key="cancel_del", use_container_width=True):
+                        st.session_state.confirm_delete_id = None
+                        st.rerun()
+                        
+        st.caption(f"📁 **Source:** `{active_report['filename']}` | 🕒 **Captured:** {active_report['timestamp_str']}")
+        if active_report.get('device_info'):
+            st.info(f"⚙️ **Device Profile:** {active_report['device_info']}", icon="ℹ️")
+                        
+        if active_report.get("description"):
+            st.markdown(f"📝 **Notes:** *{active_report['description']}*")
+            
+        st.divider()
+        
+        # --- TIME WINDOW & FOCUS FILTER BAR ---
+        st.markdown("### 🎯 Analysis Scope & Time Filter")
+        scope_col1, scope_col2 = st.columns([2, 3])
+        
+        with scope_col1:
+            filter_mode_choice = st.radio(
+                "Filter Scope:",
+                ["🌐 Full Session", "🌙 Night Standby (Preset)", "⏱️ Custom Window", "📴 Screen-Off Only"],
+                horizontal=True,
+                key=f"scope_radio_{rep_id}"
+            )
+            
+        raw_hist_df = active_report.get("history_data")
+        has_history = raw_hist_df is not None and not raw_hist_df.empty and "Time" in raw_hist_df.columns
+        
+        if has_history:
+            min_t = raw_hist_df["Time"].min()
+            max_t = raw_hist_df["Time"].max()
+            min_dt = min_t.to_pydatetime()
+            max_dt = max_t.to_pydatetime()
+        else:
+            min_dt = datetime(2026, 9, 1, 0, 0)
+            max_dt = datetime(2026, 9, 1, 23, 59)
+            
+        start_dt, end_dt = min_dt, max_dt
+        sliced_df = raw_hist_df
+        filter_mode = "full"
+
+        if "Night Standby" in filter_mode_choice:
+            filter_mode = "night"
+            if has_history:
+                auto_s_dt, auto_e_dt = parser.get_latest_night_window(min_t, max_t, night_start_cfg, night_end_cfg)
+                if hasattr(auto_s_dt, "to_pydatetime"):
+                    auto_s_dt = auto_s_dt.to_pydatetime()
+                if hasattr(auto_e_dt, "to_pydatetime"):
+                    auto_e_dt = auto_e_dt.to_pydatetime()
+
+                # Check database persistent override first, then session state
+                db_c_s = active_report.get("custom_night_start")
+                db_c_e = active_report.get("custom_night_end")
+                init_s = db_c_s if (db_c_s and db_c_e) else auto_s_dt
+                init_e = db_c_e if (db_c_s and db_c_e) else auto_e_dt
+                
+                night_key = f"night_bounds_{rep_id}"
+                if night_key not in st.session_state:
+                    st.session_state[night_key] = (init_s, init_e)
+                    
+                cur_s_dt, cur_e_dt = st.session_state[night_key]
+                if hasattr(cur_s_dt, "to_pydatetime"):
+                    cur_s_dt = cur_s_dt.to_pydatetime()
+                if hasattr(cur_e_dt, "to_pydatetime"):
+                    cur_e_dt = cur_e_dt.to_pydatetime()
+
+                # Ensure within min_dt and max_dt bounds
+                cur_s_dt = max(min_dt, min(max_dt, cur_s_dt))
+                cur_e_dt = max(min_dt, min(max_dt, cur_e_dt))
+                if cur_s_dt >= cur_e_dt:
+                    cur_s_dt, cur_e_dt = auto_s_dt, auto_e_dt
+
+                start_dt, end_dt = cur_s_dt, cur_e_dt
+                if hasattr(start_dt, "to_pydatetime"):
+                    start_dt = start_dt.to_pydatetime()
+                if hasattr(end_dt, "to_pydatetime"):
+                    end_dt = end_dt.to_pydatetime()
+                if hasattr(min_dt, "to_pydatetime"):
+                    min_dt = min_dt.to_pydatetime()
+                if hasattr(max_dt, "to_pydatetime"):
+                    max_dt = max_dt.to_pydatetime()
+
+                sliced_df = parser.slice_timeline_range(raw_hist_df, start_dt, end_dt)
+                
+                is_custom_saved = (db_c_s is not None and db_c_e is not None) or (start_dt != auto_s_dt or end_dt != auto_e_dt)
+                custom_badge = " *(Saved custom sleep interval active)*" if is_custom_saved else f" *(Default preset: {night_start_cfg:02d}:00 to {night_end_cfg:02d}:00)*"
+                
+                with scope_col2:
+                    st.info(f"🌙 **Targeted Overnight Interval:** `{start_dt.strftime('%Y-%m-%d %H:%M')}` → `{end_dt.strftime('%Y-%m-%d %H:%M')}` (Duration: {(end_dt - start_dt).total_seconds()/3600:.1f} hrs)\n\n{custom_badge}")
+                    with st.expander("⏱️ Adjust Night Sleep/Wake Window for this Report", expanded=False):
+                        st.caption("Adjust the exact sleep boundary if your actual bedtime or wake-up differed from the default preset. Changes are permanently saved for this report:")
+                        c_adj1, c_adj2 = st.columns(2)
+                        with c_adj1:
+                            new_n_start = st.slider(
+                                "Sleep Start:",
+                                min_value=min_dt,
+                                max_value=max_dt,
+                                value=start_dt,
+                                format="MM-DD HH:mm",
+                                key=f"adj_s_{rep_id}"
+                            )
+                        with c_adj2:
+                            new_n_end = st.slider(
+                                "Wake End:",
+                                min_value=min_dt,
+                                max_value=max_dt,
+                                value=end_dt,
+                                format="MM-DD HH:mm",
+                                key=f"adj_e_{rep_id}"
+                            )
+                        if (new_n_start != start_dt or new_n_end != end_dt) and new_n_start < new_n_end:
+                            db.update_report_night_window(rep_id, new_n_start, new_n_end)
+                            active_report["custom_night_start"] = new_n_start
+                            active_report["custom_night_end"] = new_n_end
+                            st.session_state[night_key] = (new_n_start, new_n_end)
+                            st.session_state[f"m_night_{rep_id}"] = (new_n_start, new_n_end)
+                            st.rerun()
+                        if st.button("↺ Reset to Detected Window", key=f"rst_night_{rep_id}"):
+                            db.update_report_night_window(rep_id, None, None)
+                            active_report["custom_night_start"] = None
+                            active_report["custom_night_end"] = None
+                            st.session_state[night_key] = (auto_s_dt, auto_e_dt)
+                            st.session_state[f"m_night_{rep_id}"] = (auto_s_dt, auto_e_dt)
+                            st.rerun()
+        elif "Custom Window" in filter_mode_choice:
+            filter_mode = "custom"
+            with scope_col2:
+                if has_history and min_dt < max_dt:
+                    slider_val = st.slider(
+                        "Drag custom window range (supports spanning across midnight):",
+                        min_value=min_dt,
+                        max_value=max_dt,
+                        value=(min_dt, max_dt),
+                        format="MM-DD HH:mm",
+                        key=f"custom_slider_{rep_id}"
+                    )
+                    start_dt, end_dt = slider_val[0], slider_val[1]
+                    sliced_df = parser.slice_timeline_range(raw_hist_df, start_dt, end_dt)
+                else:
+                    st.caption("Timeline history not sufficient for range slider.")
+        elif "Screen-Off" in filter_mode_choice:
+            filter_mode = "screen_off"
+            with scope_col2:
+                st.info("📴 **Screen-Off Standby Focus:** Evaluates energy consumed exclusively when the display was turned off/dozing.")
+            sliced_df = raw_hist_df
+        else:
+            filter_mode = "full"
+            with scope_col2:
+                st.caption(f"Showing entire recorded bugreport session ({min_dt.strftime('%Y-%m-%d %H:%M')} to {max_dt.strftime('%Y-%m-%d %H:%M')}).")
+            
+        # Compute Sliced Timeline & KPIs
+        kpis = parser.compute_window_kpis(sliced_df)
+        
+        # Display Targeted KPI Cards
+        st.markdown(f"**Window Health: {kpis['status']}**")
+        kpi_c1, kpi_c2, kpi_c3, kpi_c4 = st.columns(4)
+        kpi_c1.metric("Window Interval", f"{kpis['start_time']} → {kpis['end_time']}")
+        kpi_c2.metric("Battery Levels", f"{kpis['start_level']}% → {kpis['end_level']}%")
+        kpi_c3.metric("Total Drop", f"{kpis['drop_pct']}% ({kpis['duration_hrs']:.1f} hrs)")
+        kpi_c4.metric("Discharge Rate", f"{kpis['rate_per_hr']:.2f}% / hr")
+        
+        st.divider()
+        
+        # --- Visualizations Section ---
+        chart_col1, chart_col2 = st.columns([1, 1])
+        
+        # 1. Timeline Chart
+        with chart_col1:
+            st.markdown("#### 📈 Battery Level Timeline")
+            if sliced_df is not None and not sliced_df.empty and "Time" in sliced_df.columns and "Level" in sliced_df.columns:
+                title_suffix = f"({filter_mode_choice})" if filter_mode != "full" else ""
+                fig_hist = px.line(
+                    sliced_df, x='Time', y='Level',
+                    title=f"Discharge Curve {title_suffix}",
+                    labels={"Level": "Battery Level (%)", "Time": "Device Time"}
+                )
+                fig_hist.update_yaxes(range=[0, 105])
+                fig_hist.update_traces(line=dict(width=2.5, color="#3b82f6"))
+                if show_night_shading:
+                    if filter_mode == "night" and start_dt and end_dt:
+                        fig_hist.add_vrect(
+                            x0=start_dt, x1=end_dt,
+                            fillcolor="rgba(30, 41, 59, 0.20)",
+                            layer="below",
+                            line_width=0,
+                            annotation_text="🌙 Night",
+                            annotation_position="top left",
+                            annotation_font_size=10,
+                            annotation_font_color="gray"
+                        )
+                    else:
+                        fig_hist = add_night_shading(fig_hist, sliced_df, night_start=night_start_cfg, night_end=night_end_cfg)
+                st.plotly_chart(fig_hist, use_container_width=True, key=f"hist_single_{rep_id}_{filter_mode}")
+            else:
+                st.info("No timeline data matches this filter.")
+                
+        # 2. Drain Breakdown Chart & Web Search Tool
+        with chart_col2:
+            st.markdown("#### ⚡ Power Consumers & App Research")
+            standby_df = parser.extract_screen_off_chart_data(active_report.get("summary_text", ""))
+            
+            if filter_mode in ["night", "screen_off"] and standby_df is not None and not standby_df.empty:
+                df_chart = standby_df
+                chart_title = "⚡ Standby / Screen-Off Consumers (mAh)"
+                st.caption("💤 *Isolated to battery consumed while screen was off/dozing.*")
+            else:
+                df_chart = active_report.get("chart_data")
+                chart_title = "⚡ Top Power Consumers (Full Session mAh)"
+                
+            # Clean component names into human-readable labels and deduplicate
+            df_chart = parser.clean_chart_dataframe(df_chart, active_report.get("summary_text", ""))
+                
+            if df_chart is not None and not df_chart.empty:
+                if chart_type == "Bar Chart":
+                    fig_drain = px.bar(
+                        df_chart, x='Component', y='mAh', color='Component',
+                        title=chart_title,
+                        labels={"mAh": "Consumption (mAh)", "Component": "App / Service"}
+                    )
+                else:
+                    fig_drain = px.pie(df_chart, values='mAh', names='Component', title=chart_title)
+                st.plotly_chart(fig_drain, use_container_width=True, key=f"drain_single_{rep_id}_{filter_mode}")
+                
+                # Web Research Selector for top components
+                with st.expander("🔍 Investigate Top App on Web (Live Knowledge)"):
+                    comp_names = df_chart['Component'].tolist()
+                    if comp_names:
+                        selected_pkg_to_search = st.selectbox("Select component / app to research:", comp_names, key=f"pkg_sel_{rep_id}_{filter_mode}")
+                        if st.button("🌐 Search Public Knowledge & Drain Issues", key=f"btn_search_{rep_id}_{filter_mode}"):
+                            with st.spinner(f"Querying public web intelligence for {selected_pkg_to_search}..."):
+                                intel = web_search.investigate_package(selected_pkg_to_search)
+                                st.markdown(intel)
+            else:
+                st.info("No component breakdown data parsed.")
+                
+        st.divider()
+        
+        # --- AI Diagnosis Section ---
+        st.markdown('### ✨ Oracle Diagnosis <span class="ai-badge">✨ AI GENERATED</span>', unsafe_allow_html=True)
+        
+        diag_cache_key = f"diag_{rep_id}_{filter_mode}"
+        if filter_mode == "full":
+            active_diagnosis = active_report.get("initial_analysis", "No baseline analysis available.")
+            diag_subtitle = "🌐 Full Session Baseline Diagnosis"
+        else:
+            cached_filtered = db.get_setting(diag_cache_key)
+            if cached_filtered:
+                active_diagnosis = cached_filtered
+                diag_subtitle = f"🎯 Targeted Scope Diagnosis: {filter_mode_choice}"
+            else:
+                active_diagnosis = None
+                diag_subtitle = f"⏳ Targeted Scope: {filter_mode_choice} (Not yet generated)"
+                
+        col_diag_hdr, col_re_diag, col_dl = st.columns([3, 1.2, 1.2])
+        with col_diag_hdr:
+            st.caption(f"**Current Scope:** {diag_subtitle}")
+            
+        with col_re_diag:
+            btn_label = "🔄 Re-Diagnose" if active_diagnosis else f"✨ Generate Targeted Diagnosis"
+            if st.button(btn_label, key=f"btn_diag_{rep_id}_{filter_mode}", use_container_width=True):
+                filtered_telemetry = parser.get_filtered_telemetry_for_llm(active_report["summary_text"], filter_mode, kpis)
+                
+                # Inject active device profile inventory if available
+                active_inv_profile = db.get_latest_device_profile()
+                profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+                if profile_summary:
+                    filtered_telemetry = f"{profile_summary}\n\n{filtered_telemetry}"
+
+                diag_prompt_tmpl = llm_manager.get_prompt_template("single_diagnosis")
+                formatted_diag_prompt = diag_prompt_tmpl.format(
+                    report_name=active_report["custom_name"],
+                    timestamp_str=active_report["timestamp_str"],
+                    device_info=active_report.get("device_info", "Unknown"),
+                    timezone_info=timezone,
+                    telemetry_data=filtered_telemetry
+                )
+                with st.spinner(f"🔮 Oracle is evaluating {filter_mode_choice}..."):
+                    try:
+                        new_diag = llm_manager.call_llm_tracked(
+                            messages=[{"role": "system", "content": formatted_diag_prompt}],
+                            report_id=rep_id,
+                            action_type=f"diagnosis_{filter_mode}"
+                        )
+                        # Sanitize AI output to guarantee no bare UIDs remain
+                        new_diag = parser.sanitize_ai_output(new_diag, active_report.get("summary_text", ""))
+                        if filter_mode == "full":
+                            db.update_report_analysis(rep_id, new_diag, active_report.get("reasoning_trace", ""))
+                            active_report["initial_analysis"] = new_diag
+                        else:
+                            db.set_setting(diag_cache_key, new_diag)
+                        st.session_state.pop(f"err_diag_{rep_id}", None)
+                        st.success("Diagnosis updated!")
+                        st.rerun()
+                    except Exception as e:
+                        st.session_state[f"err_diag_{rep_id}"] = (e, f"evaluating battery diagnosis ({filter_mode_choice})")
+                        
+        with col_dl:
+            if active_diagnosis:
+                md_content = build_single_report_markdown(active_report, filter_mode, kpis, active_diagnosis)
+                st.download_button(
+                    label="📥 Export Report (.md)",
+                    data=md_content,
+                    file_name=f"{active_report['custom_name']}_{filter_mode}_diagnosis.md",
+                    mime="text/markdown",
+                    key=f"dl_single_md_{rep_id}_{filter_mode}",
+                    use_container_width=True
+                )
+                        
+        # Render any captured diagnosis error at full width below the action bar
+        if st.session_state.get(f"err_diag_{rep_id}"):
+            err_obj, err_act = st.session_state[f"err_diag_{rep_id}"]
+            render_ai_error(err_obj, action_description=err_act, key_suffix=f"diag_{rep_id}")
+
+        if active_diagnosis:
+            render_ai_block(active_diagnosis, key_suffix=f"single_{rep_id}_{filter_mode}")
+        else:
+            st.info(f"💡 You have selected **{filter_mode_choice}** (Window: {kpis['start_time']} → {kpis['end_time']}, Drop: {kpis['drop_pct']}%, Rate: {kpis['rate_per_hr']:.2f}%/hr).\n\nClick **'{btn_label}'** above to generate an AI diagnosis focused strictly on standby drain, wakelocks, and unoptimized background processes for this window.")
+            with st.expander("📄 View Full Session Baseline Diagnosis for Reference", expanded=False):
+                render_ai_block(active_report.get("initial_analysis", "No baseline analysis available."), key_suffix=f"single_base_{rep_id}")
+                
+        with st.expander("🔍 View Telemetry Snippet & Diagnostic Trace", expanded=False):
+            if active_report.get("reasoning_trace"):
+                st.caption(f"**Diagnostic Trace:** {active_report['reasoning_trace']}")
+            st.text_area("Batterystats Excerpt", active_report["summary_text"][:2500], height=200, disabled=True)
+            
+        st.divider()
+        
+        # --- MULTI-THREADED CHAT WORKSPACE ---
+        st.markdown("### 💬 Multi-Threaded Investigation Workspace")
+        
+        # Thread management bar
+        thread_sort = st.radio("Sort Threads By:", ["Last Active", "Creation Time", "Alphabetical"], horizontal=True, key=f"sort_th_{rep_id}")
+        sort_key_map = {"Last Active": "updated_at", "Creation Time": "created_at", "Alphabetical": "title"}
+        
+        threads = db.get_threads_for_report(rep_id, sort_by=sort_key_map[thread_sort])
+        thread_dict = {t["id"]: t["title"] for t in threads}
+        
+        if st.session_state.active_thread_id not in thread_dict:
+            st.session_state.active_thread_id = threads[0]["id"]
+            
+        st.caption("Active Conversation Thread & Thread Actions:")
+        t_col1, t_col2, t_col3, t_col4 = st.columns([3, 1, 1, 1])
+        with t_col1:
+            selected_th_id = st.selectbox(
+                "Active Thread:",
+                options=list(thread_dict.keys()),
+                format_func=lambda x: f"🧵 {thread_dict[x]}",
+                index=list(thread_dict.keys()).index(st.session_state.active_thread_id),
+                key=f"thread_sel_{rep_id}",
+                label_visibility="collapsed"
+            )
+            st.session_state.active_thread_id = selected_th_id
+            
+        with t_col2:
+            with st.popover("➕ New", use_container_width=True):
+                new_th_title = st.text_input("Thread Title", placeholder="e.g. WhatsApp Drain Inquiry", key=f"new_th_t_{rep_id}")
+                if st.button("Create", key=f"btn_create_th_{rep_id}", use_container_width=True):
+                    nid = db.create_thread(rep_id, new_th_title or "New Investigation")
+                    st.session_state.active_thread_id = nid
+                    st.rerun()
+                    
+        with t_col3:
+            with st.popover("✏️ Rename", use_container_width=True):
+                cur_title = thread_dict[st.session_state.active_thread_id]
+                ren_title = st.text_input("New Name", value=cur_title, key=f"ren_th_t_{rep_id}")
+                if st.button("Update Title", key=f"btn_ren_th_{rep_id}", use_container_width=True):
+                    db.rename_thread(st.session_state.active_thread_id, ren_title)
+                    st.rerun()
+                    
+        with t_col4:
+            if len(threads) > 1:
+                if st.button("🗑️ Delete", key=f"btn_del_th_{rep_id}", use_container_width=True):
+                    db.delete_thread(st.session_state.active_thread_id)
+                    st.session_state.active_thread_id = None
+                    st.rerun()
+            else:
+                if st.button("🧹 Clear", key=f"btn_clear_th_{rep_id}", use_container_width=True):
+                    db.clear_thread_messages(st.session_state.active_thread_id)
+                    st.success("Thread context cleared!")
+                    st.rerun()
+                    
+        # Active Messages Display
+        thread_messages = db.get_chat_messages(rep_id, thread_id=st.session_state.active_thread_id)
+
+        # Chat Search & Bulk Actions Bar
+        tb_col1, tb_col2, tb_col3 = st.columns([3.6, 1.2, 1.2], vertical_alignment="center")
+        with tb_col1:
+            chat_search_query = st.text_input(
+                "Search messages",
+                placeholder="🔎 Find in messages...",
+                key=f"search_chat_{rep_id}_{st.session_state.active_thread_id}",
+                label_visibility="collapsed"
+            )
+        with tb_col2:
+            if st.button("⊞ Expand All", key=f"btn_exp_all_{rep_id}", use_container_width=True, disabled=not bool(thread_messages)):
+                db.set_thread_messages_collapsed(st.session_state.active_thread_id, False)
+                for m in thread_messages:
+                    st.session_state[f"msg_col_{m['id']}"] = False
+                st.rerun()
+        with tb_col3:
+            if st.button("⊟ Collapse All", key=f"btn_col_all_{rep_id}", use_container_width=True, disabled=not bool(thread_messages)):
+                db.set_thread_messages_collapsed(st.session_state.active_thread_id, True)
+                for m in thread_messages:
+                    st.session_state[f"msg_col_{m['id']}"] = True
+                st.rerun()
+
+        # Display Search Status Banner
+        if chat_search_query and chat_search_query.strip():
+            sq = chat_search_query.strip()
+            total_m = 0
+            matching_ids = set()
+            for m in thread_messages:
+                _, c = highlight_search_query(m.get("content", ""), sq)
+                if c > 0:
+                    total_m += c
+                    matching_ids.add(m["id"])
+            if total_m > 0:
+                st.caption(f"🔎 Found **{total_m}** match{'es' if total_m != 1 else ''} in **{len(matching_ids)}** message{'s' if len(matching_ids) != 1 else ''}. *(Matching messages auto-expanded and highlighted)*")
+            else:
+                st.caption(f"🔎 No matches found for **\"{sq}\"**.")
+
+        for msg in thread_messages:
+            render_chat_message_item(
+                msg=msg,
+                rep_id=rep_id,
+                active_th_id=st.session_state.active_thread_id,
+                thread_dict=thread_dict,
+                is_global=False,
+                search_query=chat_search_query
+            )
+                            
+        # Chat Input Box
+        if prompt := st.chat_input("Ask about battery drain, wakelocks, or apps in this thread..."):
+            filter_label = f"{filter_mode_choice} ({kpis['start_time']} -> {kpis['end_time']})"
+            
+            with st.chat_message("user"):
+                st.caption(f"🎯 *Active Scope: {filter_label}*")
+                st.markdown(prompt)
+                
+            db.save_chat_message(
+                report_id=rep_id,
+                role="user",
+                content=prompt,
+                thread_id=st.session_state.active_thread_id,
+                filter_context=filter_label
+            )
+            
+            # Auto-title thread if it is the first user message and has default name
+            if len(thread_messages) == 0 and "New" in thread_dict[st.session_state.active_thread_id]:
+                auto_title = prompt[:25].strip() + "..."
+                db.rename_thread(st.session_state.active_thread_id, auto_title)
+                
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                with st.spinner("Oracle is reasoning with active filter context..."):
+                    # Build targeted telemetry for active filter
+                    filtered_telemetry = parser.get_filtered_telemetry_for_llm(active_report["summary_text"], filter_mode, kpis)
+                    active_inv_profile = db.get_latest_device_profile()
+                    profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+                    if profile_summary:
+                        filtered_telemetry = f"{profile_summary}\n\n{filtered_telemetry}"
+                    
+                    chat_tmpl = llm_manager.get_prompt_template("chat_assistant")
+                    sys_prompt = chat_tmpl.format(
+                        filter_context=f"Active Scope: {filter_label} | Discharge Rate: {kpis['rate_per_hr']:.2f}%/hr | Status: {kpis['status']}",
+                        report_name=active_report["custom_name"],
+                        device_info=active_report.get("device_info", "Unknown"),
+                        timestamp_str=active_report["timestamp_str"],
+                        description=active_report.get("description", ""),
+                        telemetry_data=filtered_telemetry
+                    )
+                    
+                    messages = [{"role": "system", "content": sys_prompt}]
+                    for m in thread_messages:
+                        messages.append({"role": m["role"], "content": m["content"]})
+                    messages.append({"role": "user", "content": prompt})
+                    
+                    try:
+                        reply = llm_manager.call_llm_tracked(
+                            messages=messages,
+                            report_id=rep_id,
+                            thread_id=st.session_state.active_thread_id,
+                            action_type="chat"
+                        )
+                        message_placeholder.markdown(reply)
+                        db.save_chat_message(
+                            report_id=rep_id,
+                            role="assistant",
+                            content=reply,
+                            thread_id=st.session_state.active_thread_id,
+                            filter_context=filter_label
+                        )
+                    except Exception as e:
+                        with message_placeholder.container():
+                            render_ai_error(e, action_description="generating assistant reply", key_suffix=f"chat_{rep_id}_{st.session_state.active_thread_id}")
+
+# ==============================================================================
+# VIEW 2: MERGED & COMPARE ALL REPORTS VIEW
+# ==============================================================================
+elif st.session_state.active_tab == "merged":
+    st.markdown("## 🔀 Multi-Report Comparison & Merged Workspace")
+    st.caption("Compare battery discharge curves, evaluate optimization changes, and isolate multi-day patterns.")
+    
+    if len(all_reports) < 2:
+        st.warning("⚠️ You need at least 2 saved bugreports in the database to run a comparative analysis.")
+        if all_reports:
+            st.info(f"Currently saved: **{all_reports[0]['custom_name']}**. Upload a second bugreport using the sidebar to compare.")
+    else:
+        report_dict = {r["id"]: r for r in all_reports}
+        selected_ids = st.multiselect(
+            "Select reports to compare:",
+            options=list(report_dict.keys()),
+            default=list(report_dict.keys()),
+            format_func=lambda x: f"{report_dict[x]['custom_name']} ({report_dict[x]['timestamp_str']})"
+        )
+        
+        if len(selected_ids) >= 2:
+            compared_reports = [report_dict[rid] for rid in selected_ids]
+            
+            # --- Scope Filter for Merged Comparison ---
+            st.markdown("### 🎯 Comparative Analysis Scope & Filter")
+            m_scope_col1, m_scope_col2 = st.columns([2, 3])
+            with m_scope_col1:
+                merged_filter_choice = st.radio(
+                    "Comparative Scope:",
+                    ["🌐 Full Session", "🌙 Night Standby (Preset)", "⏱️ Custom Window", "📴 Screen-Off Only"],
+                    horizontal=True,
+                    key="merged_scope_radio"
+                )
+                
+            # Helper to get the active window for each report (considering custom overrides)
+            def get_effective_bounds(rep, m_mode):
+                df_h = rep.get("history_data")
+                if df_h is None or df_h.empty or "Time" not in df_h.columns:
+                    return None, None, pd.DataFrame()
+                r_min, r_max = df_h["Time"].min(), df_h["Time"].max()
+                if m_mode == "night":
+                    auto_s, auto_e = parser.get_latest_night_window(r_min, r_max, night_start_cfg, night_end_cfg)
+                    if hasattr(auto_s, "to_pydatetime"):
+                        auto_s = auto_s.to_pydatetime()
+                    if hasattr(auto_e, "to_pydatetime"):
+                        auto_e = auto_e.to_pydatetime()
+
+                    db_c_s = rep.get("custom_night_start")
+                    db_c_e = rep.get("custom_night_end")
+                    def_s = db_c_s if (db_c_s and db_c_e) else auto_s
+                    def_e = db_c_e if (db_c_s and db_c_e) else auto_e
+
+                    ov_key = f"m_night_{rep['id']}"
+                    if ov_key not in st.session_state:
+                        st.session_state[ov_key] = (def_s, def_e)
+
+                    s_dt, e_dt = st.session_state[ov_key]
+                    if hasattr(s_dt, "to_pydatetime"):
+                        s_dt = s_dt.to_pydatetime()
+                    if hasattr(e_dt, "to_pydatetime"):
+                        e_dt = e_dt.to_pydatetime()
+
+                    s_dt = max(r_min.to_pydatetime(), min(r_max.to_pydatetime(), s_dt))
+                    e_dt = max(r_min.to_pydatetime(), min(r_max.to_pydatetime(), e_dt))
+                    if s_dt >= e_dt:
+                        s_dt, e_dt = def_s, def_e
+                    sl_df = parser.slice_timeline_range(df_h, s_dt, e_dt)
+                    return s_dt, e_dt, sl_df
+                else:
+                    return r_min.to_pydatetime(), r_max.to_pydatetime(), df_h
+
+            merged_filter_mode = "full"
+            if "Night Standby" in merged_filter_choice:
+                merged_filter_mode = "night"
+                with m_scope_col2:
+                    st.info(f"🌙 **Targeted Overnight Interval:** Analyzing sleep windows ({night_start_cfg:02d}:00 to {night_end_cfg:02d}:00) across all selected bugreports.")
+                    with st.expander("⏱️ Adjust Per-Report Night Sleep/Wake Intervals", expanded=False):
+                        st.caption("Fine-tune the exact bedtime and wake-up boundaries individually for each compared day. Changes are permanently saved:")
+                        for r in compared_reports:
+                            df_h_r = r.get("history_data")
+                            if df_h_r is not None and not df_h_r.empty and "Time" in df_h_r.columns:
+                                r_min_t = df_h_r["Time"].min()
+                                r_max_t = df_h_r["Time"].max()
+                                r_min_dt = r_min_t.to_pydatetime() if hasattr(r_min_t, "to_pydatetime") else r_min_t
+                                r_max_dt = r_max_t.to_pydatetime() if hasattr(r_max_t, "to_pydatetime") else r_max_t
+                                
+                                r_auto_s, r_auto_e = parser.get_latest_night_window(r_min_t, r_max_t, night_start_cfg, night_end_cfg)
+                                if hasattr(r_auto_s, "to_pydatetime"):
+                                    r_auto_s = r_auto_s.to_pydatetime()
+                                if hasattr(r_auto_e, "to_pydatetime"):
+                                    r_auto_e = r_auto_e.to_pydatetime()
+                                    
+                                db_c_s = r.get("custom_night_start")
+                                db_c_e = r.get("custom_night_end")
+                                def_s = db_c_s if (db_c_s and db_c_e) else r_auto_s
+                                def_e = db_c_e if (db_c_s and db_c_e) else r_auto_e
+
+                                r_ov_key = f"m_night_{r['id']}"
+                                if r_ov_key not in st.session_state:
+                                    st.session_state[r_ov_key] = (def_s, def_e)
+                                    
+                                cur_s, cur_e = st.session_state[r_ov_key]
+                                if hasattr(cur_s, "to_pydatetime"):
+                                    cur_s = cur_s.to_pydatetime()
+                                if hasattr(cur_e, "to_pydatetime"):
+                                    cur_e = cur_e.to_pydatetime()
+                                    
+                                # Guarantee bounds
+                                cur_s = max(r_min_dt, min(r_max_dt, cur_s))
+                                cur_e = max(r_min_dt, min(r_max_dt, cur_e))
+                                
+                                is_custom = (db_c_s is not None and db_c_e is not None) or (cur_s != r_auto_s or cur_e != r_auto_e)
+                                badge_txt = " *(Custom saved)*" if is_custom else ""
+
+                                st.markdown(f"**{r['custom_name']}** ({r['timestamp_str']}){badge_txt}")
+                                mc1, mc2, mc3 = st.columns([3, 3, 1.2])
+                                with mc1:
+                                    ns = st.slider(f"Start ({r['custom_name'][:10]}):", min_value=r_min_dt, max_value=r_max_dt, value=cur_s, format="MM-DD HH:mm", key=f"sl_ms_{r['id']}")
+                                with mc2:
+                                    ne = st.slider(f"End ({r['custom_name'][:10]}):", min_value=r_min_dt, max_value=r_max_dt, value=cur_e, format="MM-DD HH:mm", key=f"sl_me_{r['id']}")
+                                with mc3:
+                                    st.write("")
+                                    if st.button("↺ Reset", key=f"btn_rst_m_{r['id']}", help="Reset to auto-detected preset"):
+                                        db.update_report_night_window(r['id'], None, None)
+                                        r["custom_night_start"] = None
+                                        r["custom_night_end"] = None
+                                        st.session_state[r_ov_key] = (r_auto_s, r_auto_e)
+                                        st.session_state[f"night_bounds_{r['id']}"] = (r_auto_s, r_auto_e)
+                                        st.rerun()
+                                if (ns != cur_s or ne != cur_e) and ns < ne:
+                                    db.update_report_night_window(r['id'], ns, ne)
+                                    r["custom_night_start"] = ns
+                                    r["custom_night_end"] = ne
+                                    st.session_state[r_ov_key] = (ns, ne)
+                                    st.session_state[f"night_bounds_{r['id']}"] = (ns, ne)
+                                    st.rerun()
+            elif "Custom Window" in merged_filter_choice:
+                merged_filter_mode = "custom"
+                with m_scope_col2:
+                    st.caption("Comparing customized window intervals across the loaded reports.")
+            elif "Screen-Off" in merged_filter_choice:
+                merged_filter_mode = "screen_off"
+                with m_scope_col2:
+                    st.info("📴 **Screen-Off Standby Focus:** Comparing idle battery loss consumed specifically while displays were turned off/dozing.")
+            else:
+                merged_filter_mode = "full"
+                with m_scope_col2:
+                    st.caption("Comparing full recorded bugreport durations.")
+                    
+            st.divider()
+            
+            # --- 1. Merged Timeline Chart ---
+            st.markdown("### 📈 Merged Battery Level Timelines")
+            fig_merged = go.Figure()
+            colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"]
+            all_times = []
+            
+            for idx, rep in enumerate(compared_reports):
+                _, _, plot_df = get_effective_bounds(rep, merged_filter_mode)
+                if not plot_df.empty and "Time" in plot_df.columns and "Level" in plot_df.columns:
+                    all_times.extend(plot_df["Time"].tolist())
+                    fig_merged.add_trace(go.Scatter(
+                        x=plot_df["Time"],
+                        y=plot_df["Level"],
+                        mode='lines',
+                        name=f"{rep['custom_name']} ({'🌙 Night' if merged_filter_mode == 'night' else 'Full'})",
+                        line=dict(width=2.5, color=colors[idx % len(colors)])
+                    ))
+                    
+            fig_merged.update_layout(
+                title=f"Comparative Battery Discharge Curves ({merged_filter_choice})",
+                xaxis_title="Timeline",
+                yaxis_title="Battery Level (%)",
+                yaxis=dict(range=[0, 105]),
+                hovermode="x unified"
+            )
+            
+            if show_night_shading and all_times:
+                if merged_filter_mode == "night":
+                    # Collect night intervals across compared reports
+                    night_intervals = []
+                    for rep in compared_reports:
+                        s_dt, e_dt, _ = get_effective_bounds(rep, "night")
+                        if s_dt and e_dt and s_dt < e_dt:
+                            night_intervals.append((s_dt, e_dt))
+                    
+                    # Merge overlapping or contiguous intervals
+                    merged_intervals = []
+                    for s, e in sorted(night_intervals, key=lambda x: x[0]):
+                        if not merged_intervals:
+                            merged_intervals.append([s, e])
+                        else:
+                            if s <= merged_intervals[-1][1]:
+                                merged_intervals[-1][1] = max(merged_intervals[-1][1], e)
+                            else:
+                                merged_intervals.append([s, e])
+                                
+                    for x0, x1 in merged_intervals:
+                        fig_merged.add_vrect(
+                            x0=x0, x1=x1,
+                            fillcolor="rgba(30, 41, 59, 0.20)",
+                            layer="below",
+                            line_width=0,
+                            annotation_text="🌙 Night",
+                            annotation_position="top left",
+                            annotation_font_size=10,
+                            annotation_font_color="gray"
+                        )
+                else:
+                    df_all_times = pd.DataFrame({"Time": all_times})
+                    fig_merged = add_night_shading(fig_merged, df_all_times, night_start=night_start_cfg, night_end=night_end_cfg)
+                
+            st.plotly_chart(fig_merged, use_container_width=True, key=f"merged_timeline_{merged_filter_mode}")
+            
+            # --- Comparative Scorecard Table ---
+            st.markdown("#### 📊 Comparative Session Metrics")
+            kpi_rows = []
+            for rep in compared_reports:
+                s_dt, e_dt, t_df = get_effective_bounds(rep, merged_filter_mode)
+                rep_kpi = parser.compute_window_kpis(t_df)
+                kpi_rows.append({
+                    "Session": rep["custom_name"],
+                    "Interval": f"{rep_kpi['start_time']} → {rep_kpi['end_time']}",
+                    "Duration": f"{rep_kpi['duration_hrs']:.1f} hrs",
+                    "Drop": f"{rep_kpi['drop_pct']}% ({rep_kpi['start_level']}% → {rep_kpi['end_level']}%)",
+                    "Velocity": f"{rep_kpi['rate_per_hr']:.2f}% / hr",
+                    "Assessment": rep_kpi["status"]
+                })
+            st.dataframe(pd.DataFrame(kpi_rows), use_container_width=True)
+            
+            st.divider()
+            
+            # --- 2. Side-by-Side Drain Comparison ---
+            st.markdown("### ⚡ Component Consumption Comparison (mAh)")
+            comp_rows = []
+            for rep in compared_reports:
+                summary_txt = rep.get("summary_text", "")
+                if merged_filter_mode in ["night", "screen_off"]:
+                    df_c = parser.extract_screen_off_chart_data(summary_txt)
+                else:
+                    df_c = rep.get("chart_data")
+                    
+                if df_c is not None and not df_c.empty:
+                    df_clean = parser.clean_chart_dataframe(df_c, summary_txt)
+                    for _, row in df_clean.iterrows():
+                        comp_rows.append({
+                            "Report": rep["custom_name"],
+                            "Component": row["Component"],
+                            "mAh": row["mAh"]
+                        })
+                        
+            if comp_rows:
+                df_comp = pd.DataFrame(comp_rows)
+                fig_comp = px.bar(
+                    df_comp, x="Component", y="mAh", color="Report",
+                    barmode="group",
+                    title=f"Component Drain Across Reports (mAh - {merged_filter_choice})"
+                )
+                st.plotly_chart(fig_comp, use_container_width=True, key=f"merged_comp_chart_{merged_filter_mode}")
+                
+            st.divider()
+            
+            # --- Tabbed Organization: Report vs Investigation Chat ---
+            tab_comp_report, tab_comp_chat = st.tabs(["✨ Comparative Optimization Report", "💬 Investigation Chat ✨"])
+            
+            with tab_comp_report:
+                comp_key = ",".join(map(str, sorted(selected_ids)))
+                saved_combined = db.get_combined_analysis(comp_key, scope_key=merged_filter_mode)
+                
+                col_eval_btn, col_eval_status, col_eval_dl = st.columns([1.3, 2.5, 1.2])
+                with col_eval_btn:
+                    re_analyze = st.button("🔄 Generate / Refresh Analysis", key=f"btn_run_comp_{merged_filter_mode}", use_container_width=True)
+                    
+                combined_text = ""
+                gen_timestamp = ""
+                if saved_combined and not re_analyze:
+                    combined_text = saved_combined["analysis_text"]
+                    gen_timestamp = saved_combined.get("updated_at", "")
+                else:
+                    with st.spinner(f"🔮 Oracle is synthesizing comparative evaluation for {merged_filter_choice}..."):
+                        reports_summary_text = ""
+                        for idx, rep in enumerate(compared_reports):
+                            r_s, r_e, _ = get_effective_bounds(rep, merged_filter_mode)
+                            reports_summary_text += f"\n--- REPORT {idx+1}: {rep['custom_name']} (Captured: {rep['timestamp_str']}) ---\n"
+                            reports_summary_text += f"Device: {rep.get('device_info', 'Unknown')}\n"
+                            reports_summary_text += f"Notes: {rep.get('description', 'None')}\n"
+                            reports_summary_text += f"{build_compact_summary(rep, filter_mode=merged_filter_mode, n_start=night_start_cfg, n_end=night_end_cfg, custom_start_dt=r_s, custom_end_dt=r_e)}\n"
+                            
+                        comp_prompt_tmpl = llm_manager.get_prompt_template("comparison")
+                        active_inv_profile = db.get_latest_device_profile()
+                        profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+                        if profile_summary:
+                            reports_summary_text = f"{profile_summary}\n\n{reports_summary_text}"
+
+                        formatted_comp_prompt = comp_prompt_tmpl.format(
+                            report_count=len(compared_reports),
+                            timezone_info=timezone,
+                            reports_summary=reports_summary_text
+                        )
+                        
+                        comp_err = None
+                        try:
+                            combined_text = llm_manager.call_llm_tracked(
+                                messages=[{"role": "system", "content": formatted_comp_prompt}],
+                                action_type=f"comparative_evaluation_{merged_filter_mode}"
+                            )
+                            db.save_combined_analysis(comp_key, combined_text, scope_key=merged_filter_mode)
+                            gen_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        except Exception as e:
+                            combined_text = None
+                            comp_err = e
+                                
+                with col_eval_dl:
+                    if combined_text and not combined_text.startswith("⚠️"):
+                        comp_md = build_comparative_markdown(compared_reports, merged_filter_choice, combined_text)
+                        st.download_button(
+                            label="📥 Export Analysis (.md)",
+                            data=comp_md,
+                            file_name=f"comparative_{merged_filter_mode}_analysis.md",
+                            mime="text/markdown",
+                            key=f"dl_comp_md_{merged_filter_mode}",
+                            use_container_width=True
+                        )
+                
+                if not combined_text and not saved_combined and 'comp_err' in locals() and comp_err:
+                    render_ai_error(comp_err, action_description=f"generating comparative analysis ({merged_filter_choice})", key_suffix=f"comp_{merged_filter_mode}")
+
+                # Render metadata banner
+                if gen_timestamp and combined_text:
+                    clean_ts = gen_timestamp[:16].replace("T", " ")
+                    st.caption(f"🕒 **Last Evaluated:** `{clean_ts}` &nbsp;•&nbsp; 🎯 **Scope:** `{merged_filter_choice}` &nbsp;•&nbsp; 📱 **Grounded:** `Bugreport Telemetry + Device Profile`")
+                    
+                if combined_text:
+                    render_ai_block(combined_text, key_suffix=f"comp_{merged_filter_mode}")
+
+            with tab_comp_chat:
+                st.caption(f"💬 *Investigation chat across all {len(compared_reports)} selected bugreports. Grounded in active scope: **{merged_filter_choice}** and device profile.*")
+                global_threads = db.get_threads_for_report(None)
+                g_th_dict = {t["id"]: t["title"] for t in global_threads}
+                
+                if "global_thread_id" not in st.session_state or st.session_state.global_thread_id not in g_th_dict:
+                    st.session_state.global_thread_id = global_threads[0]["id"]
+                    
+                gc_1, gc_2 = st.columns([3, 1])
+                with gc_1:
+                    g_sel = st.selectbox(
+                        "Global Thread:",
+                        options=list(g_th_dict.keys()),
+                        format_func=lambda x: f"🧵 {g_th_dict[x]}",
+                        index=list(g_th_dict.keys()).index(st.session_state.global_thread_id),
+                        key="global_th_sel",
+                        label_visibility="collapsed"
+                    )
+                    st.session_state.global_thread_id = g_sel
+                with gc_2:
+                    with st.popover("➕ New Global Thread", use_container_width=True):
+                        g_new_title = st.text_input("Title", key="g_new_th_t")
+                        if st.button("Create Thread", key="btn_g_new_th"):
+                            nid = db.create_thread(None, g_new_title or "Global Thread")
+                            st.session_state.global_thread_id = nid
+                            st.rerun()
+                            
+                merged_chat = db.get_chat_messages(None, thread_id=st.session_state.global_thread_id)
+
+                # Chat Search & Bulk Actions Bar
+                gtb_col1, gtb_col2, gtb_col3 = st.columns([3.6, 1.2, 1.2], vertical_alignment="center")
+                with gtb_col1:
+                    g_chat_search_query = st.text_input(
+                        "Search messages",
+                        placeholder="🔎 Find in messages...",
+                        key=f"g_search_chat_{st.session_state.global_thread_id}",
+                        label_visibility="collapsed"
+                    )
+                with gtb_col2:
+                    if st.button("⊞ Expand All", key="btn_g_exp_all", use_container_width=True, disabled=not bool(merged_chat)):
+                        db.set_thread_messages_collapsed(st.session_state.global_thread_id, False)
+                        for m in merged_chat:
+                            st.session_state[f"msg_col_{m['id']}"] = False
+                        st.rerun()
+                with gtb_col3:
+                    if st.button("⊟ Collapse All", key="btn_g_col_all", use_container_width=True, disabled=not bool(merged_chat)):
+                        db.set_thread_messages_collapsed(st.session_state.global_thread_id, True)
+                        for m in merged_chat:
+                            st.session_state[f"msg_col_{m['id']}"] = True
+                        st.rerun()
+
+                # Display Search Status Banner
+                if g_chat_search_query and g_chat_search_query.strip():
+                    g_sq = g_chat_search_query.strip()
+                    g_total_m = 0
+                    g_matching_ids = set()
+                    for m in merged_chat:
+                        _, c = highlight_search_query(m.get("content", ""), g_sq)
+                        if c > 0:
+                            g_total_m += c
+                            g_matching_ids.add(m["id"])
+                    if g_total_m > 0:
+                        st.caption(f"🔎 Found **{g_total_m}** match{'es' if g_total_m > 1 else ''} in **{len(g_matching_ids)}** message{'s' if len(g_matching_ids) > 1 else ''}. *(Matching messages auto-expanded and highlighted)*")
+                    else:
+                        st.caption(f"🔎 No matches found for **\"{g_sq}\"**.")
+
+                for msg in merged_chat:
+                    render_chat_message_item(
+                        msg=msg,
+                        is_global=True,
+                        search_query=g_chat_search_query
+                    )
+                        
+                if comp_prompt := st.chat_input("Ask a question comparing your reports..."):
+                    with st.chat_message("user"):
+                        st.markdown(comp_prompt)
+                    db.save_chat_message(None, "user", comp_prompt, thread_id=st.session_state.global_thread_id)
+                    
+                    with st.chat_message("assistant"):
+                        msg_ph = st.empty()
+                        with st.spinner("Oracle is reasoning across reports..."):
+                            context_prompt = f"You are an Android Battery Engineer. Answer the user's question comparing these {len(compared_reports)} reports:\n"
+                            active_inv_profile = db.get_latest_device_profile()
+                            profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+                            if profile_summary:
+                                context_prompt += f"\n{profile_summary}\n"
+
+                            for r in compared_reports:
+                                r_s, r_e, _ = get_effective_bounds(r, merged_filter_mode)
+                                context_prompt += f"\n--- {r['custom_name']} ({r['timestamp_str']}) ---\nNotes: {r.get('description','')}\n{build_compact_summary(r, filter_mode=merged_filter_mode, n_start=night_start_cfg, n_end=night_end_cfg, custom_start_dt=r_s, custom_end_dt=r_e)}\n"
+                                
+                            messages = [{"role": "system", "content": context_prompt}]
+                            for m in merged_chat:
+                                messages.append({"role": m["role"], "content": m["content"]})
+                            messages.append({"role": "user", "content": comp_prompt})
+                            
+                            try:
+                                reply = llm_manager.call_llm_tracked(
+                                    messages=messages,
+                                    thread_id=st.session_state.global_thread_id,
+                                    action_type="global_chat"
+                                )
+                                msg_ph.markdown(reply)
+                                db.save_chat_message(None, "assistant", reply, thread_id=st.session_state.global_thread_id)
+                            except Exception as e:
+                                with msg_ph.container():
+                                    render_ai_error(e, action_description="generating comparative chat response", key_suffix=f"gchat_{st.session_state.global_thread_id}")
+        else:
+            st.info("Please select at least 2 reports above to see the comparison.")
+
+# ==============================================================================
+# VIEW: DEVICE PROFILE & AUDIT
+# ==============================================================================
+elif st.session_state.active_tab == "profile":
+    st.markdown("## 📱 Device Profile & Configuration Audit")
+    st.caption("Deep-dive inspection of device properties, Doze sleep policies, App Standby buckets, and background power restrictions.")
+
+    # ADB Instructions Modal / Popover Script
+    adb_script_code = """# Windows PowerShell or Linux / macOS Terminal:
+adb shell "
+echo '=== BUILD & OS PROPERTIES ==='
+getprop ro.build.display.id
+getprop ro.build.version.release
+
+echo -e '\\n=== SETTINGS: GLOBAL ==='
+settings list global
+
+echo -e '\\n=== SETTINGS: SECURE ==='
+settings list secure
+
+echo -e '\\n=== SETTINGS: SYSTEM ==='
+settings list system
+
+echo -e '\\n=== DEVICE IDLE / DOZE STATE ==='
+dumpsys deviceidle get deep
+dumpsys deviceidle get light
+dumpsys deviceidle whitelist
+
+echo -e '\\n=== APP STANDBY BUCKETS (LAST ACTIVE) ==='
+dumpsys usagestats app_standby
+
+echo -e '\\n=== BATTERY SAVER / POWER RESTRICTIONS ==='
+dumpsys power | grep -A 10 'mBatterySaver'
+cmd appops query-op --user 0 RUN_IN_BACKGROUND allow
+cmd appops query-op --user 0 RUN_ANY_IN_BACKGROUND allow
+
+echo -e '\\n=== APPOPS WAKELOCK EXEMPTIONS ==='
+cmd appops query-op --user 0 WAKE_LOCK allow
+
+echo -e '\\n=== DISABLED PACKAGES ==='
+pm list packages -d
+
+echo -e '\\n=== NETWORK POLICY & DATA SAVER ==='
+dumpsys netpolicy | grep -E 'restrict_background|mRestrictBackground'
+
+echo -e '\\n=== BACKGROUND JOBS SUMMARY ==='
+dumpsys jobscheduler | grep -E 'JobHistory|Pending jobs'
+
+echo -e '\\n=== LOCATION PROVIDERS & SCANNING ==='
+settings get global wifi_scan_always_enabled
+settings get secure location_mode
+settings get secure location_providers_allowed
+" > full_device_inventory.txt"""
+
+    profiles = db.get_all_device_profiles()
+    
+    # Mode switch if at least 2 profiles exist
+    view_mode = "Single Profile Audit"
+    if profiles and len(profiles) >= 2:
+        c_mode, _ = st.columns([3, 5])
+        with c_mode:
+            view_mode = st.radio(
+                "Profile Analysis Mode:",
+                ["Single Profile Audit", "🔀 Compare Profiles"],
+                horizontal=True,
+                key="device_profile_view_mode_radio"
+            )
+
+    if view_mode == "Single Profile Audit":
+        # Top action bar: Selector + Action Buttons (Vertically centered and aligned with selectbox)
+        c_sel, c_actions = st.columns([5, 3], vertical_alignment="bottom")
+        with c_sel:
+            if profiles:
+                profile_dict = {p["id"]: f"{p['profile_name']} — {p['device_model']} ({p['updated_at'][:16]})" for p in profiles}
+                
+                # Ensure valid active_profile_id
+                if st.session_state.get("active_profile_id") not in profile_dict:
+                    st.session_state.active_profile_id = profiles[0]["id"]
+                
+                # Sync widget key if active_profile_id was changed programmatically before instantiation
+                if "sel_active_profile_box" in st.session_state and st.session_state.sel_active_profile_box != st.session_state.active_profile_id:
+                    st.session_state.sel_active_profile_box = st.session_state.active_profile_id
+
+                def _on_profile_change():
+                    st.session_state.active_profile_id = st.session_state.sel_active_profile_box
+
+                st.selectbox(
+                    "Select Device Profile Snapshot:",
+                    options=list(profile_dict.keys()),
+                    format_func=lambda x: profile_dict[x],
+                    index=list(profile_dict.keys()).index(st.session_state.active_profile_id),
+                    key="sel_active_profile_box",
+                    on_change=_on_profile_change
+                )
+                
+                # Fetch profile matching active_profile_id
+                current_profile = db.get_device_profile(st.session_state.active_profile_id)
+            else:
+                current_profile = None
+                st.info("No device profiles recorded yet. Upload a `full_device_inventory.txt` below to begin.")
+
+        with c_actions:
+            btn_c1, btn_c2, btn_c_rename, btn_c3 = st.columns([1.3, 1.2, 1.1, 1.0])
+            with btn_c1:
+                with st.popover("📋 ADB Commands", use_container_width=True):
+                    st.markdown("#### 📱 Generate Inventory File via ADB")
+                    st.write("Connect your phone via USB with **USB Debugging** enabled, then run this command in your terminal:")
+                    st.code(adb_script_code, language="bash")
+                    st.caption("This produces `full_device_inventory.txt` directly in your current folder.")
+            with btn_c2:
+                with st.popover("📤 Upload File", use_container_width=True):
+                    st.markdown("#### 📤 Upload / Refresh Inventory")
+                    u_count = st.session_state.inv_upload_counter
+                    upload_mode = st.radio("Save mode:", ["Save as New Profile", "Overwrite Current Profile"] if current_profile else ["Save as New Profile"], key=f"inv_upload_mode_radio_{u_count}")
+                    default_pname = "My Pixel Profile" if not current_profile else f"{current_profile['profile_name']} (Update)"
+                    p_name_input = st.text_input("Profile Name:", value=default_pname, key=f"input_inv_pname_{u_count}")
+                    uploaded_inv_file = st.file_uploader("Upload full_device_inventory.txt", type=["txt"], key=f"inv_file_uploader_{u_count}")
+                    if uploaded_inv_file and st.button("Save Profile Snapshot", key=f"btn_save_inv_profile_{u_count}", use_container_width=True):
+                        raw_inv_text = uploaded_inv_file.read().decode("utf-8", errors="replace")
+                        parsed_inv = parser.parse_device_inventory(raw_inv_text)
+                        target_pid = current_profile["id"] if "Overwrite" in upload_mode and current_profile else None
+                        saved_pid = db.save_device_profile(
+                            profile_name=p_name_input.strip() or "Device Inventory Snapshot",
+                            raw_content=raw_inv_text,
+                            parsed_data=parsed_inv,
+                            profile_id=target_pid
+                        )
+                        st.session_state.active_profile_id = saved_pid
+                        # Increment counter to reset file uploader & input fields
+                        st.session_state.inv_upload_counter += 1
+                        st.session_state.inv_upload_success_msg = f"✅ Device profile '{p_name_input.strip()}' successfully saved!"
+                        st.rerun()
+            with btn_c_rename:
+                if current_profile:
+                    with st.popover("✏️ Rename", use_container_width=True):
+                        st.markdown(f"#### ✏️ Rename Profile")
+                        new_pname = st.text_input("New Profile Name:", value=current_profile["profile_name"], key=f"rename_input_{current_profile['id']}")
+                        if st.button("Save Name", key=f"btn_save_rename_{current_profile['id']}", use_container_width=True):
+                            if new_pname.strip():
+                                db.update_device_profile_name(current_profile["id"], new_pname.strip())
+                                st.success("Profile renamed!")
+                                st.rerun()
+                            else:
+                                st.error("Profile name cannot be empty.")
+            with btn_c3:
+                if current_profile:
+                    with st.popover("🗑️ Delete", use_container_width=True):
+                        st.warning(f"Delete '{current_profile['profile_name']}'?")
+                        if st.button("Confirm Delete", type="primary", key=f"del_prof_{current_profile['id']}", use_container_width=True):
+                            db.delete_device_profile(current_profile["id"])
+                            st.session_state.active_profile_id = None
+                            st.success("Profile deleted.")
+                            st.rerun()
+
+        st.divider()
+
+        if st.session_state.get("inv_upload_success_msg"):
+            st.success(st.session_state.inv_upload_success_msg)
+            st.session_state.inv_upload_success_msg = None
+
+        if current_profile:
+            p_data = current_profile.get("parsed_data", {})
+            k_settings = p_data.get("key_settings", {})
+            
+            # 1. Device Architecture & OS Health KPI Row
+            st.markdown("### 🖥️ Device & System Environment")
+            kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
+            kpi1.metric("📱 Device Model", p_data.get("device_model", "Unknown"))
+            kpi2.metric("🤖 Android Version", f"Android {p_data.get('android_version', 'Unknown')}")
+            kpi3.metric("🏗️ OS Build ID", p_data.get("os_build", "Unknown"))
+            kpi4.metric("💤 Deep Doze State", p_data.get("doze_deep_state", "UNKNOWN"))
+            kpi5.metric("⚡ Light Doze State", p_data.get("doze_light_state", "UNKNOWN"))
+
+            st.divider()
+
+            # --- AI Profile Audit Section ---
+            st.markdown('### ✨ Oracle Configuration Audit <span class="ai-badge">✨ AI GENERATED</span>', unsafe_allow_html=True)
+            p_analysis = current_profile.get("ai_analysis")
+            p_trace = current_profile.get("ai_analysis_trace", "")
+            
+            col_hdr, col_btn_ai = st.columns([3, 1.2])
+            with col_hdr:
+                if p_analysis:
+                    st.caption(f"🕒 **Last Evaluated:** {current_profile.get('updated_at', '')[:16]} | Grounded in profile inventory")
+                else:
+                    st.caption("⏳ AI Audit not yet generated for this profile snapshot.")
+            with col_btn_ai:
+                btn_ai_label = "🔄 Refresh AI Audit" if p_analysis else "✨ Run AI Configuration Audit"
+                if st.button(btn_ai_label, key=f"btn_audit_profile_{current_profile['id']}", use_container_width=True):
+                    audit_prompt_tmpl = llm_manager.get_prompt_template("profile_audit")
+                    profile_telemetry_str = parser.get_inventory_summary_for_llm(p_data)
+                    formatted_audit_prompt = audit_prompt_tmpl.format(
+                        device_model=p_data.get("device_model", "Unknown"),
+                        os_build=p_data.get("os_build", "Unknown"),
+                        android_version=p_data.get("android_version", "Unknown"),
+                        profile_telemetry=profile_telemetry_str
+                    )
+                    with st.spinner("Analyzing device configuration with AI..."):
+                        try:
+                            new_analysis = llm_manager.call_llm_tracked(
+                                messages=[{"role": "system", "content": formatted_audit_prompt}],
+                                action_type="profile_audit"
+                            )
+                            new_analysis = parser.sanitize_ai_output(new_analysis)
+                            db.update_device_profile_analysis(current_profile["id"], new_analysis, "")
+                            st.session_state.pop(f"err_prof_audit_{current_profile['id']}", None)
+                            st.success("✅ Device Profile Audit refreshed!")
+                            st.rerun()
+                        except Exception as e:
+                            st.session_state[f"err_prof_audit_{current_profile['id']}"] = (e, "generating device profile configuration audit")
+
+            if st.session_state.get(f"err_prof_audit_{current_profile['id']}"):
+                p_err_obj, p_err_act = st.session_state[f"err_prof_audit_{current_profile['id']}"]
+                render_ai_error(p_err_obj, action_description=p_err_act, key_suffix=f"prof_audit_{current_profile['id']}")
+
+            if p_analysis:
+                render_ai_block(p_analysis, key_suffix=f"profile_{current_profile['id']}")
+                if p_trace:
+                    with st.expander("🧠 AI Reasoning & System Audit Trace"):
+                        st.markdown(p_trace)
+
+                # --- MULTI-THREADED PROFILE AUDIT CHAT WORKSPACE ---
+                st.markdown('### 💬 Audit Consultation Chat <span class="ai-badge">✨ AI CHAT</span>', unsafe_allow_html=True)
+                st.caption(f"Ask questions, discuss findings, or explore recommended ADB commands for **{current_profile['profile_name']}**.")
+
+                prof_rep_id = -current_profile["id"]
+                p_thread_sort = st.radio("Sort Threads By:", ["Last Active", "Creation Time", "Alphabetical"], horizontal=True, key=f"sort_th_prof_{current_profile['id']}")
+                p_sort_key_map = {"Last Active": "updated_at", "Creation Time": "created_at", "Alphabetical": "title"}
+                p_threads = db.get_threads_for_report(prof_rep_id, sort_by=p_sort_key_map[p_thread_sort])
+                p_thread_dict = {t["id"]: t["title"] for t in p_threads}
+
+                prof_active_th_key = f"active_prof_thread_{current_profile['id']}"
+                if prof_active_th_key not in st.session_state or st.session_state[prof_active_th_key] not in p_thread_dict:
+                    st.session_state[prof_active_th_key] = p_threads[0]["id"]
+
+                pt_col1, pt_col2, pt_col3, pt_col4 = st.columns([3, 1, 1, 1])
+                with pt_col1:
+                    p_sel_th = st.selectbox(
+                        "Active Thread:",
+                        options=list(p_thread_dict.keys()),
+                        format_func=lambda x: f"🧵 {p_thread_dict[x]}",
+                        index=list(p_thread_dict.keys()).index(st.session_state[prof_active_th_key]),
+                        key=f"prof_thread_sel_{current_profile['id']}",
+                        label_visibility="collapsed"
+                    )
+                    st.session_state[prof_active_th_key] = p_sel_th
+
+                with pt_col2:
+                    with st.popover("➕ New", use_container_width=True):
+                        new_p_th_title = st.text_input("Thread Title", placeholder="e.g. Doze Whitelist Inquiry", key=f"new_pth_t_{current_profile['id']}")
+                        if st.button("Create", key=f"btn_create_pth_{current_profile['id']}", use_container_width=True):
+                            new_pid = db.create_thread(prof_rep_id, new_p_th_title or "Profile Consultation")
+                            st.session_state[prof_active_th_key] = new_pid
+                            st.rerun()
+
+                with pt_col3:
+                    with st.popover("✏️ Rename", use_container_width=True):
+                        cur_p_title = p_thread_dict[st.session_state[prof_active_th_key]]
+                        ren_p_title = st.text_input("New Name", value=cur_p_title, key=f"ren_pth_t_{current_profile['id']}")
+                        if st.button("Update Title", key=f"btn_ren_pth_{current_profile['id']}", use_container_width=True):
+                            db.rename_thread(st.session_state[prof_active_th_key], ren_p_title)
+                            st.rerun()
+
+                with pt_col4:
+                    if len(p_threads) > 1:
+                        if st.button("🗑️ Delete", key=f"btn_del_pth_{current_profile['id']}", use_container_width=True):
+                            db.delete_thread(st.session_state[prof_active_th_key])
+                            st.session_state[prof_active_th_key] = None
+                            st.rerun()
+                    else:
+                        if st.button("🧹 Clear", key=f"btn_clear_pth_{current_profile['id']}", use_container_width=True):
+                            db.clear_thread_messages(st.session_state[prof_active_th_key])
+                            st.success("Thread context cleared!")
+                            st.rerun()
+
+                p_thread_messages = db.get_chat_messages(prof_rep_id, thread_id=st.session_state[prof_active_th_key])
+
+                # Chat Search & Bulk Actions Bar
+                ptb_col1, ptb_col2, ptb_col3 = st.columns([3.6, 1.2, 1.2], vertical_alignment="center")
+                with ptb_col1:
+                    p_chat_search_query = st.text_input(
+                        "Search messages",
+                        placeholder="🔎 Find in profile chat...",
+                        key=f"search_pchat_{current_profile['id']}_{st.session_state[prof_active_th_key]}",
+                        label_visibility="collapsed"
+                    )
+                with ptb_col2:
+                    if st.button("⊞ Expand All", key=f"btn_pexp_all_{current_profile['id']}", use_container_width=True, disabled=not bool(p_thread_messages)):
+                        db.set_thread_messages_collapsed(st.session_state[prof_active_th_key], False)
+                        for m in p_thread_messages:
+                            st.session_state[f"msg_col_{m['id']}"] = False
+                        st.rerun()
+                with ptb_col3:
+                    if st.button("⊟ Collapse All", key=f"btn_pcol_all_{current_profile['id']}", use_container_width=True, disabled=not bool(p_thread_messages)):
+                        db.set_thread_messages_collapsed(st.session_state[prof_active_th_key], True)
+                        for m in p_thread_messages:
+                            st.session_state[f"msg_col_{m['id']}"] = True
+                        st.rerun()
+
+                if p_chat_search_query and p_chat_search_query.strip():
+                    p_sq = p_chat_search_query.strip()
+                    p_tot_m = 0
+                    p_matching_ids = set()
+                    for m in p_thread_messages:
+                        _, c = highlight_search_query(m.get("content", ""), p_sq)
+                        if c > 0:
+                            p_tot_m += c
+                            p_matching_ids.add(m["id"])
+                    if p_tot_m > 0:
+                        st.caption(f"🔎 Found **{p_tot_m}** match{'es' if p_tot_m != 1 else ''} in **{len(p_matching_ids)}** message{'s' if len(p_matching_ids) != 1 else ''}. *(Matching messages auto-expanded and highlighted)*")
+                    else:
+                        st.caption(f"🔎 No matches found for **\"{p_sq}\"**.")
+
+                for msg in p_thread_messages:
+                    render_chat_message_item(
+                        msg=msg,
+                        rep_id=prof_rep_id,
+                        active_th_id=st.session_state[prof_active_th_key],
+                        thread_dict=p_thread_dict,
+                        is_global=False,
+                        search_query=p_chat_search_query
+                    )
+
+                if p_prompt := st.chat_input("Ask about this device configuration, Doze policies, or background apps..."):
+                    with st.chat_message("user"):
+                        st.markdown(p_prompt)
+
+                    db.save_chat_message(
+                        report_id=prof_rep_id,
+                        role="user",
+                        content=p_prompt,
+                        thread_id=st.session_state[prof_active_th_key]
+                    )
+
+                    if len(p_thread_messages) == 0 and "Profile Consultation" in p_thread_dict[st.session_state[prof_active_th_key]]:
+                        auto_p_title = p_prompt[:25].strip() + "..."
+                        db.rename_thread(st.session_state[prof_active_th_key], auto_p_title)
+
+                    with st.chat_message("assistant"):
+                        p_msg_ph = st.empty()
+                        with st.spinner("Oracle is reviewing profile telemetry & audit findings..."):
+                            prof_telemetry_summary = parser.get_inventory_summary_for_llm(p_data)
+                            prof_chat_tmpl = llm_manager.get_prompt_template("profile_chat")
+                            p_sys_prompt = prof_chat_tmpl.format(
+                                device_model=p_data.get("device_model", "Unknown Device"),
+                                os_build=p_data.get("os_build", "Unknown Build"),
+                                android_version=p_data.get("android_version", "Unknown"),
+                                doze_deep=p_data.get("doze_deep_state", "UNKNOWN"),
+                                doze_light=p_data.get("doze_light_state", "UNKNOWN"),
+                                audit_report=p_analysis,
+                                profile_telemetry=prof_telemetry_summary
+                            )
+
+                            p_messages = [{"role": "system", "content": p_sys_prompt}]
+                            for m in p_thread_messages:
+                                p_messages.append({"role": m["role"], "content": m["content"]})
+                            p_messages.append({"role": "user", "content": p_prompt})
+
+                            try:
+                                p_reply = llm_manager.call_llm_tracked(
+                                    messages=p_messages,
+                                    report_id=prof_rep_id,
+                                    thread_id=st.session_state[prof_active_th_key],
+                                    action_type="profile_chat"
+                                )
+                                p_msg_ph.markdown(p_reply)
+                                db.save_chat_message(
+                                    report_id=prof_rep_id,
+                                    role="assistant",
+                                    content=p_reply,
+                                    thread_id=st.session_state[prof_active_th_key]
+                                )
+                            except Exception as e:
+                                with p_msg_ph.container():
+                                    render_ai_error(e, action_description="generating profile audit consultation response", key_suffix=f"pchat_{prof_rep_id}_{st.session_state[prof_active_th_key]}")
+
+            st.divider()
+
+            # 2. Critical Standby Risks & WhiteList Violations
+            st.markdown("### 🚨 Standby Drain Risks & Policy Audit")
+            risks = p_data.get("standby_risks", [])
+            if risks:
+                for r in risks:
+                    sev = r.get("severity", "LOW")
+                    icon = "🔴" if sev == "HIGH" else ("🟡" if sev == "MEDIUM" else "🔵")
+                    with st.expander(f"{icon} [{sev}] {r['title']}", expanded=(sev == "HIGH")):
+                        st.markdown(f"**Issue Description:** {r['detail']}")
+                        st.markdown(f"**How to configure on device:** `{r['setting']}`")
+            else:
+                st.success("🎉 No high-risk standby configuration flags detected!")
+
+            st.divider()
+
+            # 3. Radios, Display & Sensors (Responsive Cards)
+            st.markdown("### 📡 Radios, Ambient Display & Power Tuning")
+            r_col1, r_col2, r_col3, r_col4, r_col5 = st.columns(5)
+            
+            wifi_active = k_settings.get("wifi_scan_always_enabled") == "1"
+            ble_active = k_settings.get("ble_scan_always_enabled") == "1"
+            tilt_active = k_settings.get("ambient_tilt_to_wake") == "1"
+            touch_active = k_settings.get("ambient_touch_to_wake") == "1"
+            timeout_sec = int(k_settings.get("screen_off_timeout_ms", "15000")) // 1000
+            refresh = float(k_settings.get("peak_refresh_rate", "60.0"))
+
+            with r_col1:
+                st.markdown(f"""
+                <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
+                    <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">📶 Wi-Fi Always Scanning</div>
+                    <div style="font-size: 1.05rem; font-weight: 600; color: {'#f59e0b' if wifi_active else '#10b981'}; word-break: break-word;">
+                        {'⚠️ Enabled (Continuous)' if wifi_active else '✅ Disabled (Safe)'}
+                    </div>
+                    <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Location scanning</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with r_col2:
+                st.markdown(f"""
+                <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
+                    <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">📡 BLE Always Scanning</div>
+                    <div style="font-size: 1.05rem; font-weight: 600; color: {'#f59e0b' if ble_active else '#10b981'}; word-break: break-word;">
+                        {'⚠️ Enabled' if ble_active else '✅ Disabled'}
+                    </div>
+                    <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Bluetooth beacon scan</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with r_col3:
+                st.markdown(f"""
+                <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
+                    <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">🖐️ Ambient Wake Gestures</div>
+                    <div style="font-size: 0.95rem; font-weight: 600; line-height: 1.35; word-break: break-word;">
+                        Tilt: <span style="color: {'#3b82f6' if tilt_active else '#64748b'};">{'On' if tilt_active else 'Off'}</span> &nbsp;|&nbsp; 
+                        Touch: <span style="color: {'#3b82f6' if touch_active else '#64748b'};">{'On' if touch_active else 'Off'}</span>
+                    </div>
+                    <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Hardware sensor polling</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with r_col4:
+                st.markdown(f"""
+                <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
+                    <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">⏱️ Screen Timeout</div>
+                    <div style="font-size: 1.05rem; font-weight: 600; color: {'#10b981' if timeout_sec <= 30 else '#f59e0b'}; word-break: break-word;">
+                        {timeout_sec} seconds
+                    </div>
+                    <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Display off delay</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with r_col5:
+                st.markdown(f"""
+                <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
+                    <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">📺 Peak Refresh Rate</div>
+                    <div style="font-size: 1.05rem; font-weight: 600; color: {'#10b981' if refresh <= 60 else '#3b82f6'}; word-break: break-word;">
+                        {refresh:.0f} Hz
+                    </div>
+                    <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Display panel limit</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.divider()
+
+            # 4. Detailed Drill-downs: Doze Whitelists, App Standby & Raw Key-Value Explorer
+            tab_doze, tab_appops, tab_kv = st.tabs([
+                f"🛡️ Doze Whitelist ({len(p_data.get('user_whitelisted', []))} User Apps)",
+                f"⚡ AppOps Run-in-Background ({len(p_data.get('appops_allowed', []))})",
+                f"🔍 System Settings Explorer ({p_data.get('raw_counts', {}).get('global_count', 0) + p_data.get('raw_counts', {}).get('secure_count', 0) + p_data.get('raw_counts', {}).get('system_count', 0)} keys)"
+            ])
+
+            with tab_doze:
+                st.markdown("#### User-Installed Apps Exempt from Android Doze Deep Sleep")
+                st.caption("These user apps have been granted permission to ignore Doze optimizations, wake the CPU at will, and access the network during sleep.")
+                u_wl = p_data.get("user_whitelisted", [])
+                if u_wl:
+                    df_uwl = pd.DataFrame(u_wl).rename(columns={"friendly": "App Name", "package": "Package Identifier", "uid": "Linux UID", "type": "Whitelist Scope"})
+                    st.dataframe(df_uwl, use_container_width=True)
+                else:
+                    st.info("No user apps are exempt from Doze! All user apps enter deep sleep normally.")
+
+                with st.expander(f"System & OEM Exemption Whitelist ({p_data.get('system_whitelisted_count', 0)} packages)"):
+                    st.caption("Internal Android OS and carrier packages whitelisted by the OEM ROM:")
+                    s_wl = p_data.get("system_whitelisted", [])
+                    if s_wl:
+                        st.dataframe(pd.DataFrame(s_wl)[["friendly", "package", "uid"]].rename(columns={"friendly": "System Service", "package": "Package Identifier", "uid": "UID"}), use_container_width=True)
+
+            with tab_appops:
+                st.markdown("#### Applications Granted `RUN_IN_BACKGROUND` AppOps Permission")
+                st.caption("Android AppOps policy allows these packages to initiate background services and background tasks without restriction.")
+                a_ops = p_data.get("appops_allowed", [])
+                if a_ops:
+                    df_aops = pd.DataFrame(a_ops).rename(columns={"friendly": "App Name", "package": "Package Identifier"})
+                    st.dataframe(df_aops, use_container_width=True)
+                else:
+                    st.info("No apps explicitly granted unrestricted background execution.")
+
+            with tab_kv:
+                st.markdown("#### Comprehensive Android Settings Registry")
+                st.caption("Search across all raw key-value pairs stored in Android `Global`, `Secure`, and `System` settings providers.")
+                
+                all_kv = []
+                for k, v in p_data.get("global_settings", {}).items():
+                    all_kv.append({"Scope": "Global", "Key": k, "Value": v})
+                for k, v in p_data.get("secure_settings", {}).items():
+                    all_kv.append({"Scope": "Secure", "Key": k, "Value": v})
+                for k, v in p_data.get("system_settings", {}).items():
+                    all_kv.append({"Scope": "System", "Key": k, "Value": v})
+
+                if all_kv:
+                    df_all_kv = pd.DataFrame(all_kv)
+                    search_query = st.text_input("🔎 Search settings by key or value:", placeholder="e.g. wifi, sync, doze, refresh, wake, bluetooth...", key="kv_search_input")
+                    if search_query:
+                        df_all_kv = df_all_kv[df_all_kv["Key"].str.contains(search_query, case=False, na=False) | df_all_kv["Value"].str.contains(search_query, case=False, na=False)]
+                    st.dataframe(df_all_kv, use_container_width=True, height=450)
+                else:
+                    st.info("No raw settings data available for this profile.")
+
+    elif view_mode == "🔀 Compare Profiles":
+        st.markdown("### 🔀 Device Configuration Snapshot Comparison")
+        st.caption("Compare settings, Doze exemptions, and AppOps permissions between two device profile snapshots.")
+        
+        c_prof_a, c_prof_b = st.columns(2)
+        prof_dict = {p["id"]: f"{p['profile_name']} ({p['updated_at'][:16]})" for p in profiles}
+        p_ids = list(prof_dict.keys())
+        
+        with c_prof_a:
+            p_a_id = st.selectbox("Baseline Profile (Before):", options=p_ids, index=1 if len(p_ids) > 1 else 0, format_func=lambda x: prof_dict[x], key="sel_cmp_prof_a")
+        with c_prof_b:
+            p_b_id = st.selectbox("Target Profile (After):", options=p_ids, index=0, format_func=lambda x: prof_dict[x], key="sel_cmp_prof_b")
+            
+        profile_a = db.get_device_profile(p_a_id)
+        profile_b = db.get_device_profile(p_b_id)
+        
+        if profile_a and profile_b:
+            diff = parser.compute_profile_diff(profile_a, profile_b)
+            
+            # KPI Delta Row
+            kpi_c1, kpi_c2, kpi_c3, kpi_c4 = st.columns(4)
+            kpi_c1.metric("🏗️ OS Build Changed", "YES" if diff["build_changed"] else "NO", f"{diff['build_a'][:14]} → {diff['build_b'][:14]}" if diff["build_changed"] else "Identical")
+            
+            wl_delta = len(diff["wl_added"]) - len(diff["wl_removed"])
+            kpi_c2.metric("🛡️ Doze Whitelist Δ", f"{len(diff['wl_added'])} added / {len(diff['wl_removed'])} removed", delta=f"{wl_delta:+d} apps", delta_color="inverse")
+            
+            ao_delta = len(diff["ao_bg_added"]) - len(diff["ao_bg_removed"])
+            kpi_c3.metric("⚡ AppOps Background Δ", f"{len(diff['ao_bg_added'])} added / {len(diff['ao_bg_removed'])} removed", delta=f"{ao_delta:+d} apps", delta_color="inverse")
+            
+            kpi_c4.metric("⚙️ Modified Settings", f"{len(diff['settings_diff'])} keys")
+            
+            st.divider()
+            
+            # --- AI Configuration Delta Analysis ---
+            st.markdown('### ✨ Oracle Configuration Delta Analysis <span class="ai-badge">✨ AI GENERATED</span>', unsafe_allow_html=True)
+            cmp_cache_key = f"profile_cmp_ai_{min(p_a_id, p_b_id)}_{max(p_a_id, p_b_id)}_{p_a_id}"
+            cached_cmp_analysis = db.get_setting(cmp_cache_key)
+            
+            col_ai_info, col_ai_btn = st.columns([3, 1.2])
+            with col_ai_info:
+                if cached_cmp_analysis:
+                    st.caption("Cached evaluation of this profile delta.")
+                else:
+                    st.caption("AI delta analysis not yet generated for this pair.")
+            with col_ai_btn:
+                btn_cmp_label = "🔄 Refresh AI Delta Audit" if cached_cmp_analysis else "✨ Run AI Delta Audit"
+                if st.button(btn_cmp_label, key=f"btn_run_cmp_ai_{p_a_id}_{p_b_id}", use_container_width=True):
+                    cmp_prompt_tmpl = llm_manager.get_prompt_template("profile_comparison")
+                    diff_summary_str = parser.format_profile_diff_for_llm(profile_a, profile_b, diff)
+                    formatted_cmp_prompt = cmp_prompt_tmpl.format(
+                        baseline_name=profile_a["profile_name"],
+                        baseline_model=diff["model_a"],
+                        baseline_build=diff["build_a"],
+                        target_name=profile_b["profile_name"],
+                        target_model=diff["model_b"],
+                        target_build=diff["build_b"],
+                        diff_summary=diff_summary_str
+                    )
+                    with st.spinner("🔮 Oracle is auditing configuration deltas and power impacts..."):
+                        try:
+                            cmp_analysis_res = llm_manager.call_llm_tracked(
+                                messages=[{"role": "system", "content": formatted_cmp_prompt}],
+                                action_type="profile_comparison"
+                            )
+                            cmp_analysis_res = parser.sanitize_ai_output(cmp_analysis_res)
+                            db.set_setting(cmp_cache_key, cmp_analysis_res)
+                            st.session_state.pop(f"err_prof_cmp_{p_a_id}_{p_b_id}", None)
+                            st.success("✅ Profile comparison analysis complete!")
+                            st.rerun()
+                        except Exception as e:
+                            st.session_state[f"err_prof_cmp_{p_a_id}_{p_b_id}"] = (e, "generating profile comparison analysis")
+                            
+            if st.session_state.get(f"err_prof_cmp_{p_a_id}_{p_b_id}"):
+                c_err_obj, c_err_act = st.session_state[f"err_prof_cmp_{p_a_id}_{p_b_id}"]
+                render_ai_error(c_err_obj, action_description=c_err_act, key_suffix=f"prof_cmp_{p_a_id}_{p_b_id}")
+
+            if cached_cmp_analysis:
+                render_ai_block(cached_cmp_analysis, key_suffix=f"cmp_{p_a_id}_{p_b_id}")
+                st.divider()
+
+            # Side-by-Side Whitelist and AppOps changes
+            col_wl_diff, col_ao_diff = st.columns(2)
+            with col_wl_diff:
+                st.markdown("#### 🛡️ Doze Deep Sleep Whitelist Changes")
+                if diff["wl_added"]:
+                    st.markdown("**Added (Newly Exempted from Doze):**")
+                    for itm in diff["wl_added"]:
+                        st.markdown(f"- 🔴 `{itm['friendly']}` (`{itm['package']}`)")
+                if diff["wl_removed"]:
+                    st.markdown("**Removed (Now entering Doze normally):**")
+                    for itm in diff["wl_removed"]:
+                        st.markdown(f"- 🟢 `{itm['friendly']}` (`{itm['package']}`)")
+                if not diff["wl_added"] and not diff["wl_removed"]:
+                    st.info("No changes in Doze deep sleep whitelist between profiles.")
+                    
+            with col_ao_diff:
+                st.markdown("#### ⚡ AppOps RUN_IN_BACKGROUND Changes")
+                if diff["ao_bg_added"]:
+                    st.markdown("**Granted Background Permission:**")
+                    for itm in diff["ao_bg_added"]:
+                        st.markdown(f"- 🔴 `{itm['friendly']}` (`{itm['package']}`)")
+                if diff["ao_bg_removed"]:
+                    st.markdown("**Revoked / Restricted:**")
+                    for itm in diff["ao_bg_removed"]:
+                        st.markdown(f"- 🟢 `{itm['friendly']}` (`{itm['package']}`)")
+                if not diff["ao_bg_added"] and not diff["ao_bg_removed"]:
+                    st.info("No changes in AppOps background permissions between profiles.")
+
+            st.divider()
+
+            # Modified Android Settings Table
+            st.markdown("#### ⚙️ Modified Android Settings Registry")
+            if diff["settings_diff"]:
+                df_diff_settings = pd.DataFrame(diff["settings_diff"]).rename(columns={
+                    "scope": "Scope",
+                    "key": "Setting Key",
+                    "val_a": f"Baseline ({profile_a['profile_name'][:15]})",
+                    "val_b": f"Target ({profile_b['profile_name'][:15]})"
+                })
+                st.dataframe(df_diff_settings, use_container_width=True, height=400)
+            else:
+                st.info("All recorded Global, Secure, and System settings are identical between these two profiles.")
+
+# ==============================================================================
+# VIEW 3: MASTER EXPERIMENT SYNTHESIS
+# ==============================================================================
+elif st.session_state.active_tab == "master":
+    st.markdown("## 🧪 Master Battery Experiment Synthesis")
+    st.caption("An executive retrospective and definitive blueprint synthesizing all multi-day test runs, overnight standby windows, and optimizations.")
+    
+    if not all_reports:
+        st.info("No bugreports found. Please upload bugreports to generate the master synthesis.")
+    else:
+        # Multi-day scorecard
+        st.markdown("### 📊 Experiment Scorecard & Chronology")
+        scorecard = []
+        for r in all_reports:
+            df_h = r.get("history_data")
+            kpi_full = parser.compute_window_kpis(df_h)
+            
+            # Night window calculation
+            if df_h is not None and not df_h.empty and "Time" in df_h.columns:
+                db_c_s = r.get("custom_night_start")
+                db_c_e = r.get("custom_night_end")
+                if db_c_s and db_c_e:
+                    s_dt, e_dt = db_c_s, db_c_e
+                else:
+                    s_dt, e_dt = parser.get_latest_night_window(df_h["Time"].min(), df_h["Time"].max(), night_start_cfg, night_end_cfg)
+                df_night = parser.slice_timeline_range(df_h, s_dt, e_dt)
+                kpi_night = parser.compute_window_kpis(df_night)
+            else:
+                kpi_night = parser.compute_window_kpis(None)
+                
+            scorecard.append({
+                "Session / Bugreport": r["custom_name"],
+                "Recorded Interval": f"{kpi_full['start_time']} → {kpi_full['end_time']}",
+                "Full Drop Rate": f"{kpi_full['rate_per_hr']:.2f}% / hr",
+                "🌙 Night Standby Rate": f"{kpi_night['rate_per_hr']:.2f}% / hr",
+                "Total Loss": f"{kpi_full['drop_pct']}% ({kpi_full['duration_hrs']:.1f} hrs)",
+                "Night Drop": f"{kpi_night['drop_pct']}% ({kpi_night['duration_hrs']:.1f} hrs)",
+                "Notes / State": r.get("description", "Baseline")
+            })
+            
+        st.dataframe(pd.DataFrame(scorecard), use_container_width=True)
+        
+        st.divider()
+        
+        # Synthesis Generator
+        saved_synthesis = db.get_master_synthesis()
+        
+        col_synth_btn, col_synth_space, col_synth_dl = st.columns([1.5, 2.5, 1.2])
+        with col_synth_btn:
+            run_synth = st.button("✨ Synthesize Grand Master Experiment", key="btn_run_master_synth", use_container_width=True)
+            
+        synthesis_text = ""
+        if saved_synthesis and not run_synth:
+            synthesis_text = saved_synthesis["text"]
+        elif run_synth or not saved_synthesis:
+            if run_synth:
+                with st.spinner("Oracle is synthesizing multi-day experiment across all bugreports..."):
+                    chronicle = []
+                    active_inv_profile = db.get_latest_device_profile()
+                    profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+                    if profile_summary:
+                        chronicle.append(profile_summary + "\n")
+
+                    for idx, r in enumerate(all_reports):
+                        chronicle.append(f"\n==========================================")
+                        chronicle.append(f"SESSION {idx+1}: {r['custom_name']}")
+                        chronicle.append(f"File: {r['filename']} | Timestamp: {r['timestamp_str']}")
+                        chronicle.append(f"Device: {r.get('device_info', 'Android Device')}")
+                        chronicle.append(f"User State / Notes: {r.get('description', 'None')}")
+                        chronicle.append(build_compact_summary(r, filter_mode='night', n_start=night_start_cfg, n_end=night_end_cfg))
+                        chronicle.append("==========================================\n")
+                        
+                    synth_prompt = llm_manager.get_prompt_template("master_synthesis").format(
+                        experiment_chronicle="\n".join(chronicle)
+                    )
+                    
+                    try:
+                        synthesis_text = llm_manager.call_llm_tracked(
+                            messages=[{"role": "system", "content": synth_prompt}],
+                            action_type="master_experiment_synthesis"
+                        )
+                        db.save_master_synthesis(synthesis_text)
+                    except Exception as e:
+                        render_ai_error(e, action_description="generating master experiment synthesis", key_suffix="master_synth")
+                        synthesis_text = None
+                        
+        with col_synth_dl:
+            if synthesis_text:
+                st.download_button(
+                    label="📥 Export Synthesis (.md)",
+                    data=synthesis_text,
+                    file_name=f"Master_Battery_Experiment_Synthesis_{datetime.now().strftime('%Y%m%d')}.md",
+                    mime="text/markdown",
+                    key="dl_master_synth_md",
+                    use_container_width=True
+                )
+                
+        if synthesis_text:
+            st.markdown('### ✨ Master Retrospective Blueprint <span class="ai-badge">✨ AI GENERATED</span>', unsafe_allow_html=True)
+            render_ai_block(synthesis_text, key_suffix="master_synthesis")
+        else:
+            st.info("Click **'✨ Synthesize Grand Master Experiment'** above to generate the overarching retrospective across all sessions.")
+
+
+# ==============================================================================
+# VIEW 3: TOKEN & COST ACCOUNTING DASHBOARD
+# ==============================================================================
+elif st.session_state.active_tab == "accounting":
+    st.markdown("## 📊 Token & Cost Accounting Dashboard")
+    st.caption("Detailed breakdown of prompt tokens, completion tokens, cached tokens, and USD costs across all sessions.")
+    
+    totals = db.get_token_totals()
+    
+    # KPI Row
+    kpi_c1, kpi_c2, kpi_c3, kpi_c4, kpi_c5, kpi_c6 = st.columns(6)
+    kpi_c1.metric("🪙 Total Tokens", f"{totals['total_tokens']:,}")
+    kpi_c2.metric("📥 Prompt Tokens", f"{totals['total_prompt']:,}")
+    kpi_c3.metric("📤 Completion", f"{totals['total_completion']:,}")
+    kpi_c4.metric("⚡ Cached Tokens", f"{totals['total_cached']:,}")
+    kpi_c5.metric("💵 Total Cost", f"${totals['total_cost']:.4f}")
+    kpi_c6.metric("🔄 LLM Requests", f"{totals['request_count']:,}")
+    
+    st.divider()
+    
+    acc_tab1, acc_tab2, acc_tab3 = st.tabs(["📁 Breakdown by Bugreport", "🧵 Breakdown by Thread", "📅 Activity Over Time"])
+    
+    with acc_tab1:
+        st.markdown("### Token & Cost Consumption per Bugreport")
+        by_rep = db.get_token_summary_by_report()
+        if by_rep:
+            df_rep = pd.DataFrame(by_rep)
+            st.dataframe(
+                df_rep[["report_name", "request_count", "total_tokens", "prompt_tokens", "completion_tokens", "cached_tokens", "total_cost"]].rename(columns={
+                    "report_name": "Report / Scope",
+                    "request_count": "Requests",
+                    "total_tokens": "Total Tokens",
+                    "prompt_tokens": "Prompt",
+                    "completion_tokens": "Completion",
+                    "cached_tokens": "Cached",
+                    "total_cost": "Cost ($ USD)"
+                }),
+                use_container_width=True
+            )
+            fig_rep_cost = px.bar(df_rep, x="report_name", y="total_cost", color="report_name", title="Cost by Bugreport ($ USD)")
+            st.plotly_chart(fig_rep_cost, use_container_width=True, key="cost_rep_chart")
+        else:
+            st.info("No token activity logged yet.")
+            
+    with acc_tab2:
+        st.markdown("### Token Consumption by Conversation Thread")
+        by_th = db.get_token_summary_by_thread()
+        if by_th:
+            df_th = pd.DataFrame(by_th)
+            st.dataframe(
+                df_th[["thread_title", "report_name", "request_count", "total_tokens", "total_cost"]].rename(columns={
+                    "thread_title": "Conversation Thread",
+                    "report_name": "Associated Bugreport",
+                    "request_count": "Messages",
+                    "total_tokens": "Total Tokens",
+                    "total_cost": "Cost ($ USD)"
+                }),
+                use_container_width=True
+            )
+        else:
+            st.info("No thread activity logged yet.")
+            
+    with acc_tab3:
+        st.markdown("### Daily Token Usage Trends")
+        by_time = db.get_token_summary_over_time()
+        if by_time:
+            df_time = pd.DataFrame(by_time)
+            fig_time = px.bar(
+                df_time, x="date", y="total_tokens", color="model",
+                title="Daily Token Consumption by Model"
+            )
+            st.plotly_chart(fig_time, use_container_width=True, key="token_time_chart")
+        else:
+            st.info("No daily history available yet.")
