@@ -316,6 +316,8 @@ def get_threads_for_report(report_id, sort_by="updated_at"):
     if not threads:
         if report_id is None:
             default_title = "Comparative Investigation"
+        elif isinstance(report_id, int) and report_id == -999999:
+            default_title = "Master Retrospective Discussion"
         elif isinstance(report_id, int) and report_id < 0:
             default_title = "Profile Consultation"
         else:
@@ -346,34 +348,51 @@ def rename_thread(thread_id, new_title):
 def delete_thread(thread_id):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM chat_messages WHERE thread_id = ?", (thread_id,))
     cursor.execute("DELETE FROM chat_threads WHERE id = ?", (thread_id,))
     conn.commit()
     conn.close()
 
-def fork_thread(source_thread_id, from_message_id, new_title="Forked Investigation"):
-    """Create a new thread branching from source_thread_id up to from_message_id."""
-    source_thread = get_thread_by_id(source_thread_id)
-    if not source_thread:
-        return None
-        
-    new_thread_id = create_thread(source_thread["report_id"], new_title)
-    
+def clear_thread_messages(thread_id):
     conn = get_connection()
     cursor = conn.cursor()
-    # Get all messages up to from_message_id
+    cursor.execute("DELETE FROM chat_messages WHERE thread_id = ?", (thread_id,))
+    conn.commit()
+    conn.close()
+
+def fork_thread(source_thread_id, from_message_id, new_title="Forked Investigation"):
+    """
+    Fork an existing thread up to a given message into a new branch thread.
+    Copies all messages up to and including from_message_id.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # 1. Get original thread details
+    cursor.execute("SELECT report_id FROM chat_threads WHERE id = ?", (source_thread_id,))
+    th_row = cursor.fetchone()
+    report_id = th_row["report_id"] if th_row else None
+    
+    # 2. Create new thread
     cursor.execute("""
-        SELECT role, content, filter_context FROM chat_messages
+        INSERT INTO chat_threads (report_id, title)
+        VALUES (?, ?)
+    """, (report_id, new_title))
+    new_thread_id = cursor.lastrowid
+    
+    # 3. Get messages up to the target message
+    cursor.execute("""
+        SELECT * FROM chat_messages 
         WHERE thread_id = ? AND id <= ?
         ORDER BY id ASC
     """, (source_thread_id, from_message_id))
-    messages = cursor.fetchall()
+    messages_to_copy = cursor.fetchall()
     
-    for msg in messages:
+    # 4. Copy messages into the new thread
+    for m in messages_to_copy:
         cursor.execute("""
             INSERT INTO chat_messages (report_id, thread_id, role, content, filter_context)
             VALUES (?, ?, ?, ?, ?)
-        """, (source_thread["report_id"], new_thread_id, msg["role"], msg["content"], msg["filter_context"]))
+        """, (m["report_id"], new_thread_id, m["role"], m["content"], m["filter_context"]))
         
     conn.commit()
     conn.close()
@@ -394,19 +413,24 @@ def save_chat_message(report_id, role, content, thread_id=None, filter_context="
     conn = get_connection()
     cursor = conn.cursor()
     
-    if thread_id is None:
+    # Ensure thread_id exists or assign default
+    if thread_id is None and report_id is not None:
         threads = get_threads_for_report(report_id)
+        thread_id = threads[0]["id"]
+    elif thread_id is None and report_id is None:
+        threads = get_threads_for_report(None)
         thread_id = threads[0]["id"]
         
     cursor.execute("""
         INSERT INTO chat_messages (report_id, thread_id, role, content, filter_context)
         VALUES (?, ?, ?, ?, ?)
     """, (report_id, thread_id, role, content, filter_context))
+    msg_id = cursor.lastrowid
     
     # Touch updated_at on thread
-    cursor.execute("UPDATE chat_threads SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (thread_id,))
-    
-    msg_id = cursor.lastrowid
+    if thread_id:
+        cursor.execute("UPDATE chat_threads SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (thread_id,))
+        
     conn.commit()
     conn.close()
     return msg_id
@@ -658,13 +682,18 @@ def get_combined_analysis(report_ids_key, scope_key=None):
 
 def save_master_synthesis(synthesis_text, reasoning_trace=""):
     set_setting("master_experiment_synthesis", synthesis_text)
+    set_setting("master_experiment_synthesis_updated_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     if reasoning_trace:
         set_setting("master_experiment_synthesis_trace", reasoning_trace)
 
 def get_master_synthesis():
     text = get_setting("master_experiment_synthesis", "")
     trace = get_setting("master_experiment_synthesis_trace", "")
-    return {"text": text, "trace": trace} if text else None
+    updated_at = get_setting("master_experiment_synthesis_updated_at", "")
+    if text and not updated_at:
+        updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        set_setting("master_experiment_synthesis_updated_at", updated_at)
+    return {"text": text, "trace": trace, "updated_at": updated_at} if text else None
 
 # --- Device Profiles CRUD ---
 
