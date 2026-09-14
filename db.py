@@ -379,6 +379,15 @@ def fork_thread(source_thread_id, from_message_id, new_title="Forked Investigati
     conn.close()
     return new_thread_id
 
+def get_message_count_for_thread(thread_id: int) -> int:
+    """Return total number of messages in a thread without fetching their full content."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM chat_messages WHERE thread_id = ?", (thread_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else 0
+
 # --- Chat Messages ---
 
 def save_chat_message(report_id, role, content, thread_id=None, filter_context=""):
