@@ -442,6 +442,53 @@ def build_compact_summary(rep, filter_mode="full", n_start=23, n_end=7, custom_s
         
     return "\n".join(lines)
 
+def get_effective_bounds(rep, m_mode, n_start=None, n_end=None):
+    """Calculate the effective start/end timestamps and sliced timeline for a report."""
+    if n_start is None:
+        try:
+            n_start = int(db.get_setting("night_start_hour", "23"))
+        except Exception:
+            n_start = 23
+    if n_end is None:
+        try:
+            n_end = int(db.get_setting("night_end_hour", "7"))
+        except Exception:
+            n_end = 7
+    df_h = rep.get("history_data")
+    if df_h is None or df_h.empty or "Time" not in df_h.columns:
+        return None, None, pd.DataFrame()
+    r_min, r_max = df_h["Time"].min(), df_h["Time"].max()
+    if m_mode == "night":
+        auto_s, auto_e = parser.get_latest_night_window(r_min, r_max, n_start, n_end)
+        if hasattr(auto_s, "to_pydatetime"):
+            auto_s = auto_s.to_pydatetime()
+        if hasattr(auto_e, "to_pydatetime"):
+            auto_e = auto_e.to_pydatetime()
+
+        db_c_s = rep.get("custom_night_start")
+        db_c_e = rep.get("custom_night_end")
+        def_s = db_c_s if (db_c_s and db_c_e) else auto_s
+        def_e = db_c_e if (db_c_s and db_c_e) else auto_e
+
+        ov_key = f"m_night_{rep['id']}"
+        if ov_key not in st.session_state:
+            st.session_state[ov_key] = (def_s, def_e)
+
+        s_dt, e_dt = st.session_state[ov_key]
+        if hasattr(s_dt, "to_pydatetime"):
+            s_dt = s_dt.to_pydatetime()
+        if hasattr(e_dt, "to_pydatetime"):
+            e_dt = e_dt.to_pydatetime()
+
+        s_dt = max(r_min.to_pydatetime(), min(r_max.to_pydatetime(), s_dt))
+        e_dt = max(r_min.to_pydatetime(), min(r_max.to_pydatetime(), e_dt))
+        if s_dt >= e_dt:
+            s_dt, e_dt = def_s, def_e
+        sl_df = parser.slice_timeline_range(df_h, s_dt, e_dt)
+        return s_dt, e_dt, sl_df
+    else:
+        return r_min.to_pydatetime(), r_max.to_pydatetime(), df_h
+
 def build_single_report_markdown(report, filter_mode, kpis, diagnosis_text):
     """Generate clean, publication-quality Markdown document for a single report."""
     md = []
@@ -634,9 +681,241 @@ active_llm_cfg = llm_manager.get_active_config()
 night_start_cfg = int(db.get_setting("night_start_hour", "23"))
 night_end_cfg = int(db.get_setting("night_end_hour", "7"))
 
+# --- Execution Engine for Asynchronous / Modal AI Workflows ---
+def execute_ai_action(action_type: str, payload: dict, progress_bar, status_box, curr_cfg: dict):
+    """
+    Executes an AI analysis workflow directly within the modal, providing real-time
+    granular progress updates across extraction, prompt generation, LLM querying,
+    and database persistence.
+    """
+    if not action_type or not payload:
+        raise ValueError("Missing action_type or payload for AI execution.")
+
+    if action_type == "single_diagnosis":
+        progress_bar.progress(20, text="📊 Extracting and filtering telemetry...")
+        status_box.info(f"Filtering batterystats for scope: {payload.get('filter_mode_choice', 'Targeted Scope')}...")
+        rep = db.get_report_by_id(payload["rep_id"])
+        if not rep:
+            raise ValueError(f"Report ID {payload['rep_id']} not found in database.")
+        
+        filtered_telemetry = parser.get_filtered_telemetry_for_llm(
+            rep.get("summary_text", ""), 
+            payload["filter_mode"], 
+            payload.get("kpis", {})
+        )
+        active_inv_profile = db.get_latest_device_profile()
+        profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+        if profile_summary:
+            filtered_telemetry = f"{profile_summary}\n\n{filtered_telemetry}"
+
+        progress_bar.progress(40, text="📝 Assembling diagnostic prompt & context...")
+        status_box.info("Injecting device profile, AppOps & power metrics...")
+        diag_prompt_tmpl = llm_manager.get_prompt_template("single_diagnosis")
+        formatted_diag_prompt = diag_prompt_tmpl.format(
+            report_name=rep["custom_name"],
+            timestamp_str=rep["timestamp_str"],
+            device_info=rep.get("device_info", "Unknown"),
+            timezone_info=payload.get("timezone", "UTC"),
+            telemetry_data=filtered_telemetry
+        )
+
+        progress_bar.progress(60, text=f"🔮 Oracle is diagnosing battery telemetry ({curr_cfg['model']})...")
+        status_box.info(f"Querying {curr_cfg['provider']} AI model for root causes & action plan...")
+        new_diag = llm_manager.call_llm_tracked(
+            messages=[{"role": "system", "content": formatted_diag_prompt}],
+            report_id=payload["rep_id"],
+            action_type=f"diagnosis_{payload['filter_mode']}"
+        )
+        new_diag = parser.sanitize_ai_output(new_diag, rep.get("summary_text", ""))
+
+        progress_bar.progress(90, text="💾 Persisting diagnosis to local database...")
+        status_box.info("Saving results to SQLite records...")
+        if payload["filter_mode"] == "full":
+            db.update_report_analysis(payload["rep_id"], new_diag, rep.get("reasoning_trace", ""))
+            rep["initial_analysis"] = new_diag
+        else:
+            db.set_setting(payload["diag_cache_key"], new_diag)
+        st.session_state.pop(f"err_diag_{payload['rep_id']}", None)
+
+        progress_bar.progress(100, text="✅ Diagnosis complete!")
+        status_box.success("Targeted diagnosis generated successfully! Loading report...")
+
+    elif action_type == "comparative_synthesis":
+        progress_bar.progress(20, text=f"📊 Aggregating telemetry across {len(payload.get('compared_report_ids', []))} sessions...")
+        status_box.info(f"Extracting power metrics for scope: {payload.get('merged_filter_choice', 'Comparative Scope')}...")
+        
+        all_reps = {r["id"]: r for r in db.get_all_reports()}
+        compared_reports = [all_reps[rid] for rid in payload.get("compared_report_ids", []) if rid in all_reps]
+        
+        reports_summary_text = ""
+        n_s = payload.get("night_start_cfg", 23)
+        n_e = payload.get("night_end_cfg", 7)
+        for idx, rep in enumerate(compared_reports):
+            r_s, r_e, _ = get_effective_bounds(rep, payload["merged_filter_mode"], n_s, n_e)
+            reports_summary_text += f"\n--- REPORT {idx+1}: {rep['custom_name']} (Captured: {rep['timestamp_str']}) ---\n"
+            reports_summary_text += f"Device: {rep.get('device_info', 'Unknown')}\n"
+            reports_summary_text += f"Notes: {rep.get('description', 'None')}\n"
+            reports_summary_text += f"{build_compact_summary(rep, filter_mode=payload['merged_filter_mode'], n_start=n_s, n_end=n_e, custom_start_dt=r_s, custom_end_dt=r_e)}\n"
+
+        active_inv_profile = db.get_latest_device_profile()
+        profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+        if profile_summary:
+            reports_summary_text = f"{profile_summary}\n\n{reports_summary_text}"
+
+        progress_bar.progress(40, text="📝 Building comparative synthesis prompt...")
+        status_box.info("Structuring cross-report power differentials...")
+        comp_prompt_tmpl = llm_manager.get_prompt_template("comparison")
+        formatted_comp_prompt = comp_prompt_tmpl.format(
+            report_count=len(compared_reports),
+            timezone_info=payload.get("timezone", "UTC"),
+            reports_summary=reports_summary_text
+        )
+
+        progress_bar.progress(60, text=f"🔮 Oracle is synthesizing comparative evaluation ({curr_cfg['model']})...")
+        status_box.info("Querying LLM provider for regressions & behavioral deltas...")
+        combined_text = llm_manager.call_llm_tracked(
+            messages=[{"role": "system", "content": formatted_comp_prompt}],
+            action_type=f"comparative_evaluation_{payload['merged_filter_mode']}"
+        )
+
+        progress_bar.progress(90, text="💾 Saving comparative analysis to SQLite...")
+        status_box.info("Persisting cross-report synthesis...")
+        db.save_combined_analysis(payload["comp_key"], combined_text, scope_key=payload["merged_filter_mode"])
+        st.session_state.pop(f"err_comp_{payload['merged_filter_mode']}", None)
+
+        progress_bar.progress(100, text="✅ Comparative synthesis complete!")
+        status_box.success("Cross-session analysis generated successfully! Loading synthesis...")
+
+    elif action_type == "profile_audit":
+        progress_bar.progress(25, text="📊 Extracting device settings, Doze states & AppOps...")
+        status_box.info("Inspecting system state and background policies...")
+        profile = db.get_device_profile(payload["profile_id"])
+        if not profile:
+            raise ValueError(f"Profile ID {payload['profile_id']} not found in database.")
+        p_data = profile.get("parsed_data", {})
+        profile_telemetry_str = parser.get_inventory_summary_for_llm(p_data)
+
+        progress_bar.progress(45, text="📝 Assembling audit prompt...")
+        status_box.info("Structuring AppOps anomalies and Doze configuration...")
+        audit_prompt_tmpl = llm_manager.get_prompt_template("profile_audit")
+        formatted_audit_prompt = audit_prompt_tmpl.format(
+            device_model=p_data.get("device_model", "Unknown"),
+            os_build=p_data.get("os_build", "Unknown"),
+            android_version=p_data.get("android_version", "Unknown"),
+            profile_telemetry=profile_telemetry_str
+        )
+
+        progress_bar.progress(65, text=f"🔮 Auditing device configuration ({curr_cfg['model']})...")
+        status_box.info("Querying LLM provider for misconfigurations & power optimizations...")
+        new_analysis = llm_manager.call_llm_tracked(
+            messages=[{"role": "system", "content": formatted_audit_prompt}],
+            action_type="profile_audit"
+        )
+        new_analysis = parser.sanitize_ai_output(new_analysis)
+
+        progress_bar.progress(90, text="💾 Persisting audit findings to database...")
+        status_box.info("Saving configuration audit results...")
+        db.update_device_profile_analysis(payload["profile_id"], new_analysis, "")
+        st.session_state.pop(f"err_prof_audit_{payload['profile_id']}", None)
+
+        progress_bar.progress(100, text="✅ Device audit complete!")
+        status_box.success("Profile configuration audit generated successfully! Loading audit...")
+
+    elif action_type == "profile_comparison":
+        progress_bar.progress(25, text="📊 Analyzing configuration deltas...")
+        status_box.info("Comparing package AppOps, Doze whitelists & system flags...")
+        profile_a = db.get_device_profile(payload["p_a_id"])
+        profile_b = db.get_device_profile(payload["p_b_id"])
+        if not profile_a or not profile_b:
+            raise ValueError("Comparison profiles could not be loaded from database.")
+        diff = parser.compute_profile_diff(profile_a, profile_b)
+        diff_summary_str = parser.format_profile_diff_for_llm(profile_a, profile_b, diff)
+
+        progress_bar.progress(45, text="📝 Formatting delta audit prompt...")
+        status_box.info("Preparing baseline vs target comparison payload...")
+        cmp_prompt_tmpl = llm_manager.get_prompt_template("profile_comparison")
+        formatted_cmp_prompt = cmp_prompt_tmpl.format(
+            baseline_name=profile_a["profile_name"],
+            baseline_model=diff["model_a"],
+            baseline_build=diff["build_a"],
+            target_name=profile_b["profile_name"],
+            target_model=diff["model_b"],
+            target_build=diff["build_b"],
+            diff_summary=diff_summary_str
+        )
+
+        progress_bar.progress(65, text=f"🔮 Auditing configuration deltas ({curr_cfg['model']})...")
+        status_box.info("Querying LLM provider for delta risks & regression sources...")
+        cmp_analysis_res = llm_manager.call_llm_tracked(
+            messages=[{"role": "system", "content": formatted_cmp_prompt}],
+            action_type="profile_comparison"
+        )
+        cmp_analysis_res = parser.sanitize_ai_output(cmp_analysis_res)
+
+        progress_bar.progress(90, text="💾 Persisting delta audit to database...")
+        status_box.info("Saving comparison results...")
+        db.set_setting(payload["cmp_cache_key"], cmp_analysis_res)
+        st.session_state.pop(f"err_prof_cmp_{payload['p_a_id']}_{payload['p_b_id']}", None)
+
+        progress_bar.progress(100, text="✅ Delta audit complete!")
+        status_box.success("Profile delta audit generated successfully! Loading comparison...")
+
+    elif action_type == "master_synthesis":
+        progress_bar.progress(20, text="📊 Synthesizing chronicle across all bugreports...")
+        status_box.info("Compiling telemetry timelines and test run notes...")
+        all_reports = db.get_all_reports()
+        chronicle = []
+        active_inv_profile = db.get_latest_device_profile()
+        profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+        if profile_summary:
+            chronicle.append(profile_summary + "\n")
+
+        n_s = payload.get("night_start_cfg", 23)
+        n_e = payload.get("night_end_cfg", 7)
+        for idx, r in enumerate(all_reports):
+            chronicle.append(f"\n==========================================")
+            chronicle.append(f"SESSION {idx+1}: {r['custom_name']}")
+            chronicle.append(f"File: {r['filename']} | Timestamp: {r['timestamp_str']}")
+            chronicle.append(f"Device: {r.get('device_info', 'Android Device')}")
+            chronicle.append(f"User State / Notes: {r.get('description', 'None')}")
+            chronicle.append(build_compact_summary(r, filter_mode='night', n_start=n_s, n_end=n_e))
+            chronicle.append("==========================================\n")
+
+        progress_bar.progress(45, text="📝 Assembling multi-day synthesis prompt...")
+        status_box.info("Structuring chronological evolution & hypothesis validation...")
+        synth_prompt = llm_manager.get_prompt_template("master_synthesis").format(
+            experiment_chronicle="\n".join(chronicle)
+        )
+
+        progress_bar.progress(65, text=f"🔮 Synthesizing multi-day experiment ({curr_cfg['model']})...")
+        status_box.info("Querying LLM provider for holistic insights & final recommendations...")
+        synthesis_text = llm_manager.call_llm_tracked(
+            messages=[{"role": "system", "content": synth_prompt}],
+            action_type="master_experiment_synthesis"
+        )
+        synthesis_text = parser.sanitize_ai_output(synthesis_text)
+
+        progress_bar.progress(90, text="💾 Persisting Grand Master Synthesis to database...")
+        status_box.info("Saving executive retrospective...")
+        db.save_master_synthesis(synthesis_text)
+        st.session_state.pop("err_master_synth", None)
+
+        progress_bar.progress(100, text="✅ Grand Master Synthesis complete!")
+        status_box.success("Retrospective synthesis generated successfully! Loading blueprint...")
+
+    else:
+        raise ValueError(f"Unknown action_type: {action_type}")
+
 # --- Confirmation Dialog for AI Execution ---
 @st.dialog("🔮 Confirm AI Analysis Execution", width="medium")
-def confirm_ai_analysis_dialog(action_key: str, action_title: str, target_desc: str, details_dict: dict = None):
+def confirm_ai_analysis_dialog(
+    action_key: str, 
+    action_title: str, 
+    target_desc: str, 
+    details_dict: dict = None,
+    action_type: str = None,
+    action_payload: dict = None
+):
     st.markdown(f"### {action_title}")
     st.write(target_desc)
     
@@ -660,13 +939,40 @@ def confirm_ai_analysis_dialog(action_key: str, action_title: str, target_desc: 
     st.caption("ℹ️ Running this analysis sends processed telemetry to the selected LLM provider. Tokens and estimated USD costs will be logged to your Accounting Dashboard.")
     
     st.markdown("")
-    col_btn_cancel, col_btn_proceed = st.columns([1, 1])
-    with col_btn_cancel:
-        if st.button("❌ Cancel", key="btn_cancel_ai_dialog", use_container_width=True):
-            st.session_state.pending_ai_action = None
-            st.rerun()
-    with col_btn_proceed:
-        if st.button("🚀 Proceed with Analysis", key="btn_proceed_ai_dialog", type="primary", use_container_width=True):
+    btn_area = st.empty()
+    with btn_area.container():
+        col_btn_cancel, col_btn_proceed = st.columns([1, 1])
+        with col_btn_cancel:
+            btn_cancel = st.button("❌ Cancel", key=f"btn_cancel_{action_key}", use_container_width=True)
+        with col_btn_proceed:
+            btn_proceed = st.button("🚀 Proceed with Analysis", key=f"btn_proceed_{action_key}", type="primary", use_container_width=True)
+
+    if btn_cancel:
+        st.rerun()
+
+    if btn_proceed:
+        # Erase confirmation buttons immediately so UI reflects execution state
+        btn_area.empty()
+        
+        st.markdown("---")
+        progress_bar = st.progress(5, text="🚀 Initializing analysis pipeline...")
+        status_box = st.empty()
+        status_box.info(f"Starting Oracle workflow: {action_title}...")
+        
+        if action_type and action_payload:
+            try:
+                execute_ai_action(action_type, action_payload, progress_bar, status_box, curr_cfg)
+                time.sleep(0.6)
+                st.rerun()
+            except Exception as e:
+                progress_bar.progress(100, text="❌ Execution encountered an error")
+                status_box.error(f"Analysis failed: {str(e)}")
+                st.session_state[f"err_{action_key}"] = (e, action_title)
+                render_ai_error(e, action_description=action_title, key_suffix=f"dlg_err_{action_key}")
+                if st.button("Close Dialog", key=f"btn_close_err_{action_key}", use_container_width=True):
+                    st.rerun()
+        else:
+            # Fallback for untyped actions
             st.session_state.pending_ai_action = action_key
             st.rerun()
 
@@ -1341,9 +1647,12 @@ if st.session_state.active_tab == "single":
                     if comp_names:
                         selected_pkg_to_search = st.selectbox("Select component / app to research:", comp_names, key=f"pkg_sel_{rep_id}_{filter_mode}")
                         if st.button("🌐 Search Public Knowledge & Drain Issues", key=f"btn_search_{rep_id}_{filter_mode}"):
-                            with st.spinner(f"Querying public web intelligence for {selected_pkg_to_search}..."):
+                            with st.status(f"🌐 Querying web intelligence for `{selected_pkg_to_search}`...", expanded=True) as status_search:
+                                status_search.write("🔍 Identifying app architecture & package metadata...")
+                                status_search.write("🔋 Scanning public repositories for battery drain & wakelock reports...")
                                 intel = web_search.investigate_package(selected_pkg_to_search)
-                                st.markdown(intel)
+                                status_search.update(label=f"✅ Web intelligence gathered for `{selected_pkg_to_search}`", state="complete", expanded=False)
+                            st.markdown(intel)
             else:
                 st.info("No component breakdown data parsed.")
                 
@@ -1381,6 +1690,15 @@ if st.session_state.active_tab == "single":
                         "Scope Window": f"{kpis['start_time']} → {kpis['end_time']}",
                         "Battery Drop / Rate": f"{kpis['drop_pct']}% ({kpis['rate_per_hr']:.2f}%/hr)",
                         "Device Info": active_report.get("device_info", "Unknown")
+                    },
+                    action_type="single_diagnosis",
+                    action_payload={
+                        "rep_id": rep_id,
+                        "filter_mode": filter_mode,
+                        "filter_mode_choice": filter_mode_choice,
+                        "diag_cache_key": diag_cache_key,
+                        "timezone": timezone,
+                        "kpis": kpis
                     }
                 )
         with c_diag_act2:
@@ -1396,46 +1714,6 @@ if st.session_state.active_tab == "single":
                 )
         with c_diag_status:
             st.caption(f"**Current Scope:** {diag_subtitle}")
-
-        # Check if user confirmed the AI action
-        if st.session_state.pending_ai_action == diag_action_key:
-            st.session_state.pending_ai_action = None
-            filtered_telemetry = parser.get_filtered_telemetry_for_llm(active_report["summary_text"], filter_mode, kpis)
-            
-            # Inject active device profile inventory if available
-            active_inv_profile = db.get_latest_device_profile()
-            profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
-            if profile_summary:
-                filtered_telemetry = f"{profile_summary}\n\n{filtered_telemetry}"
-
-            diag_prompt_tmpl = llm_manager.get_prompt_template("single_diagnosis")
-            formatted_diag_prompt = diag_prompt_tmpl.format(
-                report_name=active_report["custom_name"],
-                timestamp_str=active_report["timestamp_str"],
-                device_info=active_report.get("device_info", "Unknown"),
-                timezone_info=timezone,
-                telemetry_data=filtered_telemetry
-            )
-            with st.spinner(f"🔮 Oracle is evaluating {filter_mode_choice}..."):
-                try:
-                    new_diag = llm_manager.call_llm_tracked(
-                        messages=[{"role": "system", "content": formatted_diag_prompt}],
-                        report_id=rep_id,
-                        action_type=f"diagnosis_{filter_mode}"
-                    )
-                    # Sanitize AI output to guarantee no bare UIDs remain
-                    new_diag = parser.sanitize_ai_output(new_diag, active_report.get("summary_text", ""))
-                    if filter_mode == "full":
-                        db.update_report_analysis(rep_id, new_diag, active_report.get("reasoning_trace", ""))
-                        active_report["initial_analysis"] = new_diag
-                    else:
-                        db.set_setting(diag_cache_key, new_diag)
-                    st.session_state.pop(f"err_diag_{rep_id}", None)
-                    st.success("Diagnosis updated!")
-                    st.rerun()
-                except Exception as e:
-                    st.session_state[f"err_diag_{rep_id}"] = (e, f"evaluating battery diagnosis ({filter_mode_choice})")
-                    st.rerun()
                         
         # Render any captured diagnosis error at full width below the action bar
         if st.session_state.get(f"err_diag_{rep_id}"):
@@ -1658,43 +1936,6 @@ elif st.session_state.active_tab == "merged":
                     horizontal=True,
                     key="merged_scope_radio"
                 )
-                
-            # Helper to get the active window for each report (considering custom overrides)
-            def get_effective_bounds(rep, m_mode):
-                df_h = rep.get("history_data")
-                if df_h is None or df_h.empty or "Time" not in df_h.columns:
-                    return None, None, pd.DataFrame()
-                r_min, r_max = df_h["Time"].min(), df_h["Time"].max()
-                if m_mode == "night":
-                    auto_s, auto_e = parser.get_latest_night_window(r_min, r_max, night_start_cfg, night_end_cfg)
-                    if hasattr(auto_s, "to_pydatetime"):
-                        auto_s = auto_s.to_pydatetime()
-                    if hasattr(auto_e, "to_pydatetime"):
-                        auto_e = auto_e.to_pydatetime()
-
-                    db_c_s = rep.get("custom_night_start")
-                    db_c_e = rep.get("custom_night_end")
-                    def_s = db_c_s if (db_c_s and db_c_e) else auto_s
-                    def_e = db_c_e if (db_c_s and db_c_e) else auto_e
-
-                    ov_key = f"m_night_{rep['id']}"
-                    if ov_key not in st.session_state:
-                        st.session_state[ov_key] = (def_s, def_e)
-
-                    s_dt, e_dt = st.session_state[ov_key]
-                    if hasattr(s_dt, "to_pydatetime"):
-                        s_dt = s_dt.to_pydatetime()
-                    if hasattr(e_dt, "to_pydatetime"):
-                        e_dt = e_dt.to_pydatetime()
-
-                    s_dt = max(r_min.to_pydatetime(), min(r_max.to_pydatetime(), s_dt))
-                    e_dt = max(r_min.to_pydatetime(), min(r_max.to_pydatetime(), e_dt))
-                    if s_dt >= e_dt:
-                        s_dt, e_dt = def_s, def_e
-                    sl_df = parser.slice_timeline_range(df_h, s_dt, e_dt)
-                    return s_dt, e_dt, sl_df
-                else:
-                    return r_min.to_pydatetime(), r_max.to_pydatetime(), df_h
 
             merged_filter_mode = "full"
             if "Night Standby" in merged_filter_choice:
@@ -1911,6 +2152,16 @@ elif st.session_state.active_tab == "merged":
                                 "Selected Sessions": f"{len(compared_reports)} bugreports",
                                 "Active Scope": merged_filter_choice,
                                 "Reports List": ", ".join([r['custom_name'] for r in compared_reports[:3]]) + (f" + {len(compared_reports)-3} more" if len(compared_reports) > 3 else "")
+                            },
+                            action_type="comparative_synthesis",
+                            action_payload={
+                                "comp_key": comp_key,
+                                "merged_filter_mode": merged_filter_mode,
+                                "merged_filter_choice": merged_filter_choice,
+                                "compared_report_ids": [r["id"] for r in compared_reports],
+                                "timezone": timezone,
+                                "night_start_cfg": night_start_cfg,
+                                "night_end_cfg": night_end_cfg
                             }
                         )
                 with c_comp_act2:
@@ -1930,44 +2181,6 @@ elif st.session_state.active_tab == "merged":
                         st.caption(f"🕒 **Last Evaluated:** `{clean_ts}` &nbsp;•&nbsp; 🎯 **Scope:** `{merged_filter_choice}`")
                     else:
                         st.caption(f"🎯 **Active Scope:** `{merged_filter_choice}` &nbsp;•&nbsp; Telemetry across {len(compared_reports)} sessions.")
-                
-                # Check if user confirmed the AI comparative evaluation
-                if st.session_state.pending_ai_action == comp_action_key:
-                    st.session_state.pending_ai_action = None
-                    with st.spinner(f"🔮 Oracle is synthesizing comparative evaluation for {merged_filter_choice}..."):
-                        reports_summary_text = ""
-                        for idx, rep in enumerate(compared_reports):
-                            r_s, r_e, _ = get_effective_bounds(rep, merged_filter_mode)
-                            reports_summary_text += f"\n--- REPORT {idx+1}: {rep['custom_name']} (Captured: {rep['timestamp_str']}) ---\n"
-                            reports_summary_text += f"Device: {rep.get('device_info', 'Unknown')}\n"
-                            reports_summary_text += f"Notes: {rep.get('description', 'None')}\n"
-                            reports_summary_text += f"{build_compact_summary(rep, filter_mode=merged_filter_mode, n_start=night_start_cfg, n_end=night_end_cfg, custom_start_dt=r_s, custom_end_dt=r_e)}\n"
-                            
-                        comp_prompt_tmpl = llm_manager.get_prompt_template("comparison")
-                        active_inv_profile = db.get_latest_device_profile()
-                        profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
-                        if profile_summary:
-                            reports_summary_text = f"{profile_summary}\n\n{reports_summary_text}"
-
-                        formatted_comp_prompt = comp_prompt_tmpl.format(
-                            report_count=len(compared_reports),
-                            timezone_info=timezone,
-                            reports_summary=reports_summary_text
-                        )
-                        
-                        try:
-                            combined_text = llm_manager.call_llm_tracked(
-                                messages=[{"role": "system", "content": formatted_comp_prompt}],
-                                action_type=f"comparative_evaluation_{merged_filter_mode}"
-                            )
-                            db.save_combined_analysis(comp_key, combined_text, scope_key=merged_filter_mode)
-                            gen_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            st.session_state.pop(f"err_comp_{merged_filter_mode}", None)
-                            st.rerun()
-                        except Exception as e:
-                            combined_text = None
-                            st.session_state[f"err_comp_{merged_filter_mode}"] = (e, f"generating comparative analysis ({merged_filter_choice})")
-                            st.rerun()
                                 
                 if st.session_state.get(f"err_comp_{merged_filter_mode}"):
                     c_err_obj, c_err_act = st.session_state[f"err_comp_{merged_filter_mode}"]
@@ -2283,6 +2496,10 @@ settings get secure location_providers_allowed
                             "Device Model": p_data.get("device_model", "Unknown"),
                             "Android Version": f"Android {p_data.get('android_version', 'Unknown')}",
                             "Build ID": p_data.get("os_build", "Unknown")
+                        },
+                        action_type="profile_audit",
+                        action_payload={
+                            "profile_id": current_profile["id"]
                         }
                     )
             with c_pact2:
@@ -2290,31 +2507,6 @@ settings get secure location_providers_allowed
                     st.caption(f"🕒 **Last Evaluated:** `{current_profile.get('updated_at', '')[:16]}` &nbsp;•&nbsp; Grounded in full device inventory & AppOps.")
                 else:
                     st.caption("⏳ **Not Yet Generated** &nbsp;•&nbsp; Click above to audit Doze states, AppOps restrictions & risks.")
-
-            if st.session_state.pending_ai_action == prof_action_key:
-                st.session_state.pending_ai_action = None
-                audit_prompt_tmpl = llm_manager.get_prompt_template("profile_audit")
-                profile_telemetry_str = parser.get_inventory_summary_for_llm(p_data)
-                formatted_audit_prompt = audit_prompt_tmpl.format(
-                    device_model=p_data.get("device_model", "Unknown"),
-                    os_build=p_data.get("os_build", "Unknown"),
-                    android_version=p_data.get("android_version", "Unknown"),
-                    profile_telemetry=profile_telemetry_str
-                )
-                with st.spinner("Analyzing device configuration with AI..."):
-                    try:
-                        new_analysis = llm_manager.call_llm_tracked(
-                            messages=[{"role": "system", "content": formatted_audit_prompt}],
-                            action_type="profile_audit"
-                        )
-                        new_analysis = parser.sanitize_ai_output(new_analysis)
-                        db.update_device_profile_analysis(current_profile["id"], new_analysis, "")
-                        st.session_state.pop(f"err_prof_audit_{current_profile['id']}", None)
-                        st.success("✅ Device Profile Audit refreshed!")
-                        st.rerun()
-                    except Exception as e:
-                        st.session_state[f"err_prof_audit_{current_profile['id']}"] = (e, "generating device profile configuration audit")
-                        st.rerun()
 
             if st.session_state.get(f"err_prof_audit_{current_profile['id']}"):
                 p_err_obj, p_err_act = st.session_state[f"err_prof_audit_{current_profile['id']}"]
@@ -2677,6 +2869,12 @@ settings get secure location_providers_allowed
                             "Doze Whitelist Δ": f"{len(diff['wl_added'])} added / {len(diff['wl_removed'])} removed",
                             "AppOps BG Δ": f"{len(diff['ao_bg_added'])} added / {len(diff['ao_bg_removed'])} removed",
                             "Modified Settings": f"{len(diff['settings_diff'])} keys"
+                        },
+                        action_type="profile_comparison",
+                        action_payload={
+                            "p_a_id": p_a_id,
+                            "p_b_id": p_b_id,
+                            "cmp_cache_key": cmp_cache_key
                         }
                     )
             with c_act2:
@@ -2684,34 +2882,6 @@ settings get secure location_providers_allowed
                     st.caption("✅ **Analysis Ready** &nbsp;•&nbsp; Cached evaluation grounded in profile deltas & system policies.")
                 else:
                     st.caption("⏳ **Not Yet Generated** &nbsp;•&nbsp; Click above to evaluate battery risk, Doze regressions & AppOps changes.")
-
-            if st.session_state.pending_ai_action == cmp_action_key:
-                st.session_state.pending_ai_action = None
-                cmp_prompt_tmpl = llm_manager.get_prompt_template("profile_comparison")
-                diff_summary_str = parser.format_profile_diff_for_llm(profile_a, profile_b, diff)
-                formatted_cmp_prompt = cmp_prompt_tmpl.format(
-                    baseline_name=profile_a["profile_name"],
-                    baseline_model=diff["model_a"],
-                    baseline_build=diff["build_a"],
-                    target_name=profile_b["profile_name"],
-                    target_model=diff["model_b"],
-                    target_build=diff["build_b"],
-                    diff_summary=diff_summary_str
-                )
-                with st.spinner("🔮 Oracle is auditing configuration deltas and power impacts..."):
-                    try:
-                        cmp_analysis_res = llm_manager.call_llm_tracked(
-                            messages=[{"role": "system", "content": formatted_cmp_prompt}],
-                            action_type="profile_comparison"
-                        )
-                        cmp_analysis_res = parser.sanitize_ai_output(cmp_analysis_res)
-                        db.set_setting(cmp_cache_key, cmp_analysis_res)
-                        st.session_state.pop(f"err_prof_cmp_{p_a_id}_{p_b_id}", None)
-                        st.success("✅ Profile comparison analysis complete!")
-                        st.rerun()
-                    except Exception as e:
-                        st.session_state[f"err_prof_cmp_{p_a_id}_{p_b_id}"] = (e, "generating profile comparison analysis")
-                        st.rerun()
                             
             if st.session_state.get(f"err_prof_cmp_{p_a_id}_{p_b_id}"):
                 c_err_obj, c_err_act = st.session_state[f"err_prof_cmp_{p_a_id}_{p_b_id}"]
@@ -2826,6 +2996,11 @@ elif st.session_state.active_tab == "master":
                         "Total Sessions": f"{len(all_reports)} bugreports",
                         "Telemetry Scope": "Night Standby Windows & Full Sessions",
                         "Latest Device Profile": (db.get_latest_device_profile() or {}).get("profile_name", "None")
+                    },
+                    action_type="master_synthesis",
+                    action_payload={
+                        "night_start_cfg": night_start_cfg,
+                        "night_end_cfg": night_end_cfg
                     }
                 )
         with c_synth_act2:
@@ -2843,40 +3018,6 @@ elif st.session_state.active_tab == "master":
                 st.caption(f"🕒 **Last Synthesized:** `{saved_synthesis.get('updated_at', '')[:16]}` &nbsp;•&nbsp; Covering {len(all_reports)} multi-day test runs.")
             else:
                 st.caption(f"🧪 **Synthesis Ready:** {len(all_reports)} bugreport test runs ready for multi-day retrospective.")
-        
-        if st.session_state.pending_ai_action == master_action_key:
-            st.session_state.pending_ai_action = None
-            with st.spinner("Oracle is synthesizing multi-day experiment across all bugreports..."):
-                chronicle = []
-                active_inv_profile = db.get_latest_device_profile()
-                profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
-                if profile_summary:
-                    chronicle.append(profile_summary + "\n")
-
-                for idx, r in enumerate(all_reports):
-                    chronicle.append(f"\n==========================================")
-                    chronicle.append(f"SESSION {idx+1}: {r['custom_name']}")
-                    chronicle.append(f"File: {r['filename']} | Timestamp: {r['timestamp_str']}")
-                    chronicle.append(f"Device: {r.get('device_info', 'Android Device')}")
-                    chronicle.append(f"User State / Notes: {r.get('description', 'None')}")
-                    chronicle.append(build_compact_summary(r, filter_mode='night', n_start=night_start_cfg, n_end=night_end_cfg))
-                    chronicle.append("==========================================\n")
-                    
-                synth_prompt = llm_manager.get_prompt_template("master_synthesis").format(
-                    experiment_chronicle="\n".join(chronicle)
-                )
-                
-                try:
-                    synthesis_text = llm_manager.call_llm_tracked(
-                        messages=[{"role": "system", "content": synth_prompt}],
-                        action_type="master_experiment_synthesis"
-                    )
-                    db.save_master_synthesis(synthesis_text)
-                    st.session_state.pop("err_master_synth", None)
-                    st.rerun()
-                except Exception as e:
-                    st.session_state["err_master_synth"] = (e, "generating master experiment synthesis")
-                    st.rerun()
 
         if st.session_state.get("err_master_synth"):
             m_err_obj, m_err_act = st.session_state["err_master_synth"]
