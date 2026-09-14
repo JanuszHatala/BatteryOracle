@@ -2878,56 +2878,100 @@ elif st.session_state.active_tab == "master":
         
         st.divider()
         
-        # Synthesis Generator
-        saved_synthesis = db.get_master_synthesis()
-        # Action Command Bar: Primary trigger + export button adjacent on left
-        master_action_key = "master_experiment_synthesis"
-        btn_synth_label = "🔄 Refresh Master Synthesis" if saved_synthesis else "✨ Synthesize Grand Master Experiment"
-        synthesis_text = saved_synthesis["text"] if saved_synthesis else ""
-        
-        c_synth_act1, c_synth_act2, c_synth_status = st.columns([1.6, 1.3, 3], vertical_alignment="center")
-        with c_synth_act1:
-            if st.button(btn_synth_label, key="btn_run_master_synth", type="primary" if not saved_synthesis else "secondary", use_container_width=True):
-                confirm_ai_analysis_dialog(
-                    action_key=master_action_key,
-                    action_title=f"{'Refresh' if saved_synthesis else 'Generate'} Grand Master Experiment Synthesis",
-                    target_desc=f"Synthesize an executive retrospective and definitive blueprint across all **{len(all_reports)}** recorded bugreport sessions.",
-                    details_dict={
-                        "Total Sessions": f"{len(all_reports)} bugreports",
-                        "Telemetry Scope": "Night Standby Windows & Full Sessions",
-                        "Latest Device Profile": (db.get_latest_device_profile() or {}).get("profile_name", "None")
-                    },
-                    action_type="master_synthesis",
-                    action_payload={
-                        "night_start_cfg": night_start_cfg,
-                        "night_end_cfg": night_end_cfg
-                    }
-                )
-        with c_synth_act2:
-            if synthesis_text:
-                st.download_button(
-                    label="📥 Export Synthesis (.md)",
-                    data=synthesis_text,
-                    file_name=f"Master_Battery_Experiment_Synthesis_{datetime.now().strftime('%Y%m%d')}.md",
-                    mime="text/markdown",
-                    key="dl_master_synth_md",
-                    use_container_width=True
-                )
-        with c_synth_status:
-            if saved_synthesis:
-                st.caption(f"🕒 **Last Synthesized:** `{saved_synthesis.get('updated_at', '')[:16]}` &nbsp;•&nbsp; Covering {len(all_reports)} multi-day test runs.")
-            else:
-                st.caption(f"🧪 **Synthesis Ready:** {len(all_reports)} bugreport test runs ready for multi-day retrospective.")
+        # Two dedicated top-level tabs: Blueprint & Scorecard vs Master Chat
+        tab_master_blueprint, tab_master_chat = st.tabs([
+            "📜 Master Retrospective & Action Plan",
+            "💬 Master Experiment Consultation Chat ✨"
+        ])
 
-        if st.session_state.get("err_master_synth"):
-            m_err_obj, m_err_act = st.session_state["err_master_synth"]
-            render_ai_error(m_err_obj, action_description=m_err_act, key_suffix="master_synth")
-                
-        if synthesis_text:
-            st.markdown('### ✨ Master Retrospective Blueprint <span class="ai-badge">✨ AI GENERATED</span>', unsafe_allow_html=True)
-            render_ai_block(synthesis_text, key_suffix="master_synthesis")
-        else:
-            st.info("Click **'✨ Synthesize Grand Master Experiment'** above to generate the overarching retrospective across all sessions.")
+        with tab_master_blueprint:
+            # Synthesis Generator
+            saved_synthesis = db.get_master_synthesis()
+            # Action Command Bar: Primary trigger + export button adjacent on left
+            master_action_key = "master_experiment_synthesis"
+            btn_synth_label = "🔄 Refresh Master Synthesis" if saved_synthesis else "✨ Synthesize Grand Master Experiment"
+            synthesis_text = saved_synthesis["text"] if saved_synthesis else ""
+            
+            c_synth_act1, c_synth_act2, c_synth_status = st.columns([1.6, 1.3, 3], vertical_alignment="center")
+            with c_synth_act1:
+                if st.button(btn_synth_label, key="btn_run_master_synth", type="primary" if not saved_synthesis else "secondary", use_container_width=True):
+                    confirm_ai_analysis_dialog(
+                        action_key=master_action_key,
+                        action_title=f"{'Refresh' if saved_synthesis else 'Generate'} Grand Master Experiment Synthesis",
+                        target_desc=f"Synthesize an executive retrospective and definitive blueprint across all **{len(all_reports)}** recorded bugreport sessions.",
+                        details_dict={
+                            "Total Sessions": f"{len(all_reports)} bugreports",
+                            "Telemetry Scope": "Night Standby Windows & Full Sessions",
+                            "Latest Device Profile": (db.get_latest_device_profile() or {}).get("profile_name", "None")
+                        },
+                        action_type="master_synthesis",
+                        action_payload={
+                            "night_start_cfg": night_start_cfg,
+                            "night_end_cfg": night_end_cfg
+                        }
+                    )
+            with c_synth_act2:
+                if synthesis_text:
+                    st.download_button(
+                        label="📥 Export Synthesis (.md)",
+                        data=synthesis_text,
+                        file_name=f"Master_Battery_Experiment_Synthesis_{datetime.now().strftime('%Y%m%d')}.md",
+                        mime="text/markdown",
+                        key="dl_master_synth_md",
+                        use_container_width=True
+                    )
+            with c_synth_status:
+                if saved_synthesis:
+                    updated_ts = saved_synthesis.get('updated_at', '')[:16]
+                    st.caption(f"🕒 **Last Synthesized:** `{updated_ts}` &nbsp;•&nbsp; Covering {len(all_reports)} multi-day test runs.")
+                else:
+                    st.caption(f"🧪 **Synthesis Ready:** {len(all_reports)} bugreport test runs ready for multi-day retrospective.")
+
+            if st.session_state.get("err_master_synth"):
+                m_err_obj, m_err_act = st.session_state["err_master_synth"]
+                render_ai_error(m_err_obj, action_description=m_err_act, key_suffix="master_synth")
+                    
+            if synthesis_text:
+                st.markdown('### ✨ Master Retrospective Blueprint <span class="ai-badge">✨ AI GENERATED</span>', unsafe_allow_html=True)
+                render_ai_block(synthesis_text, key_suffix="master_synthesis")
+            else:
+                st.info("Click **'✨ Synthesize Grand Master Experiment'** above to generate the overarching retrospective across all sessions.")
+
+        with tab_master_chat:
+            def _build_master_sys_prompt():
+                current_synth = db.get_master_synthesis()
+                synth_ctx = current_synth["text"] if current_synth else "No master synthesis generated yet."
+                all_rep = db.get_all_reports()
+                chronicle_lines = []
+                active_inv_profile = db.get_latest_device_profile()
+                profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+                if profile_summary:
+                    chronicle_lines.append(profile_summary + "\n")
+
+                for idx, r in enumerate(all_rep):
+                    chronicle_lines.append(f"SESSION {idx+1}: {r['custom_name']} ({r['timestamp_str']}) - {r.get('description', '')}")
+                    chronicle_lines.append(build_compact_summary(r, filter_mode='night', n_start=night_start_cfg, n_end=night_end_cfg))
+
+                context_prompt = (
+                    "You are a Principal Android Battery & Performance Architect.\n"
+                    "You are consulting with the user regarding their overarching multi-day battery experiment synthesis and long-term optimization blueprint.\n\n"
+                    "=== EXECUTIVE MASTER SYNTHESIS ===\n"
+                    f"{synth_ctx}\n\n"
+                    "=== COMPLETE MULTI-DAY TEST RUN CHRONICLE ===\n"
+                    + "\n".join(chronicle_lines)
+                )
+                return context_prompt
+
+            render_ai_chat_panel(
+                scope_key="master_experiment_synthesis",
+                panel_title="Master Experiment Consultation Chat",
+                scope_badge=f"🧪 {len(all_reports)} Test Runs • Grand Blueprint",
+                report_id=-999999,
+                active_thread_state_key="active_master_thread_id",
+                sys_prompt_builder=_build_master_sys_prompt,
+                action_type="master_experiment_chat",
+                filter_label=f"Grand Master Experiment ({len(all_reports)} sessions)"
+            )
 
 
 # ==============================================================================
