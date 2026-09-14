@@ -693,13 +693,12 @@ def render_ai_chat_panel(
     active_thread_state_key: str,
     sys_prompt_builder,
     action_type: str = "chat",
-    filter_label: str = "",
-    default_expanded: bool = True
+    filter_label: str = ""
 ):
     """
-    Renders an isolated, non-refreshing AI chat drawer/panel.
-    Decorated with @st.fragment so that sending messages or switching threads
-    updates only this container without dimming the parent page or shifting scroll.
+    Renders an isolated, full-screen AI chat consultation workspace within its dedicated tab.
+    Decorated with @st.fragment so that sending messages, switching threads, or searching
+    updates only this tab without dimming the application or resetting scroll position.
     """
     is_global = (report_id is None)
     threads = db.get_threads_for_report(report_id)
@@ -714,11 +713,6 @@ def render_ai_chat_panel(
     active_th_id = st.session_state[active_thread_state_key]
     thread_messages = db.get_chat_messages(report_id, thread_id=active_th_id)
     total_msgs = len(thread_messages)
-
-    # State key for drawer expand/collapse toggle
-    expand_key = f"chat_panel_open_{scope_key}"
-    if expand_key not in st.session_state:
-        st.session_state[expand_key] = default_expanded
 
     # Visual Chat Header
     st.markdown(
@@ -735,13 +729,8 @@ def render_ai_chat_panel(
         unsafe_allow_html=True
     )
 
-    # Control Bar: Toggle drawer, Thread select, New, Rename, Clear/Delete, Export
-    c_toggle, c_sel, c_new, c_ren, c_del, c_exp = st.columns([1.5, 3.2, 1.2, 1.2, 1.2, 1.2], vertical_alignment="center")
-    with c_toggle:
-        toggle_label = "🔼 Collapse Chat" if st.session_state[expand_key] else "🔽 Expand Chat"
-        if st.button(toggle_label, key=f"btn_toggle_panel_{scope_key}", use_container_width=True):
-            st.session_state[expand_key] = not st.session_state[expand_key]
-            st.rerun(scope="fragment")
+    # Primary Chat Management Toolbar: Thread select, New, Rename, Clear/Delete, Export
+    c_sel, c_new, c_ren, c_del, c_exp = st.columns([3.6, 1.2, 1.2, 1.2, 1.2], vertical_alignment="center")
 
     with c_sel:
         def _fmt_thread(th_id):
@@ -808,10 +797,6 @@ def render_ai_chat_panel(
         else:
             st.button("📥 Export", key=f"dl_th_dis_{scope_key}", use_container_width=True, disabled=True)
 
-    if not st.session_state[expand_key]:
-        st.caption("Chat drawer collapsed. Click **🔽 Expand Chat** to resume consultation.")
-        return
-
     # Secondary Toolbar: Search + Expand/Collapse All
     s_col, b_exp, b_col = st.columns([3.6, 1.2, 1.2], vertical_alignment="center")
     with s_col:
@@ -848,23 +833,23 @@ def render_ai_chat_panel(
         else:
             st.caption(f"🔎 No matches found for **\"{sq}\"**.")
 
-    # Scrollable, Framed Chat Viewport
-    chat_container = st.container(height=520, border=True)
-    with chat_container:
-        if not thread_messages:
-            st.info("💡 No messages in this thread yet. Ask anything below to start the consultation!")
-        else:
-            for msg in thread_messages:
-                render_chat_message_item(
-                    msg=msg,
-                    rep_id=report_id,
-                    active_th_id=active_th_id,
-                    thread_dict=thread_dict,
-                    is_global=is_global,
-                    search_query=search_q
-                )
+    st.divider()
 
-    # Dedicated Chat Input Box (Docked below viewport)
+    # Full Page Viewport: Render conversation messages naturally on the full page
+    if not thread_messages:
+        st.info("💡 No messages in this thread yet. Ask anything below to start the consultation!")
+    else:
+        for msg in thread_messages:
+            render_chat_message_item(
+                msg=msg,
+                rep_id=report_id,
+                active_th_id=active_th_id,
+                thread_dict=thread_dict,
+                is_global=is_global,
+                search_query=search_q
+            )
+
+    # Dedicated Chat Input Box
     input_key = f"chat_input_{scope_key}"
     if prompt := st.chat_input("Ask a question, query telemetry, or consult about wakelocks...", key=input_key):
         # 1. Save user message
@@ -881,45 +866,44 @@ def render_ai_chat_panel(
             auto_title = prompt[:25].strip() + "..."
             db.rename_thread(active_th_id, auto_title)
 
-        # 3. Stream/execute LLM response with live status inside the container
-        with chat_container:
-            with st.chat_message("user"):
-                if filter_label:
-                    st.caption(f"🎯 *Scope: {filter_label}*")
-                st.markdown(prompt)
+        # 3. Stream/execute LLM response with live status on the full page
+        with st.chat_message("user"):
+            if filter_label:
+                st.caption(f"🎯 *Scope: {filter_label}*")
+            st.markdown(prompt)
 
-            with st.chat_message("assistant"):
-                msg_ph = st.empty()
-                with st.status("🧠 Oracle AI is analyzing context and generating response...", expanded=True) as status_box:
-                    st.write("Synthesizing telemetry context & prompt...")
-                    sys_prompt = sys_prompt_builder()
+        with st.chat_message("assistant"):
+            msg_ph = st.empty()
+            with st.status("🧠 Oracle AI is analyzing context and generating response...", expanded=True) as status_box:
+                st.write("Synthesizing telemetry context & prompt...")
+                sys_prompt = sys_prompt_builder()
 
-                    messages = [{"role": "system", "content": sys_prompt}]
-                    for m in thread_messages:
-                        messages.append({"role": m["role"], "content": m["content"]})
-                    messages.append({"role": "user", "content": prompt})
+                messages = [{"role": "system", "content": sys_prompt}]
+                for m in thread_messages:
+                    messages.append({"role": m["role"], "content": m["content"]})
+                messages.append({"role": "user", "content": prompt})
 
-                    st.write("Invoking active LLM reasoning model...")
-                    try:
-                        reply = llm_manager.call_llm_tracked(
-                            messages=messages,
-                            report_id=report_id if (report_id and report_id > 0) else None,
-                            thread_id=active_th_id,
-                            action_type=action_type
-                        )
-                        status_box.update(label="✨ Response generated successfully!", state="complete", expanded=False)
-                        msg_ph.markdown(reply)
-                        db.save_chat_message(
-                            report_id=report_id,
-                            role="assistant",
-                            content=reply,
-                            thread_id=active_th_id,
-                            filter_context=filter_label
-                        )
-                    except Exception as e:
-                        status_box.update(label="❌ Failed to generate response", state="error", expanded=True)
-                        with msg_ph.container():
-                            render_ai_error(e, action_description="generating assistant reply", key_suffix=f"chat_{scope_key}_{active_th_id}")
+                st.write("Invoking active LLM reasoning model...")
+                try:
+                    reply = llm_manager.call_llm_tracked(
+                        messages=messages,
+                        report_id=report_id if (report_id and report_id > 0) else None,
+                        thread_id=active_th_id,
+                        action_type=action_type
+                    )
+                    status_box.update(label="✨ Response generated successfully!", state="complete", expanded=False)
+                    msg_ph.markdown(reply)
+                    db.save_chat_message(
+                        report_id=report_id,
+                        role="assistant",
+                        content=reply,
+                        thread_id=active_th_id,
+                        filter_context=filter_label
+                    )
+                except Exception as e:
+                    status_box.update(label="❌ Failed to generate response", state="error", expanded=True)
+                    with msg_ph.container():
+                        render_ai_error(e, action_description="generating assistant reply", key_suffix=f"chat_{scope_key}_{active_th_id}")
 
         # Fragment-only rerun to refresh viewport with newly saved messages
         st.rerun(scope="fragment")
@@ -1848,190 +1832,177 @@ if st.session_state.active_tab == "single":
         kpi_c4.metric("Discharge Rate", f"{kpis['rate_per_hr']:.2f}% / hr")
         
         st.divider()
-        
-        # --- Visualizations Section ---
-        chart_col1, chart_col2 = st.columns([1, 1])
-        
-        # 1. Timeline Chart
-        with chart_col1:
-            st.markdown("#### 📈 Battery Level Timeline")
-            if sliced_df is not None and not sliced_df.empty and "Time" in sliced_df.columns and "Level" in sliced_df.columns:
-                title_suffix = f"({filter_mode_choice})" if filter_mode != "full" else ""
-                fig_hist = px.line(
-                    sliced_df, x='Time', y='Level',
-                    title=f"Discharge Curve {title_suffix}",
-                    labels={"Level": "Battery Level (%)", "Time": "Device Time"}
-                )
-                fig_hist.update_yaxes(range=[0, 105])
-                fig_hist.update_traces(line=dict(width=2.5, color="#3b82f6"))
-                if show_night_shading:
-                    if filter_mode == "night" and start_dt and end_dt:
-                        fig_hist.add_vrect(
-                            x0=start_dt, x1=end_dt,
-                            fillcolor="rgba(30, 41, 59, 0.20)",
-                            layer="below",
-                            line_width=0,
-                            annotation_text="🌙 Night",
-                            annotation_position="top left",
-                            annotation_font_size=10,
-                            annotation_font_color="gray"
-                        )
-                    else:
-                        fig_hist = add_night_shading(fig_hist, sliced_df, night_start=night_start_cfg, night_end=night_end_cfg)
-                st.plotly_chart(fig_hist, use_container_width=True, key=f"hist_single_{rep_id}_{filter_mode}")
-            else:
-                st.info("No timeline data matches this filter.")
-                
-        # 2. Drain Breakdown Chart & Web Search Tool
-        with chart_col2:
-            st.markdown("#### ⚡ Power Consumers & App Research")
-            standby_df = parser.extract_screen_off_chart_data(active_report.get("summary_text", ""))
+
+        # Two dedicated top-level tabs: Report vs Full-Screen Chat
+        tab_single_report, tab_single_chat = st.tabs([
+            "📊 Telemetry, Charts & Diagnosis Report",
+            "💬 AI Investigation Chat ✨"
+        ])
+
+        with tab_single_report:
+            # --- Visualizations Section ---
+            chart_col1, chart_col2 = st.columns([1, 1])
             
-            if filter_mode in ["night", "screen_off"] and standby_df is not None and not standby_df.empty:
-                df_chart = standby_df
-                chart_title = "⚡ Standby / Screen-Off Consumers (mAh)"
-                st.caption("💤 *Isolated to battery consumed while screen was off/dozing.*")
-            else:
-                df_chart = active_report.get("chart_data")
-                chart_title = "⚡ Top Power Consumers (Full Session mAh)"
-                
-            # Clean component names into human-readable labels and deduplicate
-            df_chart = parser.clean_chart_dataframe(df_chart, active_report.get("summary_text", ""))
-                
-            if df_chart is not None and not df_chart.empty:
-                if chart_type == "Bar Chart":
-                    fig_drain = px.bar(
-                        df_chart, x='Component', y='mAh', color='Component',
-                        title=chart_title,
-                        labels={"mAh": "Consumption (mAh)", "Component": "App / Service"}
+            # 1. Timeline Chart
+            with chart_col1:
+                st.markdown("#### 📈 Battery Level Timeline")
+                if sliced_df is not None and not sliced_df.empty and "Time" in sliced_df.columns and "Level" in sliced_df.columns:
+                    title_suffix = f"({filter_mode_choice})" if filter_mode != "full" else ""
+                    fig_hist = px.line(
+                        sliced_df, x='Time', y='Level',
+                        title=f"Discharge Curve {title_suffix}",
+                        labels={"Level": "Battery Level (%)", "Time": "Device Time"}
                     )
+                    fig_hist.update_yaxes(range=[0, 105])
+                    fig_hist.update_traces(line=dict(width=2.5, color="#3b82f6"))
+                    if show_night_shading:
+                        if filter_mode == "night" and start_dt and end_dt:
+                            fig_hist.add_vrect(
+                                x0=start_dt, x1=end_dt,
+                                fillcolor="rgba(30, 41, 59, 0.20)",
+                                layer="below",
+                                line_width=0,
+                                annotation_text="🌙 Night",
+                                annotation_position="top left",
+                                annotation_font_size=10,
+                                annotation_font_color="gray"
+                            )
+                        else:
+                            fig_hist = add_night_shading(fig_hist, sliced_df, night_start=night_start_cfg, night_end=night_end_cfg)
+                    st.plotly_chart(fig_hist, use_container_width=True, key=f"hist_single_{rep_id}_{filter_mode}")
                 else:
-                    fig_drain = px.pie(df_chart, values='mAh', names='Component', title=chart_title)
-                st.plotly_chart(fig_drain, use_container_width=True, key=f"drain_single_{rep_id}_{filter_mode}")
+                    st.info("No timeline data matches this filter.")
+                    
+            # 2. Drain Breakdown Chart & Web Search Tool
+            with chart_col2:
+                st.markdown("#### ⚡ Power Consumers & App Research")
+                standby_df = parser.extract_screen_off_chart_data(active_report.get("summary_text", ""))
                 
-                # Web Research Selector for top components
-                with st.expander("🔍 Investigate Top App on Web (Live Knowledge)"):
-                    comp_names = df_chart['Component'].tolist()
-                    if comp_names:
-                        selected_pkg_to_search = st.selectbox("Select component / app to research:", comp_names, key=f"pkg_sel_{rep_id}_{filter_mode}")
-                        if st.button("🌐 Search Public Knowledge & Drain Issues", key=f"btn_search_{rep_id}_{filter_mode}"):
-                            with st.status(f"🌐 Querying web intelligence for `{selected_pkg_to_search}`...", expanded=True) as status_search:
-                                status_search.write("🔍 Identifying app architecture & package metadata...")
-                                status_search.write("🔋 Scanning public repositories for battery drain & wakelock reports...")
-                                intel = web_search.investigate_package(selected_pkg_to_search)
-                                status_search.update(label=f"✅ Web intelligence gathered for `{selected_pkg_to_search}`", state="complete", expanded=False)
-                            st.markdown(intel)
-            else:
-                st.info("No component breakdown data parsed.")
-                
-        st.divider()
-        
-        # --- AI Diagnosis Section ---
-        st.markdown('### ✨ Oracle Diagnosis <span class="ai-badge">✨ AI GENERATED</span>', unsafe_allow_html=True)
-        
-        diag_cache_key = f"diag_{rep_id}_{filter_mode}"
-        if filter_mode == "full":
-            active_diagnosis = active_report.get("initial_analysis", "No baseline analysis available.")
-            diag_subtitle = "🌐 Full Session Baseline Diagnosis"
-        else:
-            cached_filtered = db.get_setting(diag_cache_key)
-            if cached_filtered:
-                active_diagnosis = cached_filtered
-                diag_subtitle = f"🎯 Targeted Scope Diagnosis: {filter_mode_choice}"
-            else:
-                active_diagnosis = None
-                diag_subtitle = f"⏳ Targeted Scope: {filter_mode_choice} (Not yet generated)"
-                
-        # Action Command Bar: Primary trigger + export button on left, status on right/inline
-        diag_action_key = f"diag_{rep_id}_{filter_mode}"
-        btn_label = "🔄 Re-Diagnose" if active_diagnosis else f"✨ Generate Targeted Diagnosis"
-        
-        c_diag_act1, c_diag_act2, c_diag_status = st.columns([1.5, 1.3, 3], vertical_alignment="center")
-        with c_diag_act1:
-            if st.button(btn_label, key=f"btn_diag_{rep_id}_{filter_mode}", type="primary" if not active_diagnosis else "secondary", use_container_width=True):
-                confirm_ai_analysis_dialog(
-                    action_key=diag_action_key,
-                    action_title=f"{'Re-Diagnose' if active_diagnosis else 'Generate Targeted Diagnosis'}: {filter_mode_choice}",
-                    target_desc=f"Run an AI evaluation for **{active_report['custom_name']}** under the **{filter_mode_choice}** filter window.",
-                    details_dict={
-                        "Bugreport": active_report["custom_name"],
-                        "Scope Window": f"{kpis['start_time']} → {kpis['end_time']}",
-                        "Battery Drop / Rate": f"{kpis['drop_pct']}% ({kpis['rate_per_hr']:.2f}%/hr)",
-                        "Device Info": active_report.get("device_info", "Unknown")
-                    },
-                    action_type="single_diagnosis",
-                    action_payload={
-                        "rep_id": rep_id,
-                        "filter_mode": filter_mode,
-                        "filter_mode_choice": filter_mode_choice,
-                        "diag_cache_key": diag_cache_key,
-                        "timezone": timezone,
-                        "kpis": kpis
-                    }
-                )
-        with c_diag_act2:
-            if active_diagnosis:
-                md_content = build_single_report_markdown(active_report, filter_mode, kpis, active_diagnosis)
-                st.download_button(
-                    label="📥 Export Report (.md)",
-                    data=md_content,
-                    file_name=f"{active_report['custom_name']}_{filter_mode}_diagnosis.md",
-                    mime="text/markdown",
-                    key=f"dl_single_md_{rep_id}_{filter_mode}",
-                    use_container_width=True
-                )
-        with c_diag_status:
-            st.caption(f"**Current Scope:** {diag_subtitle}")
-                        
-        # Render any captured diagnosis error at full width below the action bar
-        if st.session_state.get(f"err_diag_{rep_id}"):
-            err_obj, err_act = st.session_state[f"err_diag_{rep_id}"]
-            render_ai_error(err_obj, action_description=err_act, key_suffix=f"diag_{rep_id}")
-
-        if active_diagnosis:
-            render_ai_block(active_diagnosis, key_suffix=f"single_{rep_id}_{filter_mode}")
-        else:
-            st.info(f"💡 You have selected **{filter_mode_choice}** (Window: {kpis['start_time']} → {kpis['end_time']}, Drop: {kpis['drop_pct']}%, Rate: {kpis['rate_per_hr']:.2f}%/hr).\n\nClick **'{btn_label}'** above to generate an AI diagnosis focused strictly on standby drain, wakelocks, and unoptimized background processes for this window.")
-            with st.expander("📄 View Full Session Baseline Diagnosis for Reference", expanded=False):
-                render_ai_block(active_report.get("initial_analysis", "No baseline analysis available."), key_suffix=f"single_base_{rep_id}")
-                
-        with st.expander("🔍 View Telemetry Snippet & Diagnostic Trace", expanded=False):
-            if active_report.get("reasoning_trace"):
-                st.caption(f"**Diagnostic Trace:** {active_report['reasoning_trace']}")
-            st.text_area("Batterystats Excerpt", active_report["summary_text"][:2500], height=200, disabled=True)
+                if filter_mode in ["night", "screen_off"] and standby_df is not None and not standby_df.empty:
+                    df_to_plot = parser.clean_chart_dataframe(standby_df, active_report.get("summary_text", ""))
+                    fig_pie = px.pie(
+                        df_to_plot, values='mAh', names='Component',
+                        title=f"Standby Power Drain Breakdown (mAh - {filter_mode_choice})",
+                        hole=0.4
+                    )
+                    st.plotly_chart(fig_pie, use_container_width=True, key=f"pie_single_{rep_id}_{filter_mode}")
+                elif active_report.get("chart_data") is not None and not active_report["chart_data"].empty:
+                    df_to_plot = parser.clean_chart_dataframe(active_report["chart_data"], active_report.get("summary_text", ""))
+                    fig_pie = px.pie(
+                        df_to_plot, values='mAh', names='Component',
+                        title="Estimated Full-Session Power Drain Breakdown (mAh)",
+                        hole=0.4
+                    )
+                    st.plotly_chart(fig_pie, use_container_width=True, key=f"pie_single_full_{rep_id}")
+                else:
+                    st.info("No breakdown data available for this view.")
+                    
+            st.divider()
             
-        st.divider()
-        
-        # --- MULTI-THREADED CHAT WORKSPACE (FRAGMENT ISOLATED) ---
-        filter_label_single = f"{filter_mode_choice} ({kpis['start_time']} -> {kpis['end_time']})"
-        def _build_single_sys_prompt():
-            filtered_telemetry = parser.get_filtered_telemetry_for_llm(active_report["summary_text"], filter_mode, kpis)
-            active_inv_profile = db.get_latest_device_profile()
-            profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
-            if profile_summary:
-                filtered_telemetry = f"{profile_summary}\n\n{filtered_telemetry}"
+            # --- AI Diagnosis Section ---
+            st.markdown('### ✨ Oracle Diagnosis <span class="ai-badge">✨ AI GENERATED</span>', unsafe_allow_html=True)
+            
+            diag_cache_key = f"diag_{rep_id}_{filter_mode}"
+            if filter_mode == "full":
+                active_diagnosis = active_report.get("initial_analysis", "No baseline analysis available.")
+                diag_subtitle = "🌐 Full Session Baseline Diagnosis"
+            else:
+                cached_filtered = db.get_setting(diag_cache_key)
+                if cached_filtered:
+                    active_diagnosis = cached_filtered
+                    diag_subtitle = f"🎯 Targeted Scope Diagnosis: {filter_mode_choice}"
+                else:
+                    active_diagnosis = None
+                    diag_subtitle = f"⏳ Targeted Scope: {filter_mode_choice} (Not yet generated)"
+                    
+            # Action Command Bar: Primary trigger + export button on left, status on right/inline
+            diag_action_key = f"diag_{rep_id}_{filter_mode}"
+            btn_label = "🔄 Re-Diagnose" if active_diagnosis else f"✨ Generate Targeted Diagnosis"
+            
+            c_diag_act1, c_diag_act2, c_diag_status = st.columns([1.5, 1.3, 3], vertical_alignment="center")
+            with c_diag_act1:
+                if st.button(btn_label, key=f"btn_diag_{rep_id}_{filter_mode}", type="primary" if not active_diagnosis else "secondary", use_container_width=True):
+                    confirm_ai_analysis_dialog(
+                        action_key=diag_action_key,
+                        action_title=f"{'Re-Diagnose' if active_diagnosis else 'Generate Targeted Diagnosis'}: {filter_mode_choice}",
+                        target_desc=f"Run an AI evaluation for **{active_report['custom_name']}** under the **{filter_mode_choice}** filter window.",
+                        details_dict={
+                            "Bugreport": active_report["custom_name"],
+                            "Scope Window": f"{kpis['start_time']} → {kpis['end_time']}",
+                            "Battery Drop / Rate": f"{kpis['drop_pct']}% ({kpis['rate_per_hr']:.2f}%/hr)",
+                            "Device Info": active_report.get("device_info", "Unknown")
+                        },
+                        action_type="single_diagnosis",
+                        action_payload={
+                            "rep_id": rep_id,
+                            "filter_mode": filter_mode,
+                            "filter_mode_choice": filter_mode_choice,
+                            "diag_cache_key": diag_cache_key,
+                            "timezone": timezone,
+                            "kpis": kpis
+                        }
+                    )
+            with c_diag_act2:
+                if active_diagnosis:
+                    md_content = build_single_report_markdown(active_report, filter_mode, kpis, active_diagnosis)
+                    st.download_button(
+                        label="📥 Export Report (.md)",
+                        data=md_content,
+                        file_name=f"{active_report['custom_name']}_{filter_mode}_diagnosis.md",
+                        mime="text/markdown",
+                        key=f"dl_single_md_{rep_id}_{filter_mode}",
+                        use_container_width=True
+                    )
+            with c_diag_status:
+                st.caption(f"**Current Scope:** {diag_subtitle}")
+                            
+            # Render any captured diagnosis error at full width below the action bar
+            if st.session_state.get(f"err_diag_{rep_id}"):
+                err_obj, err_act = st.session_state[f"err_diag_{rep_id}"]
+                render_ai_error(err_obj, action_description=err_act, key_suffix=f"diag_{rep_id}")
 
-            chat_tmpl = llm_manager.get_prompt_template("chat_assistant")
-            return chat_tmpl.format(
-                filter_context=f"Active Scope: {filter_label_single} | Discharge Rate: {kpis['rate_per_hr']:.2f}%/hr | Status: {kpis['status']}",
-                report_name=active_report["custom_name"],
-                device_info=active_report.get("device_info", "Unknown"),
-                timestamp_str=active_report["timestamp_str"],
-                description=active_report.get("description", ""),
-                telemetry_data=filtered_telemetry
+            if active_diagnosis:
+                render_ai_block(active_diagnosis, key_suffix=f"single_{rep_id}_{filter_mode}")
+            else:
+                st.info(f"💡 You have selected **{filter_mode_choice}** (Window: {kpis['start_time']} → {kpis['end_time']}, Drop: {kpis['drop_pct']}%, Rate: {kpis['rate_per_hr']:.2f}%/hr).\n\nClick **'{btn_label}'** above to generate an AI diagnosis focused strictly on standby drain, wakelocks, and unoptimized background processes for this window.")
+                with st.expander("📄 View Full Session Baseline Diagnosis for Reference", expanded=False):
+                    render_ai_block(active_report.get("initial_analysis", "No baseline analysis available."), key_suffix=f"single_base_{rep_id}")
+                    
+            with st.expander("🔍 View Telemetry Snippet & Diagnostic Trace", expanded=False):
+                if active_report.get("reasoning_trace"):
+                    st.caption(f"**Diagnostic Trace:** {active_report['reasoning_trace']}")
+                st.text_area("Batterystats Excerpt", active_report["summary_text"][:2500], height=200, disabled=True)
+
+        with tab_single_chat:
+            # --- FULL-SCREEN AI CHAT WORKSPACE (FRAGMENT ISOLATED) ---
+            filter_label_single = f"{filter_mode_choice} ({kpis['start_time']} -> {kpis['end_time']})"
+            def _build_single_sys_prompt():
+                filtered_telemetry = parser.get_filtered_telemetry_for_llm(active_report["summary_text"], filter_mode, kpis)
+                active_inv_profile = db.get_latest_device_profile()
+                profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+                if profile_summary:
+                    filtered_telemetry = f"{profile_summary}\n\n{filtered_telemetry}"
+
+                chat_tmpl = llm_manager.get_prompt_template("chat_assistant")
+                return chat_tmpl.format(
+                    filter_context=f"Active Scope: {filter_label_single} | Discharge Rate: {kpis['rate_per_hr']:.2f}%/hr | Status: {kpis['status']}",
+                    report_name=active_report["custom_name"],
+                    device_info=active_report.get("device_info", "Unknown"),
+                    timestamp_str=active_report["timestamp_str"],
+                    description=active_report.get("description", ""),
+                    telemetry_data=filtered_telemetry
+                )
+
+            render_ai_chat_panel(
+                scope_key=f"single_{rep_id}",
+                panel_title=f"Session Telemetry Chat • {active_report['custom_name']}",
+                scope_badge=f"🎯 Scope: {filter_mode_choice}",
+                report_id=rep_id,
+                active_thread_state_key="active_thread_id",
+                sys_prompt_builder=_build_single_sys_prompt,
+                action_type="chat",
+                filter_label=filter_label_single
             )
-
-        render_ai_chat_panel(
-            scope_key=f"single_{rep_id}",
-            panel_title=f"Session Telemetry Chat • {active_report['custom_name']}",
-            scope_badge=f"🎯 Scope: {filter_mode_choice}",
-            report_id=rep_id,
-            active_thread_state_key="active_thread_id",
-            sys_prompt_builder=_build_single_sys_prompt,
-            action_type="chat",
-            filter_label=filter_label_single,
-            default_expanded=True
-        )
 
 # ==============================================================================
 # VIEW 2: MERGED & COMPARE ALL REPORTS VIEW
@@ -2146,122 +2117,126 @@ elif st.session_state.active_tab == "merged":
                     st.caption("Comparing full recorded bugreport durations.")
                     
             st.divider()
-            
-            # --- 1. Merged Timeline Chart ---
-            st.markdown("### 📈 Merged Battery Level Timelines")
-            fig_merged = go.Figure()
-            colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"]
-            all_times = []
-            
-            for idx, rep in enumerate(compared_reports):
-                _, _, plot_df = get_effective_bounds(rep, merged_filter_mode)
-                if not plot_df.empty and "Time" in plot_df.columns and "Level" in plot_df.columns:
-                    all_times.extend(plot_df["Time"].tolist())
-                    fig_merged.add_trace(go.Scatter(
-                        x=plot_df["Time"],
-                        y=plot_df["Level"],
-                        mode='lines',
-                        name=f"{rep['custom_name']} ({'🌙 Night' if merged_filter_mode == 'night' else 'Full'})",
-                        line=dict(width=2.5, color=colors[idx % len(colors)])
-                    ))
-                    
-            fig_merged.update_layout(
-                title=f"Comparative Battery Discharge Curves ({merged_filter_choice})",
-                xaxis_title="Timeline",
-                yaxis_title="Battery Level (%)",
-                yaxis=dict(range=[0, 105]),
-                hovermode="x unified"
-            )
-            
-            if show_night_shading and all_times:
-                if merged_filter_mode == "night":
-                    # Collect night intervals across compared reports
-                    night_intervals = []
-                    for rep in compared_reports:
-                        s_dt, e_dt, _ = get_effective_bounds(rep, "night")
-                        if s_dt and e_dt and s_dt < e_dt:
-                            night_intervals.append((s_dt, e_dt))
-                    
-                    # Merge overlapping or contiguous intervals
-                    merged_intervals = []
-                    for s, e in sorted(night_intervals, key=lambda x: x[0]):
-                        if not merged_intervals:
-                            merged_intervals.append([s, e])
-                        else:
-                            if s <= merged_intervals[-1][1]:
-                                merged_intervals[-1][1] = max(merged_intervals[-1][1], e)
-                            else:
-                                merged_intervals.append([s, e])
-                                
-                    for x0, x1 in merged_intervals:
-                        fig_merged.add_vrect(
-                            x0=x0, x1=x1,
-                            fillcolor="rgba(30, 41, 59, 0.20)",
-                            layer="below",
-                            line_width=0,
-                            annotation_text="🌙 Night",
-                            annotation_position="top left",
-                            annotation_font_size=10,
-                            annotation_font_color="gray"
-                        )
-                else:
-                    df_all_times = pd.DataFrame({"Time": all_times})
-                    fig_merged = add_night_shading(fig_merged, df_all_times, night_start=night_start_cfg, night_end=night_end_cfg)
-                
-            st.plotly_chart(fig_merged, use_container_width=True, key=f"merged_timeline_{merged_filter_mode}")
-            
-            # --- Comparative Scorecard Table ---
-            st.markdown("#### 📊 Comparative Session Metrics")
-            kpi_rows = []
-            for rep in compared_reports:
-                s_dt, e_dt, t_df = get_effective_bounds(rep, merged_filter_mode)
-                rep_kpi = parser.compute_window_kpis(t_df)
-                kpi_rows.append({
-                    "Session": rep["custom_name"],
-                    "Interval": f"{rep_kpi['start_time']} → {rep_kpi['end_time']}",
-                    "Duration": f"{rep_kpi['duration_hrs']:.1f} hrs",
-                    "Drop": f"{rep_kpi['drop_pct']}% ({rep_kpi['start_level']}% → {rep_kpi['end_level']}%)",
-                    "Velocity": f"{rep_kpi['rate_per_hr']:.2f}% / hr",
-                    "Assessment": rep_kpi["status"]
-                })
-            st.dataframe(pd.DataFrame(kpi_rows), use_container_width=True)
-            
-            st.divider()
-            
-            # --- 2. Side-by-Side Drain Comparison ---
-            st.markdown("### ⚡ Component Consumption Comparison (mAh)")
-            comp_rows = []
-            for rep in compared_reports:
-                summary_txt = rep.get("summary_text", "")
-                if merged_filter_mode in ["night", "screen_off"]:
-                    df_c = parser.extract_screen_off_chart_data(summary_txt)
-                else:
-                    df_c = rep.get("chart_data")
-                    
-                if df_c is not None and not df_c.empty:
-                    df_clean = parser.clean_chart_dataframe(df_c, summary_txt)
-                    for _, row in df_clean.iterrows():
-                        comp_rows.append({
-                            "Report": rep["custom_name"],
-                            "Component": row["Component"],
-                            "mAh": row["mAh"]
-                        })
-                        
-            if comp_rows:
-                df_comp = pd.DataFrame(comp_rows)
-                fig_comp = px.bar(
-                    df_comp, x="Component", y="mAh", color="Report",
-                    barmode="group",
-                    title=f"Component Drain Across Reports (mAh - {merged_filter_choice})"
-                )
-                st.plotly_chart(fig_comp, use_container_width=True, key=f"merged_comp_chart_{merged_filter_mode}")
-                
-            st.divider()
-            
-            # --- Tabbed Organization: Report vs Investigation Chat ---
-            tab_comp_report, tab_comp_chat = st.tabs(["✨ Comparative Optimization Report", "💬 Investigation Chat ✨"])
-            
+
+            # Two dedicated top-level tabs: Comparison Charts & Report vs Full-Screen Chat
+            tab_comp_report, tab_comp_chat = st.tabs([
+                "📊 Comparison Charts & Synthesis Report",
+                "💬 Comparative AI Chat ✨"
+            ])
+
             with tab_comp_report:
+                # --- 1. Merged Timeline Chart ---
+                st.markdown("### 📈 Merged Battery Level Timelines")
+                fig_merged = go.Figure()
+                colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"]
+                all_times = []
+                
+                for idx, rep in enumerate(compared_reports):
+                    _, _, plot_df = get_effective_bounds(rep, merged_filter_mode)
+                    if not plot_df.empty and "Time" in plot_df.columns and "Level" in plot_df.columns:
+                        all_times.extend(plot_df["Time"].tolist())
+                        fig_merged.add_trace(go.Scatter(
+                            x=plot_df["Time"],
+                            y=plot_df["Level"],
+                            mode='lines',
+                            name=f"{rep['custom_name']} ({'🌙 Night' if merged_filter_mode == 'night' else 'Full'})",
+                            line=dict(width=2.5, color=colors[idx % len(colors)])
+                        ))
+                        
+                fig_merged.update_layout(
+                    title=f"Comparative Battery Discharge Curves ({merged_filter_choice})",
+                    xaxis_title="Timeline",
+                    yaxis_title="Battery Level (%)",
+                    yaxis=dict(range=[0, 105]),
+                    hovermode="x unified"
+                )
+                
+                if show_night_shading and all_times:
+                    if merged_filter_mode == "night":
+                        # Collect night intervals across compared reports
+                        night_intervals = []
+                        for rep in compared_reports:
+                            s_dt, e_dt, _ = get_effective_bounds(rep, "night")
+                            if s_dt and e_dt and s_dt < e_dt:
+                                night_intervals.append((s_dt, e_dt))
+                        
+                        # Merge overlapping or contiguous intervals
+                        merged_intervals = []
+                        for s, e in sorted(night_intervals, key=lambda x: x[0]):
+                            if not merged_intervals:
+                                merged_intervals.append([s, e])
+                            else:
+                                if s <= merged_intervals[-1][1]:
+                                    merged_intervals[-1][1] = max(merged_intervals[-1][1], e)
+                                else:
+                                    merged_intervals.append([s, e])
+                                    
+                        for x0, x1 in merged_intervals:
+                            fig_merged.add_vrect(
+                                x0=x0, x1=x1,
+                                fillcolor="rgba(30, 41, 59, 0.20)",
+                                layer="below",
+                                line_width=0,
+                                annotation_text="🌙 Night",
+                                annotation_position="top left",
+                                annotation_font_size=10,
+                                annotation_font_color="gray"
+                            )
+                    else:
+                        df_all_times = pd.DataFrame({"Time": all_times})
+                        fig_merged = add_night_shading(fig_merged, df_all_times, night_start=night_start_cfg, night_end=night_end_cfg)
+                    
+                st.plotly_chart(fig_merged, use_container_width=True, key=f"merged_timeline_{merged_filter_mode}")
+                
+                # --- Comparative Scorecard Table ---
+                st.markdown("#### 📊 Comparative Session Metrics")
+                kpi_rows = []
+                for rep in compared_reports:
+                    s_dt, e_dt, t_df = get_effective_bounds(rep, merged_filter_mode)
+                    rep_kpi = parser.compute_window_kpis(t_df)
+                    kpi_rows.append({
+                        "Session": rep["custom_name"],
+                        "Interval": f"{rep_kpi['start_time']} → {rep_kpi['end_time']}",
+                        "Duration": f"{rep_kpi['duration_hrs']:.1f} hrs",
+                        "Drop": f"{rep_kpi['drop_pct']}% ({rep_kpi['start_level']}% → {rep_kpi['end_level']}%)",
+                        "Velocity": f"{rep_kpi['rate_per_hr']:.2f}% / hr",
+                        "Assessment": rep_kpi["status"]
+                    })
+                st.dataframe(pd.DataFrame(kpi_rows), use_container_width=True)
+                
+                st.divider()
+                
+                # --- 2. Side-by-Side Drain Comparison ---
+                st.markdown("### ⚡ Component Consumption Comparison (mAh)")
+                comp_rows = []
+                for rep in compared_reports:
+                    summary_txt = rep.get("summary_text", "")
+                    if merged_filter_mode in ["night", "screen_off"]:
+                        df_c = parser.extract_screen_off_chart_data(summary_txt)
+                    else:
+                        df_c = rep.get("chart_data")
+                        
+                    if df_c is not None and not df_c.empty:
+                        df_clean = parser.clean_chart_dataframe(df_c, summary_txt)
+                        for _, row in df_clean.iterrows():
+                            comp_rows.append({
+                                "Report": rep["custom_name"],
+                                "Component": row["Component"],
+                                "mAh": row["mAh"]
+                            })
+                            
+                if comp_rows:
+                    df_comp = pd.DataFrame(comp_rows)
+                    fig_comp = px.bar(
+                        df_comp, x="Component", y="mAh", color="Report",
+                        barmode="group",
+                        title=f"Component Drain Across Reports (mAh - {merged_filter_choice})"
+                    )
+                    st.plotly_chart(fig_comp, use_container_width=True, key=f"merged_comp_chart_{merged_filter_mode}")
+                    
+                st.divider()
+                
+                # --- Comparative Synthesis Report Section ---
                 comp_key = ",".join(map(str, sorted(selected_ids)))
                 saved_combined = db.get_combined_analysis(comp_key, scope_key=merged_filter_mode)
                 combined_text = saved_combined["analysis_text"] if saved_combined else ""
@@ -2342,8 +2317,7 @@ elif st.session_state.active_tab == "merged":
                     active_thread_state_key="global_thread_id",
                     sys_prompt_builder=_build_comp_sys_prompt,
                     action_type="global_chat",
-                    filter_label=f"Comparative: {merged_filter_choice}",
-                    default_expanded=True
+                    filter_label=f"Comparative: {merged_filter_choice}"
                 )
         else:
             st.info("Please select at least 2 reports above to see the comparison.")
@@ -2523,49 +2497,197 @@ settings get secure location_providers_allowed
 
             st.divider()
 
-            # --- AI Profile Audit Section ---
-            st.markdown('### ✨ Oracle Configuration Audit <span class="ai-badge">✨ AI GENERATED</span>', unsafe_allow_html=True)
-            p_analysis = current_profile.get("ai_analysis")
-            p_trace = current_profile.get("ai_analysis_trace", "")
-            
-            prof_action_key = f"prof_audit_{current_profile['id']}"
-            btn_ai_label = "🔄 Refresh AI Audit" if p_analysis else "✨ Run AI Configuration Audit"
-            
-            c_pact1, c_pact2 = st.columns([1.5, 4], vertical_alignment="center")
-            with c_pact1:
-                if st.button(btn_ai_label, key=f"btn_audit_profile_{current_profile['id']}", type="primary" if not p_analysis else "secondary", use_container_width=True):
-                    confirm_ai_analysis_dialog(
-                        action_key=prof_action_key,
-                        action_title=f"{'Refresh' if p_analysis else 'Run'} AI Configuration Audit",
-                        target_desc=f"Run an in-depth AI configuration audit for **{current_profile['profile_name']}**.",
-                        details_dict={
-                            "Profile Name": current_profile["profile_name"],
-                            "Device Model": p_data.get("device_model", "Unknown"),
-                            "Android Version": f"Android {p_data.get('android_version', 'Unknown')}",
-                            "Build ID": p_data.get("os_build", "Unknown")
-                        },
-                        action_type="profile_audit",
-                        action_payload={
-                            "profile_id": current_profile["id"]
-                        }
-                    )
-            with c_pact2:
+            # Two dedicated top-level tabs: Configuration Audit & System Environment vs Full-Screen Consultation Chat
+            tab_prof_audit, tab_prof_chat = st.tabs([
+                "🛡️ Configuration Audit & System Environment",
+                "💬 Configuration & Doze Consultation Chat ✨"
+            ])
+
+            with tab_prof_audit:
+                # --- AI Profile Audit Section ---
+                st.markdown('### ✨ Oracle Configuration Audit <span class="ai-badge">✨ AI GENERATED</span>', unsafe_allow_html=True)
+                p_analysis = current_profile.get("ai_analysis")
+                p_trace = current_profile.get("ai_analysis_trace", "")
+                
+                prof_action_key = f"prof_audit_{current_profile['id']}"
+                btn_ai_label = "🔄 Refresh AI Audit" if p_analysis else "✨ Run AI Configuration Audit"
+                
+                c_pact1, c_pact2 = st.columns([1.5, 4], vertical_alignment="center")
+                with c_pact1:
+                    if st.button(btn_ai_label, key=f"btn_audit_profile_{current_profile['id']}", type="primary" if not p_analysis else "secondary", use_container_width=True):
+                        confirm_ai_analysis_dialog(
+                            action_key=prof_action_key,
+                            action_title=f"{'Refresh' if p_analysis else 'Run'} AI Configuration Audit",
+                            target_desc=f"Run an in-depth AI configuration audit for **{current_profile['profile_name']}**.",
+                            details_dict={
+                                "Profile Name": current_profile["profile_name"],
+                                "Device Model": p_data.get("device_model", "Unknown"),
+                                "Android Version": f"Android {p_data.get('android_version', 'Unknown')}",
+                                "Build ID": p_data.get("os_build", "Unknown")
+                            },
+                            action_type="profile_audit",
+                            action_payload={
+                                "profile_id": current_profile["id"]
+                            }
+                        )
+                with c_pact2:
+                    if p_analysis:
+                        st.caption(f"🕒 **Last Evaluated:** `{current_profile.get('updated_at', '')[:16]}` &nbsp;•&nbsp; Grounded in full device inventory & AppOps.")
+                    else:
+                        st.caption("⏳ **Not Yet Generated** &nbsp;•&nbsp; Click above to audit Doze states, AppOps restrictions & risks.")
+
+                if st.session_state.get(f"err_prof_audit_{current_profile['id']}"):
+                    p_err_obj, p_err_act = st.session_state[f"err_prof_audit_{current_profile['id']}"]
+                    render_ai_error(p_err_obj, action_description=p_err_act, key_suffix=f"prof_audit_{current_profile['id']}")
+
                 if p_analysis:
-                    st.caption(f"🕒 **Last Evaluated:** `{current_profile.get('updated_at', '')[:16]}` &nbsp;•&nbsp; Grounded in full device inventory & AppOps.")
+                    render_ai_block(p_analysis, key_suffix=f"profile_{current_profile['id']}")
+                    if p_trace:
+                        with st.expander("🧠 AI Reasoning & System Audit Trace"):
+                            st.markdown(p_trace)
+
+                st.divider()
+
+                # 2. Critical Standby Risks & WhiteList Violations
+                st.markdown("### 🚨 Standby Drain Risks & Policy Audit")
+                risks = p_data.get("standby_risks", [])
+                if risks:
+                    for r in risks:
+                        sev = r.get("severity", "LOW")
+                        icon = "🔴" if sev == "HIGH" else ("🟡" if sev == "MEDIUM" else "🔵")
+                        with st.expander(f"{icon} [{sev}] {r['title']}", expanded=(sev == "HIGH")):
+                            st.markdown(f"**Issue Description:** {r['detail']}")
+                            st.markdown(f"**How to configure on device:** `{r['setting']}`")
                 else:
-                    st.caption("⏳ **Not Yet Generated** &nbsp;•&nbsp; Click above to audit Doze states, AppOps restrictions & risks.")
+                    st.success("🎉 No high-risk standby configuration flags detected!")
 
-            if st.session_state.get(f"err_prof_audit_{current_profile['id']}"):
-                p_err_obj, p_err_act = st.session_state[f"err_prof_audit_{current_profile['id']}"]
-                render_ai_error(p_err_obj, action_description=p_err_act, key_suffix=f"prof_audit_{current_profile['id']}")
+                st.divider()
 
-            if p_analysis:
-                render_ai_block(p_analysis, key_suffix=f"profile_{current_profile['id']}")
-                if p_trace:
-                    with st.expander("🧠 AI Reasoning & System Audit Trace"):
-                        st.markdown(p_trace)
+                # 3. Radios, Display & Sensors (Responsive Cards)
+                st.markdown("### 📡 Radios, Ambient Display & Power Tuning")
+                r_col1, r_col2, r_col3, r_col4, r_col5 = st.columns(5)
+                
+                wifi_active = k_settings.get("wifi_scan_always_enabled") == "1"
+                ble_active = k_settings.get("ble_scan_always_enabled") == "1"
+                tilt_active = k_settings.get("ambient_tilt_to_wake") == "1"
+                touch_active = k_settings.get("ambient_touch_to_wake") == "1"
+                timeout_sec = int(k_settings.get("screen_off_timeout_ms", "15000")) // 1000
+                refresh = float(k_settings.get("peak_refresh_rate", "60.0"))
 
-                # --- MULTI-THREADED PROFILE AUDIT CHAT WORKSPACE (FRAGMENT ISOLATED) ---
+                with r_col1:
+                    st.markdown(f"""
+                    <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
+                        <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">📶 Wi-Fi Always Scanning</div>
+                        <div style="font-size: 1.05rem; font-weight: 600; color: {'#f59e0b' if wifi_active else '#10b981'}; word-break: break-word;">
+                            {'⚠️ Enabled (Continuous)' if wifi_active else '✅ Disabled (Safe)'}
+                        </div>
+                        <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Location scanning</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with r_col2:
+                    st.markdown(f"""
+                    <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
+                        <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">📡 BLE Always Scanning</div>
+                        <div style="font-size: 1.05rem; font-weight: 600; color: {'#f59e0b' if ble_active else '#10b981'}; word-break: break-word;">
+                            {'⚠️ Enabled' if ble_active else '✅ Disabled'}
+                        </div>
+                        <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Bluetooth beacon scan</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with r_col3:
+                    st.markdown(f"""
+                    <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
+                        <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">🖐️ Ambient Wake Gestures</div>
+                        <div style="font-size: 0.95rem; font-weight: 600; line-height: 1.35; word-break: break-word;">
+                            Tilt: <span style="color: {'#3b82f6' if tilt_active else '#64748b'};">{'On' if tilt_active else 'Off'}</span> &nbsp;|&nbsp; 
+                            Touch: <span style="color: {'#3b82f6' if touch_active else '#64748b'};">{'On' if touch_active else 'Off'}</span>
+                        </div>
+                        <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Hardware sensor polling</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with r_col4:
+                    st.markdown(f"""
+                    <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
+                        <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">⏱️ Screen Timeout</div>
+                        <div style="font-size: 1.05rem; font-weight: 600; color: {'#10b981' if timeout_sec <= 30 else '#f59e0b'}; word-break: break-word;">
+                            {timeout_sec} seconds
+                        </div>
+                        <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Display off delay</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with r_col5:
+                    st.markdown(f"""
+                    <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
+                        <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">📺 Peak Refresh Rate</div>
+                        <div style="font-size: 1.05rem; font-weight: 600; color: {'#10b981' if refresh <= 60 else '#3b82f6'}; word-break: break-word;">
+                            {refresh:.0f} Hz
+                        </div>
+                        <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Display panel limit</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                st.divider()
+
+                # 4. Detailed Drill-downs: Doze Whitelists, App Standby & Raw Key-Value Explorer
+                tab_doze, tab_appops, tab_kv = st.tabs([
+                    f"🛡️ Doze Whitelist ({len(p_data.get('user_whitelisted', []))} User Apps)",
+                    f"⚡ AppOps Run-in-Background ({len(p_data.get('appops_allowed', []))})",
+                    f"🔍 System Settings Explorer ({p_data.get('raw_counts', {}).get('global_count', 0) + p_data.get('raw_counts', {}).get('secure_count', 0) + p_data.get('raw_counts', {}).get('system_count', 0)} keys)"
+                ])
+
+                with tab_doze:
+                    st.markdown("#### User-Installed Apps Exempt from Android Doze Deep Sleep")
+                    st.caption("These user apps have been granted permission to ignore Doze optimizations, wake the CPU at will, and access the network during sleep.")
+                    u_wl = p_data.get("user_whitelisted", [])
+                    if u_wl:
+                        df_uwl = pd.DataFrame(u_wl).rename(columns={"friendly": "App Name", "package": "Package Identifier", "uid": "Linux UID", "type": "Whitelist Scope"})
+                        st.dataframe(df_uwl, use_container_width=True)
+                    else:
+                        st.info("No user apps are exempt from Doze! All user apps enter deep sleep normally.")
+
+                    with st.expander(f"System & OEM Exemption Whitelist ({p_data.get('system_whitelisted_count', 0)} packages)"):
+                        st.caption("Internal Android OS and carrier packages whitelisted by the OEM ROM:")
+                        s_wl = p_data.get("system_whitelisted", [])
+                        if s_wl:
+                            st.dataframe(pd.DataFrame(s_wl)[["friendly", "package", "uid"]].rename(columns={"friendly": "System Service", "package": "Package Identifier", "uid": "UID"}), use_container_width=True)
+
+                with tab_appops:
+                    st.markdown("#### Applications Granted `RUN_IN_BACKGROUND` AppOps Permission")
+                    st.caption("Android AppOps policy allows these packages to initiate background services and background tasks without restriction.")
+                    a_ops = p_data.get("appops_allowed", [])
+                    if a_ops:
+                        df_aops = pd.DataFrame(a_ops).rename(columns={"friendly": "App Name", "package": "Package Identifier"})
+                        st.dataframe(df_aops, use_container_width=True)
+                    else:
+                        st.info("No apps explicitly granted unrestricted background execution.")
+
+                with tab_kv:
+                    st.markdown("#### Comprehensive Android Settings Registry")
+                    st.caption("Search across all raw key-value pairs stored in Android `Global`, `Secure`, and `System` settings providers.")
+                    
+                    all_kv = []
+                    for k, v in p_data.get("global_settings", {}).items():
+                        all_kv.append({"Scope": "Global", "Key": k, "Value": v})
+                    for k, v in p_data.get("secure_settings", {}).items():
+                        all_kv.append({"Scope": "Secure", "Key": k, "Value": v})
+                    for k, v in p_data.get("system_settings", {}).items():
+                        all_kv.append({"Scope": "System", "Key": k, "Value": v})
+
+                    if all_kv:
+                        df_all_kv = pd.DataFrame(all_kv)
+                        search_query = st.text_input("🔎 Search settings by key or value:", placeholder="e.g. wifi, sync, doze, refresh, wake, bluetooth...", key="kv_search_input")
+                        if search_query:
+                            df_all_kv = df_all_kv[df_all_kv["Key"].str.contains(search_query, case=False, na=False) | df_all_kv["Value"].str.contains(search_query, case=False, na=False)]
+                        st.dataframe(df_all_kv, use_container_width=True, height=450)
+                    else:
+                        st.info("No raw settings data available for this profile.")
+
+            with tab_prof_chat:
+                # --- FULL-SCREEN PROFILE AUDIT CHAT WORKSPACE (FRAGMENT ISOLATED) ---
                 prof_rep_id = -current_profile["id"]
                 def _build_prof_sys_prompt():
                     prof_telemetry_summary = parser.get_inventory_summary_for_llm(p_data)
@@ -2588,149 +2710,8 @@ settings get secure location_providers_allowed
                     active_thread_state_key=f"active_prof_thread_{current_profile['id']}",
                     sys_prompt_builder=_build_prof_sys_prompt,
                     action_type="profile_chat",
-                    filter_label=f"Profile: {current_profile['profile_name']}",
-                    default_expanded=False
+                    filter_label=f"Profile: {current_profile['profile_name']}"
                 )
-
-            st.divider()
-
-            # 2. Critical Standby Risks & WhiteList Violations
-            st.markdown("### 🚨 Standby Drain Risks & Policy Audit")
-            risks = p_data.get("standby_risks", [])
-            if risks:
-                for r in risks:
-                    sev = r.get("severity", "LOW")
-                    icon = "🔴" if sev == "HIGH" else ("🟡" if sev == "MEDIUM" else "🔵")
-                    with st.expander(f"{icon} [{sev}] {r['title']}", expanded=(sev == "HIGH")):
-                        st.markdown(f"**Issue Description:** {r['detail']}")
-                        st.markdown(f"**How to configure on device:** `{r['setting']}`")
-            else:
-                st.success("🎉 No high-risk standby configuration flags detected!")
-
-            st.divider()
-
-            # 3. Radios, Display & Sensors (Responsive Cards)
-            st.markdown("### 📡 Radios, Ambient Display & Power Tuning")
-            r_col1, r_col2, r_col3, r_col4, r_col5 = st.columns(5)
-            
-            wifi_active = k_settings.get("wifi_scan_always_enabled") == "1"
-            ble_active = k_settings.get("ble_scan_always_enabled") == "1"
-            tilt_active = k_settings.get("ambient_tilt_to_wake") == "1"
-            touch_active = k_settings.get("ambient_touch_to_wake") == "1"
-            timeout_sec = int(k_settings.get("screen_off_timeout_ms", "15000")) // 1000
-            refresh = float(k_settings.get("peak_refresh_rate", "60.0"))
-
-            with r_col1:
-                st.markdown(f"""
-                <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
-                    <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">📶 Wi-Fi Always Scanning</div>
-                    <div style="font-size: 1.05rem; font-weight: 600; color: {'#f59e0b' if wifi_active else '#10b981'}; word-break: break-word;">
-                        {'⚠️ Enabled (Continuous)' if wifi_active else '✅ Disabled (Safe)'}
-                    </div>
-                    <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Location scanning</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            with r_col2:
-                st.markdown(f"""
-                <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
-                    <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">📡 BLE Always Scanning</div>
-                    <div style="font-size: 1.05rem; font-weight: 600; color: {'#f59e0b' if ble_active else '#10b981'}; word-break: break-word;">
-                        {'⚠️ Enabled' if ble_active else '✅ Disabled'}
-                    </div>
-                    <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Bluetooth beacon scan</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            with r_col3:
-                st.markdown(f"""
-                <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
-                    <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">🖐️ Ambient Wake Gestures</div>
-                    <div style="font-size: 0.95rem; font-weight: 600; line-height: 1.35; word-break: break-word;">
-                        Tilt: <span style="color: {'#3b82f6' if tilt_active else '#64748b'};">{'On' if tilt_active else 'Off'}</span> &nbsp;|&nbsp; 
-                        Touch: <span style="color: {'#3b82f6' if touch_active else '#64748b'};">{'On' if touch_active else 'Off'}</span>
-                    </div>
-                    <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Hardware sensor polling</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            with r_col4:
-                st.markdown(f"""
-                <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
-                    <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">⏱️ Screen Timeout</div>
-                    <div style="font-size: 1.05rem; font-weight: 600; color: {'#10b981' if timeout_sec <= 30 else '#f59e0b'}; word-break: break-word;">
-                        {timeout_sec} seconds
-                    </div>
-                    <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Display off delay</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            with r_col5:
-                st.markdown(f"""
-                <div style="background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px 14px; min-height: 105px;">
-                    <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500;">📺 Peak Refresh Rate</div>
-                    <div style="font-size: 1.05rem; font-weight: 600; color: {'#10b981' if refresh <= 60 else '#3b82f6'}; word-break: break-word;">
-                        {refresh:.0f} Hz
-                    </div>
-                    <div style="font-size: 0.72rem; color: #64748b; margin-top: 4px;">Display panel limit</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            st.divider()
-
-            # 4. Detailed Drill-downs: Doze Whitelists, App Standby & Raw Key-Value Explorer
-            tab_doze, tab_appops, tab_kv = st.tabs([
-                f"🛡️ Doze Whitelist ({len(p_data.get('user_whitelisted', []))} User Apps)",
-                f"⚡ AppOps Run-in-Background ({len(p_data.get('appops_allowed', []))})",
-                f"🔍 System Settings Explorer ({p_data.get('raw_counts', {}).get('global_count', 0) + p_data.get('raw_counts', {}).get('secure_count', 0) + p_data.get('raw_counts', {}).get('system_count', 0)} keys)"
-            ])
-
-            with tab_doze:
-                st.markdown("#### User-Installed Apps Exempt from Android Doze Deep Sleep")
-                st.caption("These user apps have been granted permission to ignore Doze optimizations, wake the CPU at will, and access the network during sleep.")
-                u_wl = p_data.get("user_whitelisted", [])
-                if u_wl:
-                    df_uwl = pd.DataFrame(u_wl).rename(columns={"friendly": "App Name", "package": "Package Identifier", "uid": "Linux UID", "type": "Whitelist Scope"})
-                    st.dataframe(df_uwl, use_container_width=True)
-                else:
-                    st.info("No user apps are exempt from Doze! All user apps enter deep sleep normally.")
-
-                with st.expander(f"System & OEM Exemption Whitelist ({p_data.get('system_whitelisted_count', 0)} packages)"):
-                    st.caption("Internal Android OS and carrier packages whitelisted by the OEM ROM:")
-                    s_wl = p_data.get("system_whitelisted", [])
-                    if s_wl:
-                        st.dataframe(pd.DataFrame(s_wl)[["friendly", "package", "uid"]].rename(columns={"friendly": "System Service", "package": "Package Identifier", "uid": "UID"}), use_container_width=True)
-
-            with tab_appops:
-                st.markdown("#### Applications Granted `RUN_IN_BACKGROUND` AppOps Permission")
-                st.caption("Android AppOps policy allows these packages to initiate background services and background tasks without restriction.")
-                a_ops = p_data.get("appops_allowed", [])
-                if a_ops:
-                    df_aops = pd.DataFrame(a_ops).rename(columns={"friendly": "App Name", "package": "Package Identifier"})
-                    st.dataframe(df_aops, use_container_width=True)
-                else:
-                    st.info("No apps explicitly granted unrestricted background execution.")
-
-            with tab_kv:
-                st.markdown("#### Comprehensive Android Settings Registry")
-                st.caption("Search across all raw key-value pairs stored in Android `Global`, `Secure`, and `System` settings providers.")
-                
-                all_kv = []
-                for k, v in p_data.get("global_settings", {}).items():
-                    all_kv.append({"Scope": "Global", "Key": k, "Value": v})
-                for k, v in p_data.get("secure_settings", {}).items():
-                    all_kv.append({"Scope": "Secure", "Key": k, "Value": v})
-                for k, v in p_data.get("system_settings", {}).items():
-                    all_kv.append({"Scope": "System", "Key": k, "Value": v})
-
-                if all_kv:
-                    df_all_kv = pd.DataFrame(all_kv)
-                    search_query = st.text_input("🔎 Search settings by key or value:", placeholder="e.g. wifi, sync, doze, refresh, wake, bluetooth...", key="kv_search_input")
-                    if search_query:
-                        df_all_kv = df_all_kv[df_all_kv["Key"].str.contains(search_query, case=False, na=False) | df_all_kv["Value"].str.contains(search_query, case=False, na=False)]
-                    st.dataframe(df_all_kv, use_container_width=True, height=450)
-                else:
-                    st.info("No raw settings data available for this profile.")
 
     elif view_mode == "🔀 Compare Profiles":
         st.markdown("### 🔀 Device Configuration Snapshot Comparison")
