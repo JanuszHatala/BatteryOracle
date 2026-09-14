@@ -160,7 +160,7 @@ div[class*="st-key-ai_err_zone_"] {
     gap: 5px;
     background: rgba(139, 92, 246, 0.14);
     border: 1px solid rgba(139, 92, 246, 0.35);
-    color: #c084fc;
+    color: #8b5cf6;
     font-size: 0.76rem;
     font-weight: 600;
     padding: 2px 8px;
@@ -177,6 +177,79 @@ div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
     border-left: 3px solid #a855f7 !important;
     border-radius: 10px !important;
     margin-bottom: 8px !important;
+}
+
+/* ========================================================================== */
+/* UI/UX BUTTON DESIGN SYSTEM - Crisp affordance, bold typography & contrast  */
+/* ========================================================================== */
+
+/* Standard (Secondary) Buttons & Download Buttons */
+div[data-testid="stButton"] > button,
+div[data-testid="stDownloadButton"] > button {
+    font-weight: 600 !important;
+    border: 1.5px solid #cbd5e1 !important;
+    border-radius: 8px !important;
+    color: #1e293b !important;
+    background-color: #f8fafc !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+    transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    letter-spacing: 0.01em !important;
+}
+
+div[data-testid="stButton"] > button:hover,
+div[data-testid="stDownloadButton"] > button:hover {
+    border-color: #6366f1 !important;
+    color: #4338ca !important;
+    background-color: #ffffff !important;
+    box-shadow: 0 3px 10px rgba(99, 102, 241, 0.12) !important;
+    transform: translateY(-1px) !important;
+}
+
+div[data-testid="stButton"] > button:active,
+div[data-testid="stDownloadButton"] > button:active {
+    transform: translateY(0px) !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Primary Action Buttons */
+div[data-testid="stButton"] > button[kind="primary"],
+div[data-testid="stDownloadButton"] > button[kind="primary"] {
+    font-weight: 700 !important;
+    border: 1.5px solid #4f46e5 !important;
+    background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%) !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 6px rgba(79, 70, 229, 0.28) !important;
+}
+
+div[data-testid="stButton"] > button[kind="primary"]:hover,
+div[data-testid="stDownloadButton"] > button[kind="primary"]:hover {
+    border-color: #4338ca !important;
+    background: linear-gradient(135deg, #4338ca 0%, #4f46e5 100%) !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35) !important;
+    transform: translateY(-1px) !important;
+}
+
+/* Action Command Bar Container */
+.action-command-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 4px 0 14px 0;
+    flex-wrap: wrap;
+}
+
+.action-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.83rem;
+    color: #64748b;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-weight: 500;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -1292,14 +1365,13 @@ if st.session_state.active_tab == "single":
                 active_diagnosis = None
                 diag_subtitle = f"⏳ Targeted Scope: {filter_mode_choice} (Not yet generated)"
                 
-        col_diag_hdr, col_re_diag, col_dl = st.columns([3, 1.2, 1.2])
-        with col_diag_hdr:
-            st.caption(f"**Current Scope:** {diag_subtitle}")
-            
+        # Action Command Bar: Primary trigger + export button on left, status on right/inline
         diag_action_key = f"diag_{rep_id}_{filter_mode}"
-        with col_re_diag:
-            btn_label = "🔄 Re-Diagnose" if active_diagnosis else f"✨ Generate Targeted Diagnosis"
-            if st.button(btn_label, key=f"btn_diag_{rep_id}_{filter_mode}", use_container_width=True):
+        btn_label = "🔄 Re-Diagnose" if active_diagnosis else f"✨ Generate Targeted Diagnosis"
+        
+        c_diag_act1, c_diag_act2, c_diag_status = st.columns([1.5, 1.3, 3], vertical_alignment="center")
+        with c_diag_act1:
+            if st.button(btn_label, key=f"btn_diag_{rep_id}_{filter_mode}", type="primary" if not active_diagnosis else "secondary", use_container_width=True):
                 confirm_ai_analysis_dialog(
                     action_key=diag_action_key,
                     action_title=f"{'Re-Diagnose' if active_diagnosis else 'Generate Targeted Diagnosis'}: {filter_mode_choice}",
@@ -1311,6 +1383,19 @@ if st.session_state.active_tab == "single":
                         "Device Info": active_report.get("device_info", "Unknown")
                     }
                 )
+        with c_diag_act2:
+            if active_diagnosis:
+                md_content = build_single_report_markdown(active_report, filter_mode, kpis, active_diagnosis)
+                st.download_button(
+                    label="📥 Export Report (.md)",
+                    data=md_content,
+                    file_name=f"{active_report['custom_name']}_{filter_mode}_diagnosis.md",
+                    mime="text/markdown",
+                    key=f"dl_single_md_{rep_id}_{filter_mode}",
+                    use_container_width=True
+                )
+        with c_diag_status:
+            st.caption(f"**Current Scope:** {diag_subtitle}")
 
         # Check if user confirmed the AI action
         if st.session_state.pending_ai_action == diag_action_key:
@@ -1351,18 +1436,6 @@ if st.session_state.active_tab == "single":
                 except Exception as e:
                     st.session_state[f"err_diag_{rep_id}"] = (e, f"evaluating battery diagnosis ({filter_mode_choice})")
                     st.rerun()
-                        
-        with col_dl:
-            if active_diagnosis:
-                md_content = build_single_report_markdown(active_report, filter_mode, kpis, active_diagnosis)
-                st.download_button(
-                    label="📥 Export Report (.md)",
-                    data=md_content,
-                    file_name=f"{active_report['custom_name']}_{filter_mode}_diagnosis.md",
-                    mime="text/markdown",
-                    key=f"dl_single_md_{rep_id}_{filter_mode}",
-                    use_container_width=True
-                )
                         
         # Render any captured diagnosis error at full width below the action bar
         if st.session_state.get(f"err_diag_{rep_id}"):
@@ -1820,13 +1893,16 @@ elif st.session_state.active_tab == "merged":
             with tab_comp_report:
                 comp_key = ",".join(map(str, sorted(selected_ids)))
                 saved_combined = db.get_combined_analysis(comp_key, scope_key=merged_filter_mode)
+                combined_text = saved_combined["analysis_text"] if saved_combined else ""
+                gen_timestamp = saved_combined.get("updated_at", "") if saved_combined else ""
                 
-                col_eval_btn, col_eval_status, col_eval_dl = st.columns([1.4, 2.4, 1.2])
+                # Action Command Bar: Primary trigger + export button adjacent on left
                 comp_action_key = f"comp_{comp_key}_{merged_filter_mode}"
-                
                 btn_comp_label = "🔄 Refresh Analysis" if saved_combined else "✨ Generate Comparative Analysis"
-                with col_eval_btn:
-                    if st.button(btn_comp_label, key=f"btn_run_comp_{merged_filter_mode}", use_container_width=True):
+                
+                c_comp_act1, c_comp_act2, c_comp_status = st.columns([1.5, 1.3, 3], vertical_alignment="center")
+                with c_comp_act1:
+                    if st.button(btn_comp_label, key=f"btn_run_comp_{merged_filter_mode}", type="primary" if not saved_combined else "secondary", use_container_width=True):
                         confirm_ai_analysis_dialog(
                             action_key=comp_action_key,
                             action_title=f"{'Refresh' if saved_combined else 'Generate'} Comparative Analysis: {merged_filter_choice}",
@@ -1837,9 +1913,23 @@ elif st.session_state.active_tab == "merged":
                                 "Reports List": ", ".join([r['custom_name'] for r in compared_reports[:3]]) + (f" + {len(compared_reports)-3} more" if len(compared_reports) > 3 else "")
                             }
                         )
-                        
-                combined_text = saved_combined["analysis_text"] if saved_combined else ""
-                gen_timestamp = saved_combined.get("updated_at", "") if saved_combined else ""
+                with c_comp_act2:
+                    if combined_text and not combined_text.startswith("⚠️"):
+                        comp_md = build_comparative_markdown(compared_reports, merged_filter_choice, combined_text)
+                        st.download_button(
+                            label="📥 Export Analysis (.md)",
+                            data=comp_md,
+                            file_name=f"comparative_{merged_filter_mode}_analysis.md",
+                            mime="text/markdown",
+                            key=f"dl_comp_md_{merged_filter_mode}",
+                            use_container_width=True
+                        )
+                with c_comp_status:
+                    if gen_timestamp and combined_text:
+                        clean_ts = gen_timestamp[:16].replace("T", " ")
+                        st.caption(f"🕒 **Last Evaluated:** `{clean_ts}` &nbsp;•&nbsp; 🎯 **Scope:** `{merged_filter_choice}`")
+                    else:
+                        st.caption(f"🎯 **Active Scope:** `{merged_filter_choice}` &nbsp;•&nbsp; Telemetry across {len(compared_reports)} sessions.")
                 
                 # Check if user confirmed the AI comparative evaluation
                 if st.session_state.pending_ai_action == comp_action_key:
@@ -1879,26 +1969,9 @@ elif st.session_state.active_tab == "merged":
                             st.session_state[f"err_comp_{merged_filter_mode}"] = (e, f"generating comparative analysis ({merged_filter_choice})")
                             st.rerun()
                                 
-                with col_eval_dl:
-                    if combined_text and not combined_text.startswith("⚠️"):
-                        comp_md = build_comparative_markdown(compared_reports, merged_filter_choice, combined_text)
-                        st.download_button(
-                            label="📥 Export Analysis (.md)",
-                            data=comp_md,
-                            file_name=f"comparative_{merged_filter_mode}_analysis.md",
-                            mime="text/markdown",
-                            key=f"dl_comp_md_{merged_filter_mode}",
-                            use_container_width=True
-                        )
-                
                 if st.session_state.get(f"err_comp_{merged_filter_mode}"):
                     c_err_obj, c_err_act = st.session_state[f"err_comp_{merged_filter_mode}"]
                     render_ai_error(c_err_obj, action_description=c_err_act, key_suffix=f"comp_{merged_filter_mode}")
-
-                # Render metadata banner
-                if gen_timestamp and combined_text:
-                    clean_ts = gen_timestamp[:16].replace("T", " ")
-                    st.caption(f"🕒 **Last Evaluated:** `{clean_ts}` &nbsp;•&nbsp; 🎯 **Scope:** `{merged_filter_choice}` &nbsp;•&nbsp; 📱 **Grounded:** `Bugreport Telemetry + Device Profile`")
                     
                 if combined_text:
                     render_ai_block(combined_text, key_suffix=f"comp_{merged_filter_mode}")
@@ -2195,16 +2268,12 @@ settings get secure location_providers_allowed
             p_analysis = current_profile.get("ai_analysis")
             p_trace = current_profile.get("ai_analysis_trace", "")
             
-            col_hdr, col_btn_ai = st.columns([3, 1.2])
-            with col_hdr:
-                if p_analysis:
-                    st.caption(f"🕒 **Last Evaluated:** {current_profile.get('updated_at', '')[:16]} | Grounded in profile inventory")
-                else:
-                    st.caption("⏳ AI Audit not yet generated for this profile snapshot.")
             prof_action_key = f"prof_audit_{current_profile['id']}"
-            with col_btn_ai:
-                btn_ai_label = "🔄 Refresh AI Audit" if p_analysis else "✨ Run AI Configuration Audit"
-                if st.button(btn_ai_label, key=f"btn_audit_profile_{current_profile['id']}", use_container_width=True):
+            btn_ai_label = "🔄 Refresh AI Audit" if p_analysis else "✨ Run AI Configuration Audit"
+            
+            c_pact1, c_pact2 = st.columns([1.5, 4], vertical_alignment="center")
+            with c_pact1:
+                if st.button(btn_ai_label, key=f"btn_audit_profile_{current_profile['id']}", type="primary" if not p_analysis else "secondary", use_container_width=True):
                     confirm_ai_analysis_dialog(
                         action_key=prof_action_key,
                         action_title=f"{'Refresh' if p_analysis else 'Run'} AI Configuration Audit",
@@ -2216,6 +2285,11 @@ settings get secure location_providers_allowed
                             "Build ID": p_data.get("os_build", "Unknown")
                         }
                     )
+            with c_pact2:
+                if p_analysis:
+                    st.caption(f"🕒 **Last Evaluated:** `{current_profile.get('updated_at', '')[:16]}` &nbsp;•&nbsp; Grounded in full device inventory & AppOps.")
+                else:
+                    st.caption("⏳ **Not Yet Generated** &nbsp;•&nbsp; Click above to audit Doze states, AppOps restrictions & risks.")
 
             if st.session_state.pending_ai_action == prof_action_key:
                 st.session_state.pending_ai_action = None
@@ -2585,16 +2659,13 @@ settings get secure location_providers_allowed
             cmp_cache_key = f"profile_cmp_ai_{min(p_a_id, p_b_id)}_{max(p_a_id, p_b_id)}_{p_a_id}"
             cached_cmp_analysis = db.get_setting(cmp_cache_key)
             
-            col_ai_info, col_ai_btn = st.columns([3, 1.2])
-            with col_ai_info:
-                if cached_cmp_analysis:
-                    st.caption("Cached evaluation of this profile delta.")
-                else:
-                    st.caption("AI delta analysis not yet generated for this pair.")
+            # Action Command Bar: Primary trigger on left + status pill
             cmp_action_key = f"prof_cmp_{p_a_id}_{p_b_id}"
-            with col_ai_btn:
-                btn_cmp_label = "🔄 Refresh AI Delta Audit" if cached_cmp_analysis else "✨ Run AI Delta Audit"
-                if st.button(btn_cmp_label, key=f"btn_run_cmp_ai_{p_a_id}_{p_b_id}", use_container_width=True):
+            btn_cmp_label = "🔄 Refresh AI Delta Audit" if cached_cmp_analysis else "✨ Run AI Delta Audit"
+            
+            c_act1, c_act2 = st.columns([1.5, 4], vertical_alignment="center")
+            with c_act1:
+                if st.button(btn_cmp_label, key=f"btn_run_cmp_ai_{p_a_id}_{p_b_id}", type="primary" if not cached_cmp_analysis else "secondary", use_container_width=True):
                     confirm_ai_analysis_dialog(
                         action_key=cmp_action_key,
                         action_title=f"{'Refresh' if cached_cmp_analysis else 'Run'} Profile Delta Audit",
@@ -2608,6 +2679,11 @@ settings get secure location_providers_allowed
                             "Modified Settings": f"{len(diff['settings_diff'])} keys"
                         }
                     )
+            with c_act2:
+                if cached_cmp_analysis:
+                    st.caption("✅ **Analysis Ready** &nbsp;•&nbsp; Cached evaluation grounded in profile deltas & system policies.")
+                else:
+                    st.caption("⏳ **Not Yet Generated** &nbsp;•&nbsp; Click above to evaluate battery risk, Doze regressions & AppOps changes.")
 
             if st.session_state.pending_ai_action == cmp_action_key:
                 st.session_state.pending_ai_action = None
@@ -2734,12 +2810,14 @@ elif st.session_state.active_tab == "master":
         
         # Synthesis Generator
         saved_synthesis = db.get_master_synthesis()
+        # Action Command Bar: Primary trigger + export button adjacent on left
         master_action_key = "master_experiment_synthesis"
-        
-        col_synth_btn, col_synth_space, col_synth_dl = st.columns([1.5, 2.5, 1.2])
         btn_synth_label = "🔄 Refresh Master Synthesis" if saved_synthesis else "✨ Synthesize Grand Master Experiment"
-        with col_synth_btn:
-            if st.button(btn_synth_label, key="btn_run_master_synth", use_container_width=True):
+        synthesis_text = saved_synthesis["text"] if saved_synthesis else ""
+        
+        c_synth_act1, c_synth_act2, c_synth_status = st.columns([1.6, 1.3, 3], vertical_alignment="center")
+        with c_synth_act1:
+            if st.button(btn_synth_label, key="btn_run_master_synth", type="primary" if not saved_synthesis else "secondary", use_container_width=True):
                 confirm_ai_analysis_dialog(
                     action_key=master_action_key,
                     action_title=f"{'Refresh' if saved_synthesis else 'Generate'} Grand Master Experiment Synthesis",
@@ -2750,8 +2828,21 @@ elif st.session_state.active_tab == "master":
                         "Latest Device Profile": (db.get_latest_device_profile() or {}).get("profile_name", "None")
                     }
                 )
-            
-        synthesis_text = saved_synthesis["text"] if saved_synthesis else ""
+        with c_synth_act2:
+            if synthesis_text:
+                st.download_button(
+                    label="📥 Export Synthesis (.md)",
+                    data=synthesis_text,
+                    file_name=f"Master_Battery_Experiment_Synthesis_{datetime.now().strftime('%Y%m%d')}.md",
+                    mime="text/markdown",
+                    key="dl_master_synth_md",
+                    use_container_width=True
+                )
+        with c_synth_status:
+            if saved_synthesis:
+                st.caption(f"🕒 **Last Synthesized:** `{saved_synthesis.get('updated_at', '')[:16]}` &nbsp;•&nbsp; Covering {len(all_reports)} multi-day test runs.")
+            else:
+                st.caption(f"🧪 **Synthesis Ready:** {len(all_reports)} bugreport test runs ready for multi-day retrospective.")
         
         if st.session_state.pending_ai_action == master_action_key:
             st.session_state.pending_ai_action = None
@@ -2786,17 +2877,6 @@ elif st.session_state.active_tab == "master":
                 except Exception as e:
                     st.session_state["err_master_synth"] = (e, "generating master experiment synthesis")
                     st.rerun()
-                    
-        with col_synth_dl:
-            if synthesis_text:
-                st.download_button(
-                    label="📥 Export Synthesis (.md)",
-                    data=synthesis_text,
-                    file_name=f"Master_Battery_Experiment_Synthesis_{datetime.now().strftime('%Y%m%d')}.md",
-                    mime="text/markdown",
-                    key="dl_master_synth_md",
-                    use_container_width=True
-                )
 
         if st.session_state.get("err_master_synth"):
             m_err_obj, m_err_act = st.session_state["err_master_synth"]
