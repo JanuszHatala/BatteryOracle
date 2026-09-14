@@ -251,6 +251,34 @@ div[data-testid="stDownloadButton"] > button[kind="primary"]:hover {
     border-radius: 20px;
     font-weight: 500;
 }
+
+/* AI Consultation Chat Panel */
+.chat-header-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 2px;
+}
+
+.chat-header-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+.scope-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.8rem;
+    color: #475569;
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-weight: 500;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -637,7 +665,7 @@ def render_chat_message_item(msg, rep_id=None, active_th_id=None, thread_dict=No
             del_key = f"del_gmsg_{msg_id}" if is_global else f"delmsg_{msg_id}"
             if st.button("🗑️", key=del_key, type="tertiary", help="Delete message from history"):
                 db.delete_chat_message(msg_id)
-                st.rerun(scope="app")
+                st.rerun(scope="fragment")
 
         if not is_col:
             st.markdown(highlighted_content, unsafe_allow_html=True)
@@ -654,7 +682,247 @@ def render_chat_message_item(msg, rep_id=None, active_th_id=None, thread_dict=No
                         )
                         st.session_state.active_thread_id = forked_id
                         st.success("Forked into a new thread!")
-                        st.rerun(scope="app")
+                        st.rerun(scope="fragment")
+
+@st.fragment
+def render_ai_chat_panel(
+    scope_key: str,
+    panel_title: str,
+    scope_badge: str,
+    report_id: int | None,
+    active_thread_state_key: str,
+    sys_prompt_builder,
+    action_type: str = "chat",
+    filter_label: str = "",
+    default_expanded: bool = True
+):
+    """
+    Renders an isolated, non-refreshing AI chat drawer/panel.
+    Decorated with @st.fragment so that sending messages or switching threads
+    updates only this container without dimming the parent page or shifting scroll.
+    """
+    is_global = (report_id is None)
+    threads = db.get_threads_for_report(report_id)
+    if not threads:
+        init_title = "Global Thread" if is_global else "Main Thread"
+        init_id = db.create_thread(report_id, init_title)
+        threads = db.get_threads_for_report(report_id)
+    thread_dict = {t["id"]: t["title"] for t in threads}
+
+    if active_thread_state_key not in st.session_state or st.session_state[active_thread_state_key] not in thread_dict:
+        st.session_state[active_thread_state_key] = threads[0]["id"]
+    active_th_id = st.session_state[active_thread_state_key]
+    thread_messages = db.get_chat_messages(report_id, thread_id=active_th_id)
+    total_msgs = len(thread_messages)
+
+    # State key for drawer expand/collapse toggle
+    expand_key = f"chat_panel_open_{scope_key}"
+    if expand_key not in st.session_state:
+        st.session_state[expand_key] = default_expanded
+
+    # Visual Chat Header
+    st.markdown(
+        f"""
+        <div class="chat-header-wrap">
+            <div class="chat-header-title">💬 {panel_title}</div>
+            <div>
+                <span class="scope-pill">{scope_badge}</span>
+                <span class="scope-pill">🧵 {len(threads)} thread{'s' if len(threads) != 1 else ''}</span>
+                <span class="scope-pill">💬 {total_msgs} message{'s' if total_msgs != 1 else ''}</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # Control Bar: Toggle drawer, Thread select, New, Rename, Clear/Delete, Export
+    c_toggle, c_sel, c_new, c_ren, c_del, c_exp = st.columns([1.5, 3.2, 1.2, 1.2, 1.2, 1.2], vertical_alignment="center")
+    with c_toggle:
+        toggle_label = "🔼 Collapse Chat" if st.session_state[expand_key] else "🔽 Expand Chat"
+        if st.button(toggle_label, key=f"btn_toggle_panel_{scope_key}", use_container_width=True):
+            st.session_state[expand_key] = not st.session_state[expand_key]
+            st.rerun(scope="fragment")
+
+    with c_sel:
+        def _fmt_thread(th_id):
+            title = thread_dict.get(th_id, "Thread")
+            cnt = db.get_message_count_for_thread(th_id)
+            return f"🧵 {title} ({cnt} msg{'s' if cnt != 1 else ''})"
+
+        selected_th = st.selectbox(
+            "Thread",
+            options=list(thread_dict.keys()),
+            format_func=_fmt_thread,
+            index=list(thread_dict.keys()).index(active_th_id),
+            key=f"th_sel_{scope_key}",
+            label_visibility="collapsed"
+        )
+        if selected_th != active_th_id:
+            st.session_state[active_thread_state_key] = selected_th
+            st.rerun(scope="fragment")
+
+    with c_new:
+        with st.popover("➕ New", use_container_width=True):
+            new_title = st.text_input("Thread Title", placeholder="e.g. Wakelock Inquiry", key=f"new_th_t_{scope_key}")
+            if st.button("Create Thread", key=f"btn_cr_th_{scope_key}", use_container_width=True):
+                nid = db.create_thread(report_id, new_title.strip() if new_title else "New Thread")
+                st.session_state[active_thread_state_key] = nid
+                st.rerun(scope="fragment")
+
+    with c_ren:
+        with st.popover("✏️ Rename", use_container_width=True):
+            curr_title = thread_dict.get(active_th_id, "")
+            rename_val = st.text_input("New Title", value=curr_title, key=f"ren_th_t_{scope_key}")
+            if st.button("Update Title", key=f"btn_rn_th_{scope_key}", use_container_width=True):
+                if rename_val.strip():
+                    db.rename_thread(active_th_id, rename_val.strip())
+                    st.rerun(scope="fragment")
+
+    with c_del:
+        if len(threads) > 1:
+            if st.button("🗑️ Delete", key=f"btn_del_th_{scope_key}", use_container_width=True, help="Delete this thread and all its messages"):
+                db.delete_thread(active_th_id)
+                st.session_state[active_thread_state_key] = None
+                st.rerun(scope="fragment")
+        else:
+            if st.button("🧹 Clear", key=f"btn_clr_th_{scope_key}", use_container_width=True, help="Clear all messages in this thread"):
+                db.clear_thread_messages(active_th_id)
+                st.rerun(scope="fragment")
+
+    with c_exp:
+        # Markdown export of current thread
+        if thread_messages:
+            thread_md = f"# AI Chat Transcript - {thread_dict.get(active_th_id, 'Thread')}\n\n"
+            thread_md += f"**Scope**: {scope_badge}  \n**Export Date**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n---\n\n"
+            for m in thread_messages:
+                role_name = "👤 User" if m["role"] == "user" else "✨ Oracle AI"
+                thread_md += f"### {role_name} ({m.get('timestamp_str', '')})\n{m.get('content', '')}\n\n"
+            st.download_button(
+                "📥 Export",
+                data=thread_md,
+                file_name=f"chat_export_{scope_key}_{active_th_id}.md",
+                mime="text/markdown",
+                key=f"dl_th_{scope_key}",
+                use_container_width=True
+            )
+        else:
+            st.button("📥 Export", key=f"dl_th_dis_{scope_key}", use_container_width=True, disabled=True)
+
+    if not st.session_state[expand_key]:
+        st.caption("Chat drawer collapsed. Click **🔽 Expand Chat** to resume consultation.")
+        return
+
+    # Secondary Toolbar: Search + Expand/Collapse All
+    s_col, b_exp, b_col = st.columns([3.6, 1.2, 1.2], vertical_alignment="center")
+    with s_col:
+        search_q = st.text_input(
+            "Search messages",
+            placeholder="🔎 Search conversation history...",
+            key=f"search_q_{scope_key}_{active_th_id}",
+            label_visibility="collapsed"
+        )
+    with b_exp:
+        if st.button("⊞ Expand All", key=f"exp_all_{scope_key}", use_container_width=True, disabled=not bool(thread_messages)):
+            db.set_thread_messages_collapsed(active_th_id, False)
+            for m in thread_messages:
+                st.session_state[f"msg_col_{m['id']}"] = False
+            st.rerun(scope="fragment")
+    with b_col:
+        if st.button("⊟ Collapse All", key=f"col_all_{scope_key}", use_container_width=True, disabled=not bool(thread_messages)):
+            db.set_thread_messages_collapsed(active_th_id, True)
+            for m in thread_messages:
+                st.session_state[f"msg_col_{m['id']}"] = True
+            st.rerun(scope="fragment")
+
+    if search_q and search_q.strip():
+        sq = search_q.strip()
+        total_m = 0
+        matching_ids = set()
+        for m in thread_messages:
+            _, c = highlight_search_query(m.get("content", ""), sq)
+            if c > 0:
+                total_m += c
+                matching_ids.add(m["id"])
+        if total_m > 0:
+            st.caption(f"🔎 Found **{total_m}** match{'es' if total_m != 1 else ''} in **{len(matching_ids)}** message{'s' if len(matching_ids) != 1 else ''}. *(Matching messages highlighted)*")
+        else:
+            st.caption(f"🔎 No matches found for **\"{sq}\"**.")
+
+    # Scrollable, Framed Chat Viewport
+    chat_container = st.container(height=520, border=True)
+    with chat_container:
+        if not thread_messages:
+            st.info("💡 No messages in this thread yet. Ask anything below to start the consultation!")
+        else:
+            for msg in thread_messages:
+                render_chat_message_item(
+                    msg=msg,
+                    rep_id=report_id,
+                    active_th_id=active_th_id,
+                    thread_dict=thread_dict,
+                    is_global=is_global,
+                    search_query=search_q
+                )
+
+    # Dedicated Chat Input Box (Docked below viewport)
+    input_key = f"chat_input_{scope_key}"
+    if prompt := st.chat_input("Ask a question, query telemetry, or consult about wakelocks...", key=input_key):
+        # 1. Save user message
+        db.save_chat_message(
+            report_id=report_id,
+            role="user",
+            content=prompt,
+            thread_id=active_th_id,
+            filter_context=filter_label
+        )
+
+        # 2. Auto-title if it's the first message
+        if len(thread_messages) == 0 and ("New" in thread_dict.get(active_th_id, "") or "Main" in thread_dict.get(active_th_id, "") or "Global" in thread_dict.get(active_th_id, "")):
+            auto_title = prompt[:25].strip() + "..."
+            db.rename_thread(active_th_id, auto_title)
+
+        # 3. Stream/execute LLM response with live status inside the container
+        with chat_container:
+            with st.chat_message("user"):
+                if filter_label:
+                    st.caption(f"🎯 *Scope: {filter_label}*")
+                st.markdown(prompt)
+
+            with st.chat_message("assistant"):
+                msg_ph = st.empty()
+                with st.status("🧠 Oracle AI is analyzing context and generating response...", expanded=True) as status_box:
+                    st.write("Synthesizing telemetry context & prompt...")
+                    sys_prompt = sys_prompt_builder()
+
+                    messages = [{"role": "system", "content": sys_prompt}]
+                    for m in thread_messages:
+                        messages.append({"role": m["role"], "content": m["content"]})
+                    messages.append({"role": "user", "content": prompt})
+
+                    st.write("Invoking active LLM reasoning model...")
+                    try:
+                        reply = llm_manager.call_llm_tracked(
+                            messages=messages,
+                            report_id=report_id if (report_id and report_id > 0) else None,
+                            thread_id=active_th_id,
+                            action_type=action_type
+                        )
+                        status_box.update(label="✨ Response generated successfully!", state="complete", expanded=False)
+                        msg_ph.markdown(reply)
+                        db.save_chat_message(
+                            report_id=report_id,
+                            role="assistant",
+                            content=reply,
+                            thread_id=active_th_id,
+                            filter_context=filter_label
+                        )
+                    except Exception as e:
+                        status_box.update(label="❌ Failed to generate response", state="error", expanded=True)
+                        with msg_ph.container():
+                            render_ai_error(e, action_description="generating assistant reply", key_suffix=f"chat_{scope_key}_{active_th_id}")
+
+        # Fragment-only rerun to refresh viewport with newly saved messages
+        st.rerun(scope="fragment")
 
 # --- Session State Initialization ---
 if "active_tab" not in st.session_state:
@@ -1734,174 +2002,36 @@ if st.session_state.active_tab == "single":
             
         st.divider()
         
-        # --- MULTI-THREADED CHAT WORKSPACE ---
-        st.markdown("### 💬 Multi-Threaded Investigation Workspace")
-        
-        # Thread management bar
-        thread_sort = st.radio("Sort Threads By:", ["Last Active", "Creation Time", "Alphabetical"], horizontal=True, key=f"sort_th_{rep_id}")
-        sort_key_map = {"Last Active": "updated_at", "Creation Time": "created_at", "Alphabetical": "title"}
-        
-        threads = db.get_threads_for_report(rep_id, sort_by=sort_key_map[thread_sort])
-        thread_dict = {t["id"]: t["title"] for t in threads}
-        
-        if st.session_state.active_thread_id not in thread_dict:
-            st.session_state.active_thread_id = threads[0]["id"]
-            
-        st.caption("Active Conversation Thread & Thread Actions:")
-        t_col1, t_col2, t_col3, t_col4 = st.columns([3, 1, 1, 1])
-        with t_col1:
-            selected_th_id = st.selectbox(
-                "Active Thread:",
-                options=list(thread_dict.keys()),
-                format_func=lambda x: f"🧵 {thread_dict[x]}",
-                index=list(thread_dict.keys()).index(st.session_state.active_thread_id),
-                key=f"thread_sel_{rep_id}",
-                label_visibility="collapsed"
-            )
-            st.session_state.active_thread_id = selected_th_id
-            
-        with t_col2:
-            with st.popover("➕ New", use_container_width=True):
-                new_th_title = st.text_input("Thread Title", placeholder="e.g. WhatsApp Drain Inquiry", key=f"new_th_t_{rep_id}")
-                if st.button("Create", key=f"btn_create_th_{rep_id}", use_container_width=True):
-                    nid = db.create_thread(rep_id, new_th_title or "New Investigation")
-                    st.session_state.active_thread_id = nid
-                    st.rerun()
-                    
-        with t_col3:
-            with st.popover("✏️ Rename", use_container_width=True):
-                cur_title = thread_dict[st.session_state.active_thread_id]
-                ren_title = st.text_input("New Name", value=cur_title, key=f"ren_th_t_{rep_id}")
-                if st.button("Update Title", key=f"btn_ren_th_{rep_id}", use_container_width=True):
-                    db.rename_thread(st.session_state.active_thread_id, ren_title)
-                    st.rerun()
-                    
-        with t_col4:
-            if len(threads) > 1:
-                if st.button("🗑️ Delete", key=f"btn_del_th_{rep_id}", use_container_width=True):
-                    db.delete_thread(st.session_state.active_thread_id)
-                    st.session_state.active_thread_id = None
-                    st.rerun()
-            else:
-                if st.button("🧹 Clear", key=f"btn_clear_th_{rep_id}", use_container_width=True):
-                    db.clear_thread_messages(st.session_state.active_thread_id)
-                    st.success("Thread context cleared!")
-                    st.rerun()
-                    
-        # Active Messages Display
-        thread_messages = db.get_chat_messages(rep_id, thread_id=st.session_state.active_thread_id)
+        # --- MULTI-THREADED CHAT WORKSPACE (FRAGMENT ISOLATED) ---
+        filter_label_single = f"{filter_mode_choice} ({kpis['start_time']} -> {kpis['end_time']})"
+        def _build_single_sys_prompt():
+            filtered_telemetry = parser.get_filtered_telemetry_for_llm(active_report["summary_text"], filter_mode, kpis)
+            active_inv_profile = db.get_latest_device_profile()
+            profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+            if profile_summary:
+                filtered_telemetry = f"{profile_summary}\n\n{filtered_telemetry}"
 
-        # Chat Search & Bulk Actions Bar
-        tb_col1, tb_col2, tb_col3 = st.columns([3.6, 1.2, 1.2], vertical_alignment="center")
-        with tb_col1:
-            chat_search_query = st.text_input(
-                "Search messages",
-                placeholder="🔎 Find in messages...",
-                key=f"search_chat_{rep_id}_{st.session_state.active_thread_id}",
-                label_visibility="collapsed"
+            chat_tmpl = llm_manager.get_prompt_template("chat_assistant")
+            return chat_tmpl.format(
+                filter_context=f"Active Scope: {filter_label_single} | Discharge Rate: {kpis['rate_per_hr']:.2f}%/hr | Status: {kpis['status']}",
+                report_name=active_report["custom_name"],
+                device_info=active_report.get("device_info", "Unknown"),
+                timestamp_str=active_report["timestamp_str"],
+                description=active_report.get("description", ""),
+                telemetry_data=filtered_telemetry
             )
-        with tb_col2:
-            if st.button("⊞ Expand All", key=f"btn_exp_all_{rep_id}", use_container_width=True, disabled=not bool(thread_messages)):
-                db.set_thread_messages_collapsed(st.session_state.active_thread_id, False)
-                for m in thread_messages:
-                    st.session_state[f"msg_col_{m['id']}"] = False
-                st.rerun()
-        with tb_col3:
-            if st.button("⊟ Collapse All", key=f"btn_col_all_{rep_id}", use_container_width=True, disabled=not bool(thread_messages)):
-                db.set_thread_messages_collapsed(st.session_state.active_thread_id, True)
-                for m in thread_messages:
-                    st.session_state[f"msg_col_{m['id']}"] = True
-                st.rerun()
 
-        # Display Search Status Banner
-        if chat_search_query and chat_search_query.strip():
-            sq = chat_search_query.strip()
-            total_m = 0
-            matching_ids = set()
-            for m in thread_messages:
-                _, c = highlight_search_query(m.get("content", ""), sq)
-                if c > 0:
-                    total_m += c
-                    matching_ids.add(m["id"])
-            if total_m > 0:
-                st.caption(f"🔎 Found **{total_m}** match{'es' if total_m != 1 else ''} in **{len(matching_ids)}** message{'s' if len(matching_ids) != 1 else ''}. *(Matching messages auto-expanded and highlighted)*")
-            else:
-                st.caption(f"🔎 No matches found for **\"{sq}\"**.")
-
-        for msg in thread_messages:
-            render_chat_message_item(
-                msg=msg,
-                rep_id=rep_id,
-                active_th_id=st.session_state.active_thread_id,
-                thread_dict=thread_dict,
-                is_global=False,
-                search_query=chat_search_query
-            )
-                            
-        # Chat Input Box
-        if prompt := st.chat_input("Ask about battery drain, wakelocks, or apps in this thread..."):
-            filter_label = f"{filter_mode_choice} ({kpis['start_time']} -> {kpis['end_time']})"
-            
-            with st.chat_message("user"):
-                st.caption(f"🎯 *Active Scope: {filter_label}*")
-                st.markdown(prompt)
-                
-            db.save_chat_message(
-                report_id=rep_id,
-                role="user",
-                content=prompt,
-                thread_id=st.session_state.active_thread_id,
-                filter_context=filter_label
-            )
-            
-            # Auto-title thread if it is the first user message and has default name
-            if len(thread_messages) == 0 and "New" in thread_dict[st.session_state.active_thread_id]:
-                auto_title = prompt[:25].strip() + "..."
-                db.rename_thread(st.session_state.active_thread_id, auto_title)
-                
-            with st.chat_message("assistant"):
-                message_placeholder = st.empty()
-                with st.spinner("Oracle is reasoning with active filter context..."):
-                    # Build targeted telemetry for active filter
-                    filtered_telemetry = parser.get_filtered_telemetry_for_llm(active_report["summary_text"], filter_mode, kpis)
-                    active_inv_profile = db.get_latest_device_profile()
-                    profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
-                    if profile_summary:
-                        filtered_telemetry = f"{profile_summary}\n\n{filtered_telemetry}"
-                    
-                    chat_tmpl = llm_manager.get_prompt_template("chat_assistant")
-                    sys_prompt = chat_tmpl.format(
-                        filter_context=f"Active Scope: {filter_label} | Discharge Rate: {kpis['rate_per_hr']:.2f}%/hr | Status: {kpis['status']}",
-                        report_name=active_report["custom_name"],
-                        device_info=active_report.get("device_info", "Unknown"),
-                        timestamp_str=active_report["timestamp_str"],
-                        description=active_report.get("description", ""),
-                        telemetry_data=filtered_telemetry
-                    )
-                    
-                    messages = [{"role": "system", "content": sys_prompt}]
-                    for m in thread_messages:
-                        messages.append({"role": m["role"], "content": m["content"]})
-                    messages.append({"role": "user", "content": prompt})
-                    
-                    try:
-                        reply = llm_manager.call_llm_tracked(
-                            messages=messages,
-                            report_id=rep_id,
-                            thread_id=st.session_state.active_thread_id,
-                            action_type="chat"
-                        )
-                        message_placeholder.markdown(reply)
-                        db.save_chat_message(
-                            report_id=rep_id,
-                            role="assistant",
-                            content=reply,
-                            thread_id=st.session_state.active_thread_id,
-                            filter_context=filter_label
-                        )
-                    except Exception as e:
-                        with message_placeholder.container():
-                            render_ai_error(e, action_description="generating assistant reply", key_suffix=f"chat_{rep_id}_{st.session_state.active_thread_id}")
+        render_ai_chat_panel(
+            scope_key=f"single_{rep_id}",
+            panel_title=f"Session Telemetry Chat • {active_report['custom_name']}",
+            scope_badge=f"🎯 Scope: {filter_mode_choice}",
+            report_id=rep_id,
+            active_thread_state_key="active_thread_id",
+            sys_prompt_builder=_build_single_sys_prompt,
+            action_type="chat",
+            filter_label=filter_label_single,
+            default_expanded=True
+        )
 
 # ==============================================================================
 # VIEW 2: MERGED & COMPARE ALL REPORTS VIEW
@@ -2192,112 +2322,29 @@ elif st.session_state.active_tab == "merged":
                     st.info(f"💡 No comparative evaluation generated yet for **{merged_filter_choice}**.\n\nClick **'{btn_comp_label}'** above to compare power draw, wakelocks, and battery regressions across the {len(compared_reports)} selected sessions.")
 
             with tab_comp_chat:
-                st.caption(f"💬 *Investigation chat across all {len(compared_reports)} selected bugreports. Grounded in active scope: **{merged_filter_choice}** and device profile.*")
-                global_threads = db.get_threads_for_report(None)
-                g_th_dict = {t["id"]: t["title"] for t in global_threads}
-                
-                if "global_thread_id" not in st.session_state or st.session_state.global_thread_id not in g_th_dict:
-                    st.session_state.global_thread_id = global_threads[0]["id"]
-                    
-                gc_1, gc_2 = st.columns([3, 1])
-                with gc_1:
-                    g_sel = st.selectbox(
-                        "Global Thread:",
-                        options=list(g_th_dict.keys()),
-                        format_func=lambda x: f"🧵 {g_th_dict[x]}",
-                        index=list(g_th_dict.keys()).index(st.session_state.global_thread_id),
-                        key="global_th_sel",
-                        label_visibility="collapsed"
-                    )
-                    st.session_state.global_thread_id = g_sel
-                with gc_2:
-                    with st.popover("➕ New Global Thread", use_container_width=True):
-                        g_new_title = st.text_input("Title", key="g_new_th_t")
-                        if st.button("Create Thread", key="btn_g_new_th"):
-                            nid = db.create_thread(None, g_new_title or "Global Thread")
-                            st.session_state.global_thread_id = nid
-                            st.rerun()
-                            
-                merged_chat = db.get_chat_messages(None, thread_id=st.session_state.global_thread_id)
+                def _build_comp_sys_prompt():
+                    context_prompt = f"You are an Android Battery Engineer. Answer the user's question comparing these {len(compared_reports)} reports:\n"
+                    active_inv_profile = db.get_latest_device_profile()
+                    profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+                    if profile_summary:
+                        context_prompt += f"\n{profile_summary}\n"
 
-                # Chat Search & Bulk Actions Bar
-                gtb_col1, gtb_col2, gtb_col3 = st.columns([3.6, 1.2, 1.2], vertical_alignment="center")
-                with gtb_col1:
-                    g_chat_search_query = st.text_input(
-                        "Search messages",
-                        placeholder="🔎 Find in messages...",
-                        key=f"g_search_chat_{st.session_state.global_thread_id}",
-                        label_visibility="collapsed"
-                    )
-                with gtb_col2:
-                    if st.button("⊞ Expand All", key="btn_g_exp_all", use_container_width=True, disabled=not bool(merged_chat)):
-                        db.set_thread_messages_collapsed(st.session_state.global_thread_id, False)
-                        for m in merged_chat:
-                            st.session_state[f"msg_col_{m['id']}"] = False
-                        st.rerun()
-                with gtb_col3:
-                    if st.button("⊟ Collapse All", key="btn_g_col_all", use_container_width=True, disabled=not bool(merged_chat)):
-                        db.set_thread_messages_collapsed(st.session_state.global_thread_id, True)
-                        for m in merged_chat:
-                            st.session_state[f"msg_col_{m['id']}"] = True
-                        st.rerun()
+                    for r in compared_reports:
+                        r_s, r_e, _ = get_effective_bounds(r, merged_filter_mode)
+                        context_prompt += f"\n--- {r['custom_name']} ({r['timestamp_str']}) ---\nNotes: {r.get('description','')}\n{build_compact_summary(r, filter_mode=merged_filter_mode, n_start=night_start_cfg, n_end=night_end_cfg, custom_start_dt=r_s, custom_end_dt=r_e)}\n"
+                    return context_prompt
 
-                # Display Search Status Banner
-                if g_chat_search_query and g_chat_search_query.strip():
-                    g_sq = g_chat_search_query.strip()
-                    g_total_m = 0
-                    g_matching_ids = set()
-                    for m in merged_chat:
-                        _, c = highlight_search_query(m.get("content", ""), g_sq)
-                        if c > 0:
-                            g_total_m += c
-                            g_matching_ids.add(m["id"])
-                    if g_total_m > 0:
-                        st.caption(f"🔎 Found **{g_total_m}** match{'es' if g_total_m > 1 else ''} in **{len(g_matching_ids)}** message{'s' if len(g_matching_ids) > 1 else ''}. *(Matching messages auto-expanded and highlighted)*")
-                    else:
-                        st.caption(f"🔎 No matches found for **\"{g_sq}\"**.")
-
-                for msg in merged_chat:
-                    render_chat_message_item(
-                        msg=msg,
-                        is_global=True,
-                        search_query=g_chat_search_query
-                    )
-                        
-                if comp_prompt := st.chat_input("Ask a question comparing your reports..."):
-                    with st.chat_message("user"):
-                        st.markdown(comp_prompt)
-                    db.save_chat_message(None, "user", comp_prompt, thread_id=st.session_state.global_thread_id)
-                    
-                    with st.chat_message("assistant"):
-                        msg_ph = st.empty()
-                        with st.spinner("Oracle is reasoning across reports..."):
-                            context_prompt = f"You are an Android Battery Engineer. Answer the user's question comparing these {len(compared_reports)} reports:\n"
-                            active_inv_profile = db.get_latest_device_profile()
-                            profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
-                            if profile_summary:
-                                context_prompt += f"\n{profile_summary}\n"
-
-                            for r in compared_reports:
-                                r_s, r_e, _ = get_effective_bounds(r, merged_filter_mode)
-                                context_prompt += f"\n--- {r['custom_name']} ({r['timestamp_str']}) ---\nNotes: {r.get('description','')}\n{build_compact_summary(r, filter_mode=merged_filter_mode, n_start=night_start_cfg, n_end=night_end_cfg, custom_start_dt=r_s, custom_end_dt=r_e)}\n"
-                                
-                            messages = [{"role": "system", "content": context_prompt}]
-                            for m in merged_chat:
-                                messages.append({"role": m["role"], "content": m["content"]})
-                            messages.append({"role": "user", "content": comp_prompt})
-                            
-                            try:
-                                reply = llm_manager.call_llm_tracked(
-                                    messages=messages,
-                                    thread_id=st.session_state.global_thread_id,
-                                    action_type="global_chat"
-                                )
-                                msg_ph.markdown(reply)
-                                db.save_chat_message(None, "assistant", reply, thread_id=st.session_state.global_thread_id)
-                            except Exception as e:
-                                with msg_ph.container():
-                                    render_ai_error(e, action_description="generating comparative chat response", key_suffix=f"gchat_{st.session_state.global_thread_id}")
+                render_ai_chat_panel(
+                    scope_key="merged_global",
+                    panel_title="Comparative Multi-Report Consultation",
+                    scope_badge=f"🎯 Scope: {merged_filter_choice}",
+                    report_id=None,
+                    active_thread_state_key="global_thread_id",
+                    sys_prompt_builder=_build_comp_sys_prompt,
+                    action_type="global_chat",
+                    filter_label=f"Comparative: {merged_filter_choice}",
+                    default_expanded=True
+                )
         else:
             st.info("Please select at least 2 reports above to see the comparison.")
 
@@ -2518,160 +2565,32 @@ settings get secure location_providers_allowed
                     with st.expander("🧠 AI Reasoning & System Audit Trace"):
                         st.markdown(p_trace)
 
-                # --- MULTI-THREADED PROFILE AUDIT CHAT WORKSPACE ---
-                st.markdown('### 💬 Audit Consultation Chat <span class="ai-badge">✨ AI CHAT</span>', unsafe_allow_html=True)
-                st.caption(f"Ask questions, discuss findings, or explore recommended ADB commands for **{current_profile['profile_name']}**.")
-
+                # --- MULTI-THREADED PROFILE AUDIT CHAT WORKSPACE (FRAGMENT ISOLATED) ---
                 prof_rep_id = -current_profile["id"]
-                p_thread_sort = st.radio("Sort Threads By:", ["Last Active", "Creation Time", "Alphabetical"], horizontal=True, key=f"sort_th_prof_{current_profile['id']}")
-                p_sort_key_map = {"Last Active": "updated_at", "Creation Time": "created_at", "Alphabetical": "title"}
-                p_threads = db.get_threads_for_report(prof_rep_id, sort_by=p_sort_key_map[p_thread_sort])
-                p_thread_dict = {t["id"]: t["title"] for t in p_threads}
-
-                prof_active_th_key = f"active_prof_thread_{current_profile['id']}"
-                if prof_active_th_key not in st.session_state or st.session_state[prof_active_th_key] not in p_thread_dict:
-                    st.session_state[prof_active_th_key] = p_threads[0]["id"]
-
-                pt_col1, pt_col2, pt_col3, pt_col4 = st.columns([3, 1, 1, 1])
-                with pt_col1:
-                    p_sel_th = st.selectbox(
-                        "Active Thread:",
-                        options=list(p_thread_dict.keys()),
-                        format_func=lambda x: f"🧵 {p_thread_dict[x]}",
-                        index=list(p_thread_dict.keys()).index(st.session_state[prof_active_th_key]),
-                        key=f"prof_thread_sel_{current_profile['id']}",
-                        label_visibility="collapsed"
-                    )
-                    st.session_state[prof_active_th_key] = p_sel_th
-
-                with pt_col2:
-                    with st.popover("➕ New", use_container_width=True):
-                        new_p_th_title = st.text_input("Thread Title", placeholder="e.g. Doze Whitelist Inquiry", key=f"new_pth_t_{current_profile['id']}")
-                        if st.button("Create", key=f"btn_create_pth_{current_profile['id']}", use_container_width=True):
-                            new_pid = db.create_thread(prof_rep_id, new_p_th_title or "Profile Consultation")
-                            st.session_state[prof_active_th_key] = new_pid
-                            st.rerun()
-
-                with pt_col3:
-                    with st.popover("✏️ Rename", use_container_width=True):
-                        cur_p_title = p_thread_dict[st.session_state[prof_active_th_key]]
-                        ren_p_title = st.text_input("New Name", value=cur_p_title, key=f"ren_pth_t_{current_profile['id']}")
-                        if st.button("Update Title", key=f"btn_ren_pth_{current_profile['id']}", use_container_width=True):
-                            db.rename_thread(st.session_state[prof_active_th_key], ren_p_title)
-                            st.rerun()
-
-                with pt_col4:
-                    if len(p_threads) > 1:
-                        if st.button("🗑️ Delete", key=f"btn_del_pth_{current_profile['id']}", use_container_width=True):
-                            db.delete_thread(st.session_state[prof_active_th_key])
-                            st.session_state[prof_active_th_key] = None
-                            st.rerun()
-                    else:
-                        if st.button("🧹 Clear", key=f"btn_clear_pth_{current_profile['id']}", use_container_width=True):
-                            db.clear_thread_messages(st.session_state[prof_active_th_key])
-                            st.success("Thread context cleared!")
-                            st.rerun()
-
-                p_thread_messages = db.get_chat_messages(prof_rep_id, thread_id=st.session_state[prof_active_th_key])
-
-                # Chat Search & Bulk Actions Bar
-                ptb_col1, ptb_col2, ptb_col3 = st.columns([3.6, 1.2, 1.2], vertical_alignment="center")
-                with ptb_col1:
-                    p_chat_search_query = st.text_input(
-                        "Search messages",
-                        placeholder="🔎 Find in profile chat...",
-                        key=f"search_pchat_{current_profile['id']}_{st.session_state[prof_active_th_key]}",
-                        label_visibility="collapsed"
-                    )
-                with ptb_col2:
-                    if st.button("⊞ Expand All", key=f"btn_pexp_all_{current_profile['id']}", use_container_width=True, disabled=not bool(p_thread_messages)):
-                        db.set_thread_messages_collapsed(st.session_state[prof_active_th_key], False)
-                        for m in p_thread_messages:
-                            st.session_state[f"msg_col_{m['id']}"] = False
-                        st.rerun()
-                with ptb_col3:
-                    if st.button("⊟ Collapse All", key=f"btn_pcol_all_{current_profile['id']}", use_container_width=True, disabled=not bool(p_thread_messages)):
-                        db.set_thread_messages_collapsed(st.session_state[prof_active_th_key], True)
-                        for m in p_thread_messages:
-                            st.session_state[f"msg_col_{m['id']}"] = True
-                        st.rerun()
-
-                if p_chat_search_query and p_chat_search_query.strip():
-                    p_sq = p_chat_search_query.strip()
-                    p_tot_m = 0
-                    p_matching_ids = set()
-                    for m in p_thread_messages:
-                        _, c = highlight_search_query(m.get("content", ""), p_sq)
-                        if c > 0:
-                            p_tot_m += c
-                            p_matching_ids.add(m["id"])
-                    if p_tot_m > 0:
-                        st.caption(f"🔎 Found **{p_tot_m}** match{'es' if p_tot_m != 1 else ''} in **{len(p_matching_ids)}** message{'s' if len(p_matching_ids) != 1 else ''}. *(Matching messages auto-expanded and highlighted)*")
-                    else:
-                        st.caption(f"🔎 No matches found for **\"{p_sq}\"**.")
-
-                for msg in p_thread_messages:
-                    render_chat_message_item(
-                        msg=msg,
-                        rep_id=prof_rep_id,
-                        active_th_id=st.session_state[prof_active_th_key],
-                        thread_dict=p_thread_dict,
-                        is_global=False,
-                        search_query=p_chat_search_query
+                def _build_prof_sys_prompt():
+                    prof_telemetry_summary = parser.get_inventory_summary_for_llm(p_data)
+                    prof_chat_tmpl = llm_manager.get_prompt_template("profile_chat")
+                    return prof_chat_tmpl.format(
+                        device_model=p_data.get("device_model", "Unknown Device"),
+                        os_build=p_data.get("os_build", "Unknown Build"),
+                        android_version=p_data.get("android_version", "Unknown"),
+                        doze_deep=p_data.get("doze_deep_state", "UNKNOWN"),
+                        doze_light=p_data.get("doze_light_state", "UNKNOWN"),
+                        audit_report=p_analysis,
+                        profile_telemetry=prof_telemetry_summary
                     )
 
-                if p_prompt := st.chat_input("Ask about this device configuration, Doze policies, or background apps..."):
-                    with st.chat_message("user"):
-                        st.markdown(p_prompt)
-
-                    db.save_chat_message(
-                        report_id=prof_rep_id,
-                        role="user",
-                        content=p_prompt,
-                        thread_id=st.session_state[prof_active_th_key]
-                    )
-
-                    if len(p_thread_messages) == 0 and "Profile Consultation" in p_thread_dict[st.session_state[prof_active_th_key]]:
-                        auto_p_title = p_prompt[:25].strip() + "..."
-                        db.rename_thread(st.session_state[prof_active_th_key], auto_p_title)
-
-                    with st.chat_message("assistant"):
-                        p_msg_ph = st.empty()
-                        with st.spinner("Oracle is reviewing profile telemetry & audit findings..."):
-                            prof_telemetry_summary = parser.get_inventory_summary_for_llm(p_data)
-                            prof_chat_tmpl = llm_manager.get_prompt_template("profile_chat")
-                            p_sys_prompt = prof_chat_tmpl.format(
-                                device_model=p_data.get("device_model", "Unknown Device"),
-                                os_build=p_data.get("os_build", "Unknown Build"),
-                                android_version=p_data.get("android_version", "Unknown"),
-                                doze_deep=p_data.get("doze_deep_state", "UNKNOWN"),
-                                doze_light=p_data.get("doze_light_state", "UNKNOWN"),
-                                audit_report=p_analysis,
-                                profile_telemetry=prof_telemetry_summary
-                            )
-
-                            p_messages = [{"role": "system", "content": p_sys_prompt}]
-                            for m in p_thread_messages:
-                                p_messages.append({"role": m["role"], "content": m["content"]})
-                            p_messages.append({"role": "user", "content": p_prompt})
-
-                            try:
-                                p_reply = llm_manager.call_llm_tracked(
-                                    messages=p_messages,
-                                    report_id=prof_rep_id,
-                                    thread_id=st.session_state[prof_active_th_key],
-                                    action_type="profile_chat"
-                                )
-                                p_msg_ph.markdown(p_reply)
-                                db.save_chat_message(
-                                    report_id=prof_rep_id,
-                                    role="assistant",
-                                    content=p_reply,
-                                    thread_id=st.session_state[prof_active_th_key]
-                                )
-                            except Exception as e:
-                                with p_msg_ph.container():
-                                    render_ai_error(e, action_description="generating profile audit consultation response", key_suffix=f"pchat_{prof_rep_id}_{st.session_state[prof_active_th_key]}")
+                render_ai_chat_panel(
+                    scope_key=f"profile_{current_profile['id']}",
+                    panel_title=f"Configuration & Doze Consultation • {current_profile['profile_name']}",
+                    scope_badge=f"📱 Device: {p_data.get('device_model', 'Unknown')} • Android {p_data.get('android_version', 'Unknown')}",
+                    report_id=prof_rep_id,
+                    active_thread_state_key=f"active_prof_thread_{current_profile['id']}",
+                    sys_prompt_builder=_build_prof_sys_prompt,
+                    action_type="profile_chat",
+                    filter_label=f"Profile: {current_profile['profile_name']}",
+                    default_expanded=False
+                )
 
             st.divider()
 
