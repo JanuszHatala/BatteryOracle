@@ -577,6 +577,7 @@ def extract_battery_history(filepath, base_year="2026"):
     timeline = {"Time": [], "Level": []}
     in_history = False
     last_level = None
+    last_point = None
     
     history_regex = re.compile(r'^\s+(\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d{3})\s+[a-f0-9]{8}')
     
@@ -593,17 +594,25 @@ def extract_battery_history(filepath, base_year="2026"):
                     match = history_regex.search(line)
                     if match:
                         lvl = int(match.group(2))
-                        # Only record when level changes or first/last to keep chart lightweight & ultra fast
-                        if 0 <= lvl <= 100 and lvl != last_level:
-                            time_str = f"{base_year}-" + match.group(1)
-                            try:
-                                t = pd.to_datetime(time_str)
+                        time_str = f"{base_year}-" + match.group(1)
+                        try:
+                            t = pd.to_datetime(time_str)
+                            last_point = (t, lvl)
+                            # Only record when level changes or first/last to keep chart lightweight & ultra fast
+                            if 0 <= lvl <= 100 and lvl != last_level:
                                 timeline["Time"].append(t)
                                 timeline["Level"].append(lvl)
                                 last_level = lvl
-                            except Exception:
-                                pass
+                        except Exception:
+                            pass
                         
+    # Ensure the true final entry of the timeline is always retained
+    if last_point is not None:
+        final_t, final_lvl = last_point
+        if not timeline["Time"] or timeline["Time"][-1] != final_t:
+            timeline["Time"].append(final_t)
+            timeline["Level"].append(final_lvl)
+
     df = pd.DataFrame(timeline)
     if not df.empty:
         df = df.drop_duplicates(subset=["Time"]).sort_values(by="Time")
