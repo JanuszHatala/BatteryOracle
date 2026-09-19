@@ -266,7 +266,7 @@ def extract_uid_mapping_from_text(summary_text):
         return mapping
         
     lines = summary_text.splitlines() if isinstance(summary_text, str) else summary_text
-    # Direct batterystats entries: "  App Name (u0a123):" or "  com.pkg.name (u0a123):"
+    # Pattern 1: Direct batterystats entries: "  App Name (u0a123):" or "  com.pkg.name (u0a123):"
     for line in lines:
         m = re.match(r'^\s+([A-Za-z0-9_\.\-\s\(\)\/]+?)\s*\((u\d+a\d+)\):', line)
         if m:
@@ -278,18 +278,27 @@ def extract_uid_mapping_from_text(summary_text):
                     label = inner_m.group(1).strip()
             mapping[m.group(2)] = label
 
-    for pkg, uid in re.findall(r'([a-zA-Z0-9\._]+)/(u\d+a\d+)', summary_text):
-        if "." in pkg and not pkg.startswith("u0") and uid not in mapping:
-            mapping[uid] = pkg
-
-    for uid, pkg in re.findall(r'Wake lock\s+(u\d+a\d+).*?@([a-zA-Z0-9_\.]+\.[a-zA-Z0-9_]{3,})/', summary_text):
+    # Pattern 2: Wake lock u0a... @pkg/
+    for uid, pkg in re.findall(r'Wake lock\s+(u\d+a\d+)[^\n]*?@([a-zA-Z0-9_\.]+\.[a-zA-Z0-9_]{2,})/', summary_text):
         if uid not in mapping:
             mapping[uid] = pkg
             
-    for uid, pkg in re.findall(r'\b(u\d+a\d+)\b.*?([a-zA-Z0-9_\.]+\.[a-zA-Z0-9_]{3,})', summary_text):
-        if uid not in mapping and not pkg.replace(".", "").isdigit():
+    # Pattern 3: Wake lock u0a... post:pkg
+    for uid, pkg in re.findall(r'Wake lock\s+(u\d+a\d+)[^\n]*?post:([a-zA-Z0-9_\.]+\.[a-zA-Z0-9_]{2,})', summary_text):
+        if uid not in mapping:
+            mapping[uid] = pkg
+
+    # Pattern 4: pkg/u0a...
+    for pkg, uid in re.findall(r'([a-zA-Z0-9\._]+)/(u\d+a\d+)', summary_text):
+        if "." in pkg and not pkg.startswith("u0") and uid not in mapping:
             mapping[uid] = pkg
             
+    # Pattern 5: jobs with full reverse-domain package
+    for uid, pkg in re.findall(r'Wake lock\s+(u\d+a\d+)[^\n]*?/(?:com|org|net|pl|de)\.([a-zA-Z0-9_\.]+\.[a-zA-Z0-9_]{2,})', summary_text):
+        full_pkg = pkg if pkg.startswith("com.") else f"com.{pkg}"
+        if uid not in mapping:
+            mapping[uid] = full_pkg
+
     return mapping
 
 def get_friendly_label(pkg_or_uid):
@@ -401,9 +410,12 @@ def replace_uids_safely(lines, uid_map):
             return f"{lbl} ({uid})"
             
         nl = re_uid_paren.sub(sub_fn, nl)
-        for uid in ["1000", "0", "2000"]:
+        # Direct replacement for UID u0a... / Uid u0a... / UID 1000 in raw power breakdown lines
+        for uid, target in lookup.items():
             pat = re.compile(rf'(?<!\()\b(?:UID|Uid)\s+{re.escape(uid)}\b(?!\))')
-            nl = pat.sub(lookup.get(uid, f"UID {uid}"), nl)
+            nl = pat.sub(target, nl)
+            pat_wl = re.compile(rf'\bWake lock\s+{re.escape(uid)}\b')
+            nl = pat_wl.sub(f"Wake lock {target}", nl)
         nl = re_sys_dup.sub(r'\1 (\2)', nl)
         new_lines.append(nl)
     return new_lines
@@ -461,7 +473,11 @@ def sanitize_ai_output(text, summary_or_map=None):
             continue
         friendly = COMMON_APP_LABELS.get(raw_label, raw_label)
         target = f"{friendly} ({uid})"
-        
+
+        # 0. Clean generic hallucinated labels invented by the LLM (e.g. "Social App (u0a544)", "Sync App (u0a149)")
+        generic_prefixes = r'(?:(?:Social|Sync|Media|System|Messaging|System Sync|Companion)\s*(?:/\s*[A-Za-z]+)?\s*App|Google Photos(?:\s*/\s*Media Services)?)'
+        out = re.sub(rf'{generic_prefixes}\s*\([`\']?{re.escape(uid)}[`\']?\)', target, out, flags=re.IGNORECASE)
+
         # 1. Clean backticks or quotes inside parentheses if preceded by app name, e.g. "App Name (`u0a123`)" -> "App Name (u0a123)"
         out = re.sub(rf'([A-Za-z0-9_\.\s\-\/\*]+?)\([`\']?{re.escape(uid)}[`\']?\)', rf'\1({uid})', out)
         # 2. Replace 'App `u0a167`', 'App u0a167', 'UID `u0a167`', 'app u0a167'
@@ -493,7 +509,7 @@ def extract_uid_mapping(filepath):
     uid_regex_slash = re.compile(r'([a-zA-Z0-9\._]+)/(u\d+a\d+)')
     uid_regex_wake = re.compile(r'Wake lock\s+(u\d+a\d+).*?@([a-zA-Z0-9_\.]+\.[a-zA-Z0-9_]{3,})/')
     uid_regex_pkg = re.compile(r'Package\s+\[([a-zA-Z0-9\._]+)\]')
-    uid_regex_userid = re.compile(r'userId=(\d+)')
+    uid_regex_userid = re.compile(r'(?:userId|appId)=(\d+)')
     
     with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
         current_pkg = None
@@ -503,7 +519,7 @@ def extract_uid_mapping(filepath):
                 if m_p:
                     current_pkg = m_p.group(1)
             elif current_pkg:
-                if "userId=" in line:
+                if "userId=" in line or "appId=" in line:
                     m_u = uid_regex_userid.search(line)
                     if m_u:
                         uid_num = m_u.group(1)
