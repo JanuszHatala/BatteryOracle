@@ -1773,48 +1773,39 @@ if st.session_state.active_tab == "single":
                 with scope_col2:
                     st.info(f"🌙 **Targeted Overnight Interval:** `{start_dt.strftime('%Y-%m-%d %H:%M')}` → `{end_dt.strftime('%Y-%m-%d %H:%M')}` (Duration: {(end_dt - start_dt).total_seconds()/3600:.1f} hrs)\n\n{custom_badge}")
                     with st.expander("⏱️ Adjust Night Sleep/Wake Window for this Report", expanded=False):
-                        st.caption("Adjust the exact sleep boundary if your actual bedtime or wake-up differed from the default preset. Changes are permanently saved for this report:")
-                        c_adj1, c_adj2 = st.columns(2)
-                        
-                        s_key = f"adj_s_{rep_id}"
-                        e_key = f"adj_e_{rep_id}"
-                        # Ensure slider value starts in sync with active start_dt / end_dt
-                        if s_key not in st.session_state:
-                            st.session_state[s_key] = start_dt
-                        if e_key not in st.session_state:
-                            st.session_state[e_key] = end_dt
-                            
-                        with c_adj1:
-                            new_n_start = st.slider(
-                                "Sleep Start:",
-                                min_value=min_dt,
-                                max_value=max_dt,
-                                format="MM-DD HH:mm",
-                                key=s_key
-                            )
-                        with c_adj2:
-                            new_n_end = st.slider(
-                                "Wake End:",
-                                min_value=min_dt,
-                                max_value=max_dt,
-                                format="MM-DD HH:mm",
-                                key=e_key
-                            )
+                        st.caption("Drag the handles to customize your bedtime (start) and wake-up (end). Changes are permanently saved for this report:")
+                        adj_key = f"adj_night_range_{rep_id}"
+                        if adj_key not in st.session_state:
+                            st.session_state[adj_key] = (start_dt, end_dt)
+
+                        new_n_range = st.slider(
+                            "Sleep Window Range (Bedtime → Wake):",
+                            min_value=min_dt,
+                            max_value=max_dt,
+                            value=st.session_state[adj_key],
+                            format="MM-DD HH:mm",
+                            key=adj_key
+                        )
+                        new_n_start, new_n_end = new_n_range[0], new_n_range[1]
+
                         if (new_n_start != start_dt or new_n_end != end_dt) and new_n_start < new_n_end:
                             db.update_report_night_window(rep_id, new_n_start, new_n_end)
                             active_report["custom_night_start"] = new_n_start
                             active_report["custom_night_end"] = new_n_end
                             st.session_state[night_key] = (new_n_start, new_n_end)
                             st.session_state[f"m_night_{rep_id}"] = (new_n_start, new_n_end)
+                            st.session_state[adj_key] = (new_n_start, new_n_end)
                             st.rerun()
+
                         if st.button("↺ Reset to Detected Window", key=f"rst_night_{rep_id}"):
                             db.update_report_night_window(rep_id, None, None)
                             active_report["custom_night_start"] = None
                             active_report["custom_night_end"] = None
                             st.session_state[night_key] = (auto_s_dt, auto_e_dt)
                             st.session_state[f"m_night_{rep_id}"] = (auto_s_dt, auto_e_dt)
-                            st.session_state.pop(s_key, None)
-                            st.session_state.pop(e_key, None)
+                            st.session_state.pop(adj_key, None)
+                            st.session_state.pop(f"adj_s_{rep_id}", None)
+                            st.session_state.pop(f"adj_e_{rep_id}", None)
                             st.rerun()
         elif "Custom Window" in filter_mode_choice:
             filter_mode = "custom"
@@ -2117,20 +2108,22 @@ elif st.session_state.active_tab == "merged":
                                 badge_txt = " *(Custom saved)*" if is_custom else ""
 
                                 st.markdown(f"**{r['custom_name']}** ({r['timestamp_str']}){badge_txt}")
-                                mc1, mc2, mc3 = st.columns([3, 3, 1.2])
+                                mc1, mc2 = st.columns([6, 1.2])
                                 
-                                m_s_key = f"sl_ms_{r['id']}"
-                                m_e_key = f"sl_me_{r['id']}"
-                                if m_s_key not in st.session_state:
-                                    st.session_state[m_s_key] = cur_s
-                                if m_e_key not in st.session_state:
-                                    st.session_state[m_e_key] = cur_e
+                                m_adj_key = f"sl_m_range_{r['id']}"
+                                if m_adj_key not in st.session_state:
+                                    st.session_state[m_adj_key] = (cur_s, cur_e)
 
                                 with mc1:
-                                    ns = st.slider(f"Start ({r['custom_name'][:10]}):", min_value=r_min_dt, max_value=r_max_dt, format="MM-DD HH:mm", key=m_s_key)
+                                    m_range = st.slider(
+                                        f"Sleep Window ({r['custom_name'][:14]}):",
+                                        min_value=r_min_dt,
+                                        max_value=r_max_dt,
+                                        value=st.session_state[m_adj_key],
+                                        format="MM-DD HH:mm",
+                                        key=m_adj_key
+                                    )
                                 with mc2:
-                                    ne = st.slider(f"End ({r['custom_name'][:10]}):", min_value=r_min_dt, max_value=r_max_dt, format="MM-DD HH:mm", key=m_e_key)
-                                with mc3:
                                     st.write("")
                                     if st.button("↺ Reset", key=f"btn_rst_m_{r['id']}", help="Reset to auto-detected preset"):
                                         db.update_report_night_window(r['id'], None, None)
@@ -2138,15 +2131,19 @@ elif st.session_state.active_tab == "merged":
                                         r["custom_night_end"] = None
                                         st.session_state[r_ov_key] = (r_auto_s, r_auto_e)
                                         st.session_state[f"night_bounds_{r['id']}"] = (r_auto_s, r_auto_e)
-                                        st.session_state.pop(m_s_key, None)
-                                        st.session_state.pop(m_e_key, None)
+                                        st.session_state.pop(m_adj_key, None)
+                                        st.session_state.pop(f"sl_ms_{r['id']}", None)
+                                        st.session_state.pop(f"sl_me_{r['id']}", None)
                                         st.rerun()
+
+                                ns, ne = m_range[0], m_range[1]
                                 if (ns != cur_s or ne != cur_e) and ns < ne:
                                     db.update_report_night_window(r['id'], ns, ne)
                                     r["custom_night_start"] = ns
                                     r["custom_night_end"] = ne
                                     st.session_state[r_ov_key] = (ns, ne)
                                     st.session_state[f"night_bounds_{r['id']}"] = (ns, ne)
+                                    st.session_state[m_adj_key] = (ns, ne)
                                     st.rerun()
             elif "Custom Window" in merged_filter_choice:
                 merged_filter_mode = "custom"

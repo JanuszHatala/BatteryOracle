@@ -107,9 +107,10 @@ Timezone: {timezone_info}
 Analyze the provided battery telemetry with deep technical rigor and deliver high-value, actionable conclusions.
 
 CRITICAL DIAGNOSTIC GUIDELINES:
-1. STRICT APP IDENTIFICATION (ABSOLUTELY NO BARE UIDS):
+1. STRICT APP IDENTIFICATION (ABSOLUTELY NO BARE UIDS OR GENERIC PLACEHOLDERS):
    - PROHIBITED: NEVER use words like 'App u0a...', 'UID u0a...', or standalone UID codes like 'u0a167', 'u0a283', 'u0a325', or 'u0a149' anywhere in your analysis.
-   - MANDATORY: ALWAYS name the real application clearly: e.g., 'Google Play Services (u0a167)', 'Garmin Connect (u0a325)', 'System UI (u0a283)'.
+   - PROHIBITED: NEVER invent or hallucinate generic placeholder names such as "Social App", "Sync App", "Media App", "Messaging App", or "Companion App".
+   - MANDATORY: ALWAYS name the real application clearly using the friendly name and exact package provided in the telemetry: e.g., 'Google Play Services (u0a167)', 'Garmin Connect (u0a325)', 'System UI (u0a283)', 'Instagram (u0a544)', 'Google App (Search) (u0a149)', 'Google Photos (u0a241)', 'Garmin Explore (u0a453)'. Every app recommended for action must be a real app verifiable in Android Settings > Apps.
 
 2. CONFRONT TELEMETRY WITH THE LATEST DEVICE PROFILE (NO REDUNDANT ADVICE):
    - Review the `=== 📱 ACTIVE DEVICE CONFIGURATION & AUDITED SETTINGS ===` header at the top of the telemetry carefully. It represents the GROUND TRUTH of settings already applied on the phone.
@@ -170,7 +171,7 @@ The user is comparing {report_count} Android bugreports to assess optimization i
 Timezone: {timezone_info}.
 
 CRITICAL COMPARATIVE GUIDELINES:
-1. STRICT APP IDENTIFICATION: Never use raw bare UID codes ('u0a...'). Always state the real application name.
+1. STRICT APP IDENTIFICATION: Never use raw bare UID codes ('u0a...'). Never invent generic names like "Social App" or "Sync App". Always state the real application name and package (e.g. 'Instagram (u0a544)', 'Google App (Search) (u0a149)', 'Garmin Explore (u0a453)').
 2. FACT-FIRST DELTA COMPARISON:
    - Focus strictly on verified deltas in discharge velocity (%/hr), mAh consumed by specific apps, radio idle standby, and wakelock durations.
    - Do not recommend restricting apps that show zero or negligible drain across the sessions.
@@ -200,7 +201,7 @@ Answer the user's inquiry with technical precision, diagnostic clarity, and grou
 
 CRITICAL INSTRUCTIONS:
 - Ground all answers strictly in the provided bugreport telemetry, component mAh figures, and active device configuration.
-- NEVER refer to an application solely by a raw UID code ('u0a...'). Always state the human-readable app name.
+- NEVER refer to an application solely by a raw UID code ('u0a...'), and NEVER invent generic placeholder names like 'Social App' or 'Sync App'. Always state the real human-readable app name and package (e.g. 'Instagram (com.instagram.android)').
 - Only blame apps that show proven battery drain or wakelock activity in the active telemetry.
 - Dynamically adapt settings navigation and advice to the specific device model and OS version detected in the context. Do not make generic or hardcoded brand assumptions.
 - For every proposed change, explicitly highlight the `⚠️ Usability & Comfort Impact`.
