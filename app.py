@@ -1773,40 +1773,50 @@ if st.session_state.active_tab == "single":
                 with scope_col2:
                     st.info(f"🌙 **Targeted Overnight Interval:** `{start_dt.strftime('%Y-%m-%d %H:%M')}` → `{end_dt.strftime('%Y-%m-%d %H:%M')}` (Duration: {(end_dt - start_dt).total_seconds()/3600:.1f} hrs)\n\n{custom_badge}")
                     with st.expander("⏱️ Adjust Night Sleep/Wake Window for this Report", expanded=False):
-                        st.caption("Drag the handles to customize your bedtime (start) and wake-up (end). Changes are permanently saved for this report:")
-                        adj_key = f"adj_night_range_{rep_id}"
-                        if adj_key not in st.session_state:
-                            st.session_state[adj_key] = (start_dt, end_dt)
+                        st.caption("Specify your bedtime (evening/night) and wake-up time (morning). Changes are permanently saved for this report:")
+                        
+                        col_t1, col_t2 = st.columns(2)
+                        with col_t1:
+                            in_bed = st.time_input("🌙 Bedtime (Start):", value=start_dt.time(), key=f"t_bed_{rep_id}")
+                        with col_t2:
+                            in_wake = st.time_input("☀️ Wake-up (End):", value=end_dt.time(), key=f"t_wake_{rep_id}")
 
-                        new_n_range = st.slider(
-                            "Sleep Window Range (Bedtime → Wake):",
-                            min_value=min_dt,
-                            max_value=max_dt,
-                            value=st.session_state[adj_key],
-                            format="MM-DD HH:mm",
-                            key=adj_key
-                        )
-                        new_n_start, new_n_end = new_n_range[0], new_n_range[1]
+                        # Calculate candidate start and end datetimes based on selected time
+                        # Wake time is on the last morning of the bugreport (end_dt's date or max_dt's date)
+                        wake_date = max_dt.date()
+                        new_cand_end = datetime.combine(wake_date, in_wake)
+                        # If bedtime hour is greater than wake-up hour (crosses midnight, e.g. 21:55 -> 07:22)
+                        if in_bed > in_wake:
+                            new_cand_start = datetime.combine(wake_date - pd.Timedelta(days=1), in_bed)
+                        else:
+                            new_cand_start = datetime.combine(wake_date, in_bed)
 
-                        if (new_n_start != start_dt or new_n_end != end_dt) and new_n_start < new_n_end:
-                            db.update_report_night_window(rep_id, new_n_start, new_n_end)
-                            active_report["custom_night_start"] = new_n_start
-                            active_report["custom_night_end"] = new_n_end
-                            st.session_state[night_key] = (new_n_start, new_n_end)
-                            st.session_state[f"m_night_{rep_id}"] = (new_n_start, new_n_end)
-                            st.session_state[adj_key] = (new_n_start, new_n_end)
-                            st.rerun()
+                        # Clamp to available dataset bounds
+                        new_cand_start = max(min_dt, min(max_dt, new_cand_start))
+                        new_cand_end = max(min_dt, min(max_dt, new_cand_end))
 
-                        if st.button("↺ Reset to Detected Window", key=f"rst_night_{rep_id}"):
-                            db.update_report_night_window(rep_id, None, None)
-                            active_report["custom_night_start"] = None
-                            active_report["custom_night_end"] = None
-                            st.session_state[night_key] = (auto_s_dt, auto_e_dt)
-                            st.session_state[f"m_night_{rep_id}"] = (auto_s_dt, auto_e_dt)
-                            st.session_state.pop(adj_key, None)
-                            st.session_state.pop(f"adj_s_{rep_id}", None)
-                            st.session_state.pop(f"adj_e_{rep_id}", None)
-                            st.rerun()
+                        btn_c1, btn_c2 = st.columns([1, 1])
+                        with btn_c1:
+                            if st.button("💾 Apply & Save Window", key=f"save_night_{rep_id}", type="primary"):
+                                if new_cand_start < new_cand_end:
+                                    db.update_report_night_window(rep_id, new_cand_start, new_cand_end)
+                                    active_report["custom_night_start"] = new_cand_start
+                                    active_report["custom_night_end"] = new_cand_end
+                                    st.session_state[night_key] = (new_cand_start, new_cand_end)
+                                    st.session_state[f"m_night_{rep_id}"] = (new_cand_start, new_cand_end)
+                                    st.rerun()
+                                else:
+                                    st.error("Bedtime must be earlier than Wake-up time.")
+                        with btn_c2:
+                            if st.button("↺ Reset to Detected Window", key=f"rst_night_{rep_id}"):
+                                db.update_report_night_window(rep_id, None, None)
+                                active_report["custom_night_start"] = None
+                                active_report["custom_night_end"] = None
+                                st.session_state[night_key] = (auto_s_dt, auto_e_dt)
+                                st.session_state[f"m_night_{rep_id}"] = (auto_s_dt, auto_e_dt)
+                                st.session_state.pop(f"t_bed_{rep_id}", None)
+                                st.session_state.pop(f"t_wake_{rep_id}", None)
+                                st.rerun()
         elif "Custom Window" in filter_mode_choice:
             filter_mode = "custom"
             with scope_col2:
@@ -2108,22 +2118,34 @@ elif st.session_state.active_tab == "merged":
                                 badge_txt = " *(Custom saved)*" if is_custom else ""
 
                                 st.markdown(f"**{r['custom_name']}** ({r['timestamp_str']}){badge_txt}")
-                                mc1, mc2 = st.columns([6, 1.2])
-                                
-                                m_adj_key = f"sl_m_range_{r['id']}"
-                                if m_adj_key not in st.session_state:
-                                    st.session_state[m_adj_key] = (cur_s, cur_e)
-
+                                mc1, mc2, mc3, mc4 = st.columns([2.5, 2.5, 1.5, 1.5])
                                 with mc1:
-                                    m_range = st.slider(
-                                        f"Sleep Window ({r['custom_name'][:14]}):",
-                                        min_value=r_min_dt,
-                                        max_value=r_max_dt,
-                                        value=st.session_state[m_adj_key],
-                                        format="MM-DD HH:mm",
-                                        key=m_adj_key
-                                    )
+                                    m_bed = st.time_input("🌙 Bedtime:", value=cur_s.time(), key=f"t_m_bed_{r['id']}")
                                 with mc2:
+                                    m_wake = st.time_input("☀️ Wake-up:", value=cur_e.time(), key=f"t_m_wake_{r['id']}")
+
+                                m_wake_date = r_max_dt.date()
+                                if m_bed > m_wake:
+                                    m_cand_s = datetime.combine(m_wake_date - pd.Timedelta(days=1), m_bed)
+                                else:
+                                    m_cand_s = datetime.combine(m_wake_date, m_bed)
+                                m_cand_e = datetime.combine(m_wake_date, m_wake)
+                                m_cand_s = max(r_min_dt, min(r_max_dt, m_cand_s))
+                                m_cand_e = max(r_min_dt, min(r_max_dt, m_cand_e))
+
+                                with mc3:
+                                    st.write("")
+                                    if st.button("💾 Apply", key=f"btn_save_m_{r['id']}", type="primary", help="Save sleep interval"):
+                                        if m_cand_s < m_cand_e:
+                                            db.update_report_night_window(r['id'], m_cand_s, m_cand_e)
+                                            r["custom_night_start"] = m_cand_s
+                                            r["custom_night_end"] = m_cand_e
+                                            st.session_state[r_ov_key] = (m_cand_s, m_cand_e)
+                                            st.session_state[f"night_bounds_{r['id']}"] = (m_cand_s, m_cand_e)
+                                            st.rerun()
+                                        else:
+                                            st.error("Invalid interval")
+                                with mc4:
                                     st.write("")
                                     if st.button("↺ Reset", key=f"btn_rst_m_{r['id']}", help="Reset to auto-detected preset"):
                                         db.update_report_night_window(r['id'], None, None)
@@ -2131,20 +2153,9 @@ elif st.session_state.active_tab == "merged":
                                         r["custom_night_end"] = None
                                         st.session_state[r_ov_key] = (r_auto_s, r_auto_e)
                                         st.session_state[f"night_bounds_{r['id']}"] = (r_auto_s, r_auto_e)
-                                        st.session_state.pop(m_adj_key, None)
-                                        st.session_state.pop(f"sl_ms_{r['id']}", None)
-                                        st.session_state.pop(f"sl_me_{r['id']}", None)
+                                        st.session_state.pop(f"t_m_bed_{r['id']}", None)
+                                        st.session_state.pop(f"t_m_wake_{r['id']}", None)
                                         st.rerun()
-
-                                ns, ne = m_range[0], m_range[1]
-                                if (ns != cur_s or ne != cur_e) and ns < ne:
-                                    db.update_report_night_window(r['id'], ns, ne)
-                                    r["custom_night_start"] = ns
-                                    r["custom_night_end"] = ne
-                                    st.session_state[r_ov_key] = (ns, ne)
-                                    st.session_state[f"night_bounds_{r['id']}"] = (ns, ne)
-                                    st.session_state[m_adj_key] = (ns, ne)
-                                    st.rerun()
             elif "Custom Window" in merged_filter_choice:
                 merged_filter_mode = "custom"
                 with m_scope_col2:
