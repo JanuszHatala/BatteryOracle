@@ -1706,6 +1706,19 @@ if st.session_state.active_tab == "single":
         else:
             min_dt = datetime(2026, 9, 1, 0, 0)
             max_dt = datetime(2026, 9, 1, 23, 59)
+
+        # Expand max_dt to include bugreport capture timestamp if present
+        cap_str = active_report.get("timestamp_str", "")
+        if cap_str:
+            cap_parts = re.split(r'[\s\-_:]+', cap_str.strip())
+            if len(cap_parts) >= 5:
+                sec_str = cap_parts[5] if len(cap_parts) >= 6 else '00'
+                try:
+                    cap_dt = pd.to_datetime(f"{cap_parts[0]}-{cap_parts[1]}-{cap_parts[2]} {cap_parts[3]}:{cap_parts[4]}:{sec_str}").to_pydatetime()
+                    if cap_dt > max_dt:
+                        max_dt = cap_dt
+                except Exception:
+                    pass
             
         start_dt, end_dt = min_dt, max_dt
         sliced_df = raw_hist_df
@@ -1714,7 +1727,7 @@ if st.session_state.active_tab == "single":
         if "Night Standby" in filter_mode_choice:
             filter_mode = "night"
             if has_history:
-                auto_s_dt, auto_e_dt = parser.get_latest_night_window(min_t, max_t, night_start_cfg, night_end_cfg)
+                auto_s_dt, auto_e_dt = parser.get_latest_night_window(min_dt, max_dt, night_start_cfg, night_end_cfg)
                 if hasattr(auto_s_dt, "to_pydatetime"):
                     auto_s_dt = auto_s_dt.to_pydatetime()
                 if hasattr(auto_e_dt, "to_pydatetime"):
@@ -1762,23 +1775,30 @@ if st.session_state.active_tab == "single":
                     with st.expander("⏱️ Adjust Night Sleep/Wake Window for this Report", expanded=False):
                         st.caption("Adjust the exact sleep boundary if your actual bedtime or wake-up differed from the default preset. Changes are permanently saved for this report:")
                         c_adj1, c_adj2 = st.columns(2)
+                        
+                        s_key = f"adj_s_{rep_id}"
+                        e_key = f"adj_e_{rep_id}"
+                        # Ensure slider value starts in sync with active start_dt / end_dt
+                        if s_key not in st.session_state:
+                            st.session_state[s_key] = start_dt
+                        if e_key not in st.session_state:
+                            st.session_state[e_key] = end_dt
+                            
                         with c_adj1:
                             new_n_start = st.slider(
                                 "Sleep Start:",
                                 min_value=min_dt,
                                 max_value=max_dt,
-                                value=start_dt,
                                 format="MM-DD HH:mm",
-                                key=f"adj_s_{rep_id}"
+                                key=s_key
                             )
                         with c_adj2:
                             new_n_end = st.slider(
                                 "Wake End:",
                                 min_value=min_dt,
                                 max_value=max_dt,
-                                value=end_dt,
                                 format="MM-DD HH:mm",
-                                key=f"adj_e_{rep_id}"
+                                key=e_key
                             )
                         if (new_n_start != start_dt or new_n_end != end_dt) and new_n_start < new_n_end:
                             db.update_report_night_window(rep_id, new_n_start, new_n_end)
@@ -1793,6 +1813,8 @@ if st.session_state.active_tab == "single":
                             active_report["custom_night_end"] = None
                             st.session_state[night_key] = (auto_s_dt, auto_e_dt)
                             st.session_state[f"m_night_{rep_id}"] = (auto_s_dt, auto_e_dt)
+                            st.session_state.pop(s_key, None)
+                            st.session_state.pop(e_key, None)
                             st.rerun()
         elif "Custom Window" in filter_mode_choice:
             filter_mode = "custom"
@@ -2052,8 +2074,21 @@ elif st.session_state.active_tab == "merged":
                                 r_max_t = df_h_r["Time"].max()
                                 r_min_dt = r_min_t.to_pydatetime() if hasattr(r_min_t, "to_pydatetime") else r_min_t
                                 r_max_dt = r_max_t.to_pydatetime() if hasattr(r_max_t, "to_pydatetime") else r_max_t
+
+                                # Expand r_max_dt to include bugreport capture timestamp if present
+                                r_cap_str = r.get("timestamp_str", "")
+                                if r_cap_str:
+                                    r_cap_parts = re.split(r'[\s\-_:]+', r_cap_str.strip())
+                                    if len(r_cap_parts) >= 5:
+                                        r_sec_str = r_cap_parts[5] if len(r_cap_parts) >= 6 else '00'
+                                        try:
+                                            r_cap_dt = pd.to_datetime(f"{r_cap_parts[0]}-{r_cap_parts[1]}-{r_cap_parts[2]} {r_cap_parts[3]}:{r_cap_parts[4]}:{r_sec_str}").to_pydatetime()
+                                            if r_cap_dt > r_max_dt:
+                                                r_max_dt = r_cap_dt
+                                        except Exception:
+                                            pass
                                 
-                                r_auto_s, r_auto_e = parser.get_latest_night_window(r_min_t, r_max_t, night_start_cfg, night_end_cfg)
+                                r_auto_s, r_auto_e = parser.get_latest_night_window(r_min_dt, r_max_dt, night_start_cfg, night_end_cfg)
                                 if hasattr(r_auto_s, "to_pydatetime"):
                                     r_auto_s = r_auto_s.to_pydatetime()
                                 if hasattr(r_auto_e, "to_pydatetime"):
@@ -2083,10 +2118,18 @@ elif st.session_state.active_tab == "merged":
 
                                 st.markdown(f"**{r['custom_name']}** ({r['timestamp_str']}){badge_txt}")
                                 mc1, mc2, mc3 = st.columns([3, 3, 1.2])
+                                
+                                m_s_key = f"sl_ms_{r['id']}"
+                                m_e_key = f"sl_me_{r['id']}"
+                                if m_s_key not in st.session_state:
+                                    st.session_state[m_s_key] = cur_s
+                                if m_e_key not in st.session_state:
+                                    st.session_state[m_e_key] = cur_e
+
                                 with mc1:
-                                    ns = st.slider(f"Start ({r['custom_name'][:10]}):", min_value=r_min_dt, max_value=r_max_dt, value=cur_s, format="MM-DD HH:mm", key=f"sl_ms_{r['id']}")
+                                    ns = st.slider(f"Start ({r['custom_name'][:10]}):", min_value=r_min_dt, max_value=r_max_dt, format="MM-DD HH:mm", key=m_s_key)
                                 with mc2:
-                                    ne = st.slider(f"End ({r['custom_name'][:10]}):", min_value=r_min_dt, max_value=r_max_dt, value=cur_e, format="MM-DD HH:mm", key=f"sl_me_{r['id']}")
+                                    ne = st.slider(f"End ({r['custom_name'][:10]}):", min_value=r_min_dt, max_value=r_max_dt, format="MM-DD HH:mm", key=m_e_key)
                                 with mc3:
                                     st.write("")
                                     if st.button("↺ Reset", key=f"btn_rst_m_{r['id']}", help="Reset to auto-detected preset"):
@@ -2095,6 +2138,8 @@ elif st.session_state.active_tab == "merged":
                                         r["custom_night_end"] = None
                                         st.session_state[r_ov_key] = (r_auto_s, r_auto_e)
                                         st.session_state[f"night_bounds_{r['id']}"] = (r_auto_s, r_auto_e)
+                                        st.session_state.pop(m_s_key, None)
+                                        st.session_state.pop(m_e_key, None)
                                         st.rerun()
                                 if (ns != cur_s or ne != cur_e) and ns < ne:
                                     db.update_report_night_window(r['id'], ns, ne)
