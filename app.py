@@ -387,7 +387,24 @@ def render_ai_error(error: Exception, action_description: str = "generating AI a
         with st.expander("🔍 View Raw Error Details & Technical Trace", expanded=False):
             st.code(diag["raw_error"], language="text")
 
-def render_ai_block(content_markdown: str, key_suffix: str = "default", gen_timestamp: str = None):
+def format_bugreport_timestamp(ts_str: str) -> str:
+    """Format bugreport timestamp string (e.g. '2026 09 20 07 27 35', ISO, or compact) into readable 'YYYY-MM-DD HH:MM:SS'."""
+    if not ts_str:
+        return ""
+    ts_clean = str(ts_str).strip()
+    if "→" in ts_clean or "…" in ts_clean:
+        return ts_clean
+    parts = re.split(r'[\s\-_:]+', ts_clean)
+    if len(parts) >= 5 and len(parts[0]) == 4 and parts[0].isdigit():
+        sec = parts[5] if len(parts) >= 6 and parts[5].isdigit() else "00"
+        return f"{parts[0]}-{parts[1].zfill(2)}-{parts[2].zfill(2)} {parts[3].zfill(2)}:{parts[4].zfill(2)}:{sec.zfill(2)}"
+    digits_match = re.search(r'(\d{4})(\d{2})(\d{2})_?(\d{2})(\d{2})(\d{2})?', ts_clean)
+    if digits_match:
+        y, m, d, hh, mm, ss = digits_match.groups()
+        return f"{y}-{m}-{d} {hh}:{mm}:{ss or '00'}"
+    return ts_clean.replace("T", " ")[:19]
+
+def render_ai_block(content_markdown: str, key_suffix: str = "default", gen_timestamp: str = None, bugreport_timestamp: str = None):
     """Renders AI markdown content inside a styled, border-contained block without breaking markdown syntax."""
     # Clean leading newline and raw HTML breaks if any to ensure clean table & heading rendering
     clean_md = parser.clean_markdown_breaks(content_markdown.strip()) if content_markdown else ""
@@ -396,9 +413,18 @@ def render_ai_block(content_markdown: str, key_suffix: str = "default", gen_time
             clean_ts = str(gen_timestamp).replace("T", " ")
             if len(clean_ts) > 19:
                 clean_ts = clean_ts[:19]
+            br_html = ""
+            if bugreport_timestamp:
+                clean_br_ts = format_bugreport_timestamp(bugreport_timestamp)
+                br_label = "Bugreports Generated" if ("→" in clean_br_ts or "…" in clean_br_ts or "," in clean_br_ts) else "Bugreport Generated"
+                br_html = f'<span style="margin-left: 8px; color: #94a3b8; font-size: 0.82rem;">[<strong>{br_label}:</strong> <code style="color: #c084fc; background: rgba(192, 132, 252, 0.12); padding: 2px 6px; border-radius: 4px; font-weight: 600;">{clean_br_ts}</code>]</span>'
+            
             st.markdown(
-                f'<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.85rem; padding: 6px 12px; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 6px; font-size: 0.85rem;">'
-                f'  <span style="color: #cbd5e1; font-weight: 500;">🕒 <strong>Report Generated:</strong> <code style="color: #38bdf8; background: rgba(56, 189, 248, 0.12); padding: 2px 6px; border-radius: 4px; font-weight: 600;">{clean_ts}</code></span>'
+                f'<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.85rem; padding: 6px 12px; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 6px; font-size: 0.85rem; flex-wrap: wrap; gap: 6px;">'
+                f'  <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">'
+                f'    <span style="color: #cbd5e1; font-weight: 500;">🕒 <strong>Report Generated:</strong> <code style="color: #38bdf8; background: rgba(56, 189, 248, 0.12); padding: 2px 6px; border-radius: 4px; font-weight: 600;">{clean_ts}</code></span>'
+                f'    {br_html}'
+                f'  </div>'
                 f'  <span class="ai-badge" style="margin: 0; font-size: 0.72rem; letter-spacing: 0.5px;">✨ AI GENERATED</span>'
                 f'</div>',
                 unsafe_allow_html=True
@@ -540,7 +566,9 @@ def build_single_report_markdown(report, filter_mode, kpis, diagnosis_text, gen_
     md.append(f"- **Analysis Scope:** `{filter_mode.upper()}`")
     if gen_timestamp:
         clean_ts = str(gen_timestamp).replace("T", " ")[:19]
-        md.append(f"- **AI Diagnosis Generated:** `{clean_ts}`")
+        clean_br_ts = format_bugreport_timestamp(report.get("timestamp_str", ""))
+        br_tag = f" [Bugreport Generated: `{clean_br_ts}`]" if clean_br_ts else ""
+        md.append(f"- **AI Diagnosis Generated:** `{clean_ts}`{br_tag}")
     md.append(f"- **Exported:** `{datetime.now().strftime('%Y-%m-%d %H:%M')}`\n")
     
     md.append("## 📊 Telemetry & Discharge Metrics")
@@ -573,7 +601,10 @@ def build_comparative_markdown(reports, filter_mode, analysis_text, gen_timestam
     md.append("# 🔀 Battery Oracle: Multi-Report Comparative Analysis\n")
     if gen_timestamp:
         clean_ts = str(gen_timestamp).replace("T", " ")[:19]
-        md.append(f"- **AI Analysis Generated:** `{clean_ts}`")
+        comp_br_dates = [format_bugreport_timestamp(r.get('timestamp_str', '')) for r in reports if r.get('timestamp_str')]
+        comp_br_str = f"{min(comp_br_dates)} → {max(comp_br_dates)}" if len(comp_br_dates) > 1 else (comp_br_dates[0] if comp_br_dates else "")
+        br_tag = f" [Bugreports Generated: `{comp_br_str}`]" if comp_br_str else ""
+        md.append(f"- **AI Analysis Generated:** `{clean_ts}`{br_tag}")
     md.append(f"- **Exported:** `{datetime.now().strftime('%Y-%m-%d %H:%M')}`")
     md.append(f"- **Compared Reports:** {len(reports)} sessions")
     md.append(f"- **Comparative Scope:** `{filter_mode.upper()}`\n")
@@ -2232,10 +2263,12 @@ if st.session_state.active_tab == "single":
                         key=f"dl_single_md_{rep_id}_{filter_mode}",
                         use_container_width=True
                     )
+            br_ts = format_bugreport_timestamp(active_report.get("timestamp_str", ""))
             with c_diag_status:
                 if active_diagnosis and diag_ts:
                     clean_ts = str(diag_ts).replace("T", " ")[:19]
-                    st.caption(f"🕒 **Report Generated:** `{clean_ts}` &nbsp;•&nbsp; **Scope:** {diag_subtitle}")
+                    br_tag = f" [Bugreport Generated: `{br_ts}`]" if br_ts else ""
+                    st.caption(f"🕒 **Report Generated:** `{clean_ts}`{br_tag} &nbsp;•&nbsp; **Scope:** {diag_subtitle}")
                 else:
                     st.caption(f"**Current Scope:** {diag_subtitle}")
                             
@@ -2245,12 +2278,12 @@ if st.session_state.active_tab == "single":
                 render_ai_error(err_obj, action_description=err_act, key_suffix=f"diag_{rep_id}")
 
             if active_diagnosis:
-                render_ai_block(active_diagnosis, key_suffix=f"single_{rep_id}_{filter_mode}", gen_timestamp=diag_ts)
+                render_ai_block(active_diagnosis, key_suffix=f"single_{rep_id}_{filter_mode}", gen_timestamp=diag_ts, bugreport_timestamp=br_ts)
             else:
                 st.info(f"💡 You have selected **{filter_mode_choice}** (Window: {kpis['start_time']} → {kpis['end_time']}, Drop: {kpis['drop_pct']}%, Rate: {kpis['rate_per_hr']:.2f}%/hr).\n\nClick **'{btn_label}'** above to generate an AI diagnosis focused strictly on standby drain, wakelocks, and unoptimized background processes for this window.")
                 with st.expander("📄 View Full Session Baseline Diagnosis for Reference", expanded=False):
                     base_ts = active_report.get("analysis_updated_at") or active_report.get("created_at") or active_report.get("timestamp_str", "")
-                    render_ai_block(active_report.get("initial_analysis", "No baseline analysis available."), key_suffix=f"single_base_{rep_id}", gen_timestamp=base_ts)
+                    render_ai_block(active_report.get("initial_analysis", "No baseline analysis available."), key_suffix=f"single_base_{rep_id}", gen_timestamp=base_ts, bugreport_timestamp=br_ts)
                     
             with st.expander("🔍 View Telemetry Snippet & Diagnostic Trace", expanded=False):
                 if active_report.get("reasoning_trace"):
@@ -2598,10 +2631,13 @@ elif st.session_state.active_tab == "merged":
                             key=f"dl_comp_md_{merged_filter_mode}",
                             use_container_width=True
                         )
+                comp_br_dates = [format_bugreport_timestamp(r.get('timestamp_str', '')) for r in compared_reports if r.get('timestamp_str')]
+                comp_br_str = f"{min(comp_br_dates)} → {max(comp_br_dates)}" if len(comp_br_dates) > 1 else (comp_br_dates[0] if comp_br_dates else "")
                 with c_comp_status:
                     if gen_timestamp and combined_text:
                         clean_ts = str(gen_timestamp).replace("T", " ")[:19]
-                        st.caption(f"🕒 **Report Generated:** `{clean_ts}` &nbsp;•&nbsp; 🎯 **Scope:** `{merged_filter_choice}`")
+                        br_tag = f" [Bugreports Generated: `{comp_br_str}`]" if comp_br_str else ""
+                        st.caption(f"🕒 **Report Generated:** `{clean_ts}`{br_tag} &nbsp;•&nbsp; 🎯 **Scope:** `{merged_filter_choice}`")
                     else:
                         st.caption(f"🎯 **Active Scope:** `{merged_filter_choice}` &nbsp;•&nbsp; Telemetry across {len(compared_reports)} sessions.")
                                 
@@ -2610,7 +2646,7 @@ elif st.session_state.active_tab == "merged":
                     render_ai_error(c_err_obj, action_description=c_err_act, key_suffix=f"comp_{merged_filter_mode}")
                     
                 if combined_text:
-                    render_ai_block(combined_text, key_suffix=f"comp_{merged_filter_mode}", gen_timestamp=gen_timestamp)
+                    render_ai_block(combined_text, key_suffix=f"comp_{merged_filter_mode}", gen_timestamp=gen_timestamp, bugreport_timestamp=comp_br_str)
                 else:
                     st.info(f"💡 No comparative evaluation generated yet for **{merged_filter_choice}**.\n\nClick **'{btn_comp_label}'** above to compare power draw, wakelocks, and battery regressions across the {len(compared_reports)} selected sessions.")
 
@@ -3311,12 +3347,15 @@ elif st.session_state.active_tab == "master":
                     )
             updated_ts = saved_synthesis.get('updated_at', '') if saved_synthesis else ""
             clean_synth_ts = str(updated_ts).replace("T", " ")[:19] if updated_ts else ""
+            all_br_dates = [format_bugreport_timestamp(r.get('timestamp_str', '')) for r in all_reports if r.get('timestamp_str')]
+            master_br_range = f"{min(all_br_dates)} → {max(all_br_dates)}" if len(all_br_dates) > 1 else (all_br_dates[0] if all_br_dates else "")
             
             with c_synth_act2:
                 if synthesis_text:
+                    br_hdr = f" [Bugreports Generated: `{master_br_range}`]" if master_br_range else ""
                     export_md = (
                         f"# 👑 Master Battery Experiment Synthesis\n"
-                        f"- **AI Analysis Generated:** `{clean_synth_ts}`\n"
+                        f"- **AI Analysis Generated:** `{clean_synth_ts}`{br_hdr}\n"
                         f"- **Exported:** `{datetime.now().strftime('%Y-%m-%d %H:%M')}`\n"
                         f"- **Covering:** {len(all_reports)} multi-day test runs\n\n"
                         f"---\n\n"
@@ -3332,7 +3371,8 @@ elif st.session_state.active_tab == "master":
                     )
             with c_synth_status:
                 if saved_synthesis and clean_synth_ts:
-                    st.caption(f"🕒 **Report Generated:** `{clean_synth_ts}` &nbsp;•&nbsp; Covering {len(all_reports)} multi-day test runs.")
+                    br_tag = f" [Bugreports Generated: `{master_br_range}`]" if master_br_range else ""
+                    st.caption(f"🕒 **Report Generated:** `{clean_synth_ts}`{br_tag} &nbsp;•&nbsp; Covering {len(all_reports)} multi-day test runs.")
                 else:
                     st.caption(f"🧪 **Synthesis Ready:** {len(all_reports)} bugreport test runs ready for multi-day retrospective.")
 
@@ -3342,7 +3382,7 @@ elif st.session_state.active_tab == "master":
                     
             if synthesis_text:
                 st.markdown('### ✨ Master Retrospective Blueprint <span class="ai-badge">✨ AI GENERATED</span>', unsafe_allow_html=True)
-                render_ai_block(synthesis_text, key_suffix="master_synthesis", gen_timestamp=clean_synth_ts)
+                render_ai_block(synthesis_text, key_suffix="master_synthesis", gen_timestamp=clean_synth_ts, bugreport_timestamp=master_br_range)
             else:
                 st.info("Click **'✨ Synthesize Grand Master Experiment'** above to generate the overarching retrospective across all sessions.")
 
