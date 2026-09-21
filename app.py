@@ -1683,8 +1683,17 @@ def render_wifi_routers_management_ui():
                 with st.spinner(f"Querying AI knowledge base for {new_brand} {new_model} technical specs & firmware UI..."):
                     discovered_specs, disc_err = llm_manager.discover_router_specs(new_brand.strip(), new_model.strip())
                     if disc_err:
-                        st.warning(f"Note: AI generated baseline specs ({disc_err})")
+                        st.session_state["err_new_router_disc"] = disc_err
+                    else:
+                        st.session_state.pop("err_new_router_disc", None)
                     st.session_state["discovered_router_specs"] = discovered_specs
+
+        if st.session_state.get("err_new_router_disc"):
+            render_ai_error(
+                Exception(st.session_state["err_new_router_disc"]),
+                action_description=f"auto-discovering specifications for {new_brand} {new_model}",
+                key_suffix="new_router_disc"
+            )
 
         # If specs exist in session state, display editable preview
         specs_to_save = st.session_state.get("discovered_router_specs")
@@ -1804,21 +1813,26 @@ def render_wifi_routers_management_ui():
                 with e_c_btn1:
                     if st.button("🔍 Refresh Specs with AI", key=f"btn_refresh_specs_{r['id']}"):
                         with st.spinner(f"Discovering specs for {e_brand} {e_model}..."):
-                            new_disc, _ = llm_manager.discover_router_specs(e_brand, e_model)
-                            db.save_wifi_router(
-                                router_id=r["id"],
-                                router_name=e_name.strip(),
-                                brand=e_brand.strip(),
-                                model=e_model.strip(),
-                                specs_json=new_disc,
-                                location_tag=e_loc.strip(),
-                                is_active=1 if is_act else 0,
-                                notes=e_notes.strip()
-                            )
-                            st.success("Refreshed specs with AI!")
-                            st.rerun()
+                            new_disc, disc_err = llm_manager.discover_router_specs(e_brand, e_model)
+                            if disc_err:
+                                st.session_state[f"err_router_{r['id']}"] = disc_err
+                            else:
+                                st.session_state.pop(f"err_router_{r['id']}", None)
+                                db.save_wifi_router(
+                                    router_id=r["id"],
+                                    router_name=e_name.strip(),
+                                    brand=e_brand.strip(),
+                                    model=e_model.strip(),
+                                    specs_json=new_disc,
+                                    location_tag=e_loc.strip(),
+                                    is_active=1 if is_act else 0,
+                                    notes=e_notes.strip()
+                                )
+                                st.success("Refreshed specs with AI!")
+                                st.rerun()
                 with e_c_btn2:
                     if st.button("Save Profile Edits", key=f"btn_save_edits_{r['id']}", type="primary"):
+                        st.session_state.pop(f"err_router_{r['id']}", None)
                         db.save_wifi_router(
                             router_id=r["id"],
                             router_name=e_name.strip(),
@@ -1831,6 +1845,13 @@ def render_wifi_routers_management_ui():
                         )
                         st.success("Router profile updated!")
                         st.rerun()
+
+                if st.session_state.get(f"err_router_{r['id']}"):
+                    render_ai_error(
+                        Exception(st.session_state[f"err_router_{r['id']}"]),
+                        action_description=f"refreshing specifications for {e_brand} {e_model}",
+                        key_suffix=f"router_refresh_{r['id']}"
+                    )
 
 # ==============================================================================
 # VIEW 1: SINGLE REPORT VIEW
