@@ -934,6 +934,33 @@ def parse_device_inventory(text):
             restrict_background_data = True
             break
 
+    # 3b. AppOps Location & Explicitly Restricted Apps (from modern/enhanced inventory scripts)
+    location_lines = sections.get("APPOPS LOCATION PERMISSIONS", [])
+    appops_location_allowed = []
+    for l in location_lines:
+        l_str = l.strip()
+        if any(l_str.startswith(pfx) for pfx in ["com.", "io.", "org.", "pl.", "net.", "de.", "nl.", "cz.", "wit.", "ai.", "co."]):
+            friendly = get_friendly_label(l_str)
+            if not any(x["package"] == l_str for x in appops_location_allowed):
+                appops_location_allowed.append({
+                    "package": l_str,
+                    "friendly": friendly,
+                    "is_disabled": l_str in disabled_packages
+                })
+
+    restricted_lines = sections.get("APPOPS RESTRICTED APPS", [])
+    appops_restricted = []
+    for l in restricted_lines:
+        l_str = l.strip()
+        if any(l_str.startswith(pfx) for pfx in ["com.", "io.", "org.", "pl.", "net.", "de.", "nl.", "cz.", "wit.", "ai.", "co."]):
+            friendly = get_friendly_label(l_str)
+            if not any(x["package"] == l_str for x in appops_restricted):
+                appops_restricted.append({
+                    "package": l_str,
+                    "friendly": friendly,
+                    "is_disabled": l_str in disabled_packages
+                })
+
     # 4. Critical Radio & Standby Settings
     wifi_scan = global_settings.get("wifi_scan_always_enabled", "0")
     ble_scan = global_settings.get("ble_scan_always_enabled", "0")
@@ -1015,6 +1042,8 @@ def parse_device_inventory(text):
         "disabled_packages": list(disabled_packages),
         "appops_allowed": appops_allowed,
         "appops_wakelock_allowed": appops_wakelock_allowed,
+        "appops_location_allowed": appops_location_allowed,
+        "appops_restricted": appops_restricted,
         "restrict_background_data": restrict_background_data,
         "key_settings": {
             "wifi_scan_always_enabled": wifi_scan,
@@ -1074,6 +1103,13 @@ def get_inventory_summary_for_llm(parsed_profile):
     # Preferred network
     pref_net = glob_set.get("preferred_network_mode", "Unknown")
 
+    # App battery restrictions & location permissions
+    restricted_apps = parsed_profile.get("appops_restricted", [])
+    location_apps = parsed_profile.get("appops_location_allowed", [])
+
+    restr_str = ", ".join([f"{a['friendly']} ({a['package']})" for a in restricted_apps]) if restricted_apps else "None explicitly marked"
+    loc_str = ", ".join([f"{a['friendly']} ({a['package']})" for a in location_apps[:12]]) if location_apps else "Standard system/user permissions"
+
     lines = [
         "=== 📱 ACTIVE DEVICE CONFIGURATION & AUDITED SETTINGS (GROUND TRUTH FROM LATEST DEVICE PROFILE) ===",
         f"• Device: {parsed_profile.get('device_model', 'Unknown')} | OS Build: {parsed_profile.get('os_build', 'Unknown')} (Android {parsed_profile.get('android_version', '?')})",
@@ -1082,6 +1118,8 @@ def get_inventory_summary_for_llm(parsed_profile):
             ", ".join([a["friendly"] for a in parsed_profile.get("appops_allowed", []) if not a.get("is_disabled")])
             if [a for a in parsed_profile.get("appops_allowed", []) if not a.get("is_disabled")] else "Default restricted (All user apps restricted)"
         ),
+        f"• Apps ALREADY Explicitly Restricted in Settings/AppOps (RUN_IN_BACKGROUND IGNORED): {restr_str}",
+        f"• Apps with Active Location Access (FINE/COARSE LOCATION): {loc_str}",
         f"• Radio & Scanning Settings (ALREADY CONFIGURED ON DEVICE):",
         f"   - Wi-Fi Always-Scan: {'ENABLED ⚠️' if wifi_scan_val == '1' else 'DISABLED (Off) ✅'}",
         f"   - Bluetooth (BLE) Always-Scan: {'ENABLED ⚠️' if ble_scan_val == '1' else 'DISABLED (Off) ✅'}",
@@ -1094,6 +1132,37 @@ def get_inventory_summary_for_llm(parsed_profile):
         f"   - Screen Timeout: {screen_to_sec}s",
         "================================================================================================="
     ]
+    return "\n".join(lines)
+
+
+def format_router_context_for_llm(active_routers):
+    """Format active WiFi router profiles into an executive hardware context block for LLM prompts."""
+    if not active_routers:
+        return ""
+    
+    lines = [
+        "=== 📡 KNOWN WIFI ROUTER ENVIRONMENT (USER NETWORK CONFIGURATION) ===",
+        "The user has registered the following specific WiFi router(s) in their environment. When Wi-Fi standby energy, DTIM intervals, beacon wakeups, or AP power management are relevant, refer directly to this hardware and explain how to apply optimizations in that manufacturer's firmware interface:"
+    ]
+    
+    for idx, r in enumerate(active_routers, 1):
+        specs = r.get("specs", {})
+        dtim_info = specs.get("dtim_support", "Configurable (Typical default: 1; Recommended: 3 for lower standby wakeups)")
+        twt_info = specs.get("twt_support", "Wi-Fi 6 Target Wake Time supported")
+        fw_path = specs.get("firmware_path", "Wireless > Advanced / Professional settings")
+        wifi_gen = specs.get("wifi_generation", "Wi-Fi 6 (802.11ax)")
+        
+        lines.append(f"\n[Router {idx}: {r['router_name']} ({r['brand']} {r['model']}) - Location: {r.get('location_tag', 'Home')}]")
+        lines.append(f"• Hardware & Standard: {r['brand']} {r['model']} | {wifi_gen}")
+        lines.append(f"• Firmware OS Family: {specs.get('firmware_family', 'Vendor Default')}")
+        lines.append(f"• DTIM Tuning Capability: {dtim_info}")
+        lines.append(f"• Target Wake Time (TWT): {twt_info}")
+        lines.append(f"• Band Steering / Roaming: {specs.get('band_steering', 'Supported')}")
+        lines.append(f"• Firmware Navigation Path for Power Tuning: `{fw_path}`")
+        if r.get("notes"):
+            lines.append(f"• User Environment Notes: {r['notes']}")
+            
+    lines.append("===================================================================\n")
     return "\n".join(lines)
 
 def compute_profile_diff(prof_a, prof_b):
