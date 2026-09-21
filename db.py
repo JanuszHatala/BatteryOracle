@@ -35,13 +35,15 @@ def init_db():
         )
     """)
 
-    # Safe migrations for reports if custom night window columns are missing
+    # Safe migrations for reports if custom night window or analysis_updated_at columns are missing
     cursor.execute("PRAGMA table_info(reports)")
     r_cols = [col["name"] for col in cursor.fetchall()]
     if "custom_night_start" not in r_cols:
         cursor.execute("ALTER TABLE reports ADD COLUMN custom_night_start TEXT DEFAULT NULL")
     if "custom_night_end" not in r_cols:
         cursor.execute("ALTER TABLE reports ADD COLUMN custom_night_end TEXT DEFAULT NULL")
+    if "analysis_updated_at" not in r_cols:
+        cursor.execute("ALTER TABLE reports ADD COLUMN analysis_updated_at TEXT DEFAULT NULL")
     
     # 2. Chat Threads table
     cursor.execute("""
@@ -128,10 +130,16 @@ def init_db():
             parsed_json TEXT NOT NULL,
             ai_analysis TEXT DEFAULT '',
             ai_analysis_trace TEXT DEFAULT '',
+            ai_analysis_updated_at TEXT DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    cursor.execute("PRAGMA table_info(device_profiles)")
+    p_cols = [col["name"] for col in cursor.fetchall()]
+    if "ai_analysis_updated_at" not in p_cols:
+        cursor.execute("ALTER TABLE device_profiles ADD COLUMN ai_analysis_updated_at TEXT DEFAULT NULL")
 
     # 8. WiFi Routers table
     cursor.execute("""
@@ -155,21 +163,22 @@ def init_db():
 # --- Report CRUD ---
 
 def save_report(file_hash, filename, custom_name, description, timestamp_str, device_info,
-                summary_text, chart_df, history_df, initial_analysis, reasoning_trace=""):
+                summary_text, chart_df, history_df, initial_analysis, reasoning_trace="", analysis_updated_at=None):
     conn = get_connection()
     cursor = conn.cursor()
     
     chart_json = chart_df.to_json(orient='split') if chart_df is not None and not chart_df.empty else "{}"
     hist_json = history_df.to_json(orient='split', date_format='iso') if history_df is not None and not history_df.empty else "{}"
-    
+    now_str = analysis_updated_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     cursor.execute("""
         INSERT INTO reports (
             file_hash, filename, custom_name, description, timestamp_str, device_info,
-            summary_text, chart_data_json, history_data_json, initial_analysis, reasoning_trace
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            summary_text, chart_data_json, history_data_json, initial_analysis, reasoning_trace, analysis_updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         file_hash, filename, custom_name, description, timestamp_str, device_info,
-        summary_text, chart_json, hist_json, initial_analysis, reasoning_trace
+        summary_text, chart_json, hist_json, initial_analysis, reasoning_trace, now_str
     ))
     
     report_id = cursor.lastrowid
@@ -221,7 +230,7 @@ def get_all_reports_summary():
     cursor = conn.cursor()
     cursor.execute("""
         SELECT id, file_hash, filename, custom_name, description, timestamp_str, 
-               device_info, created_at, custom_night_start, custom_night_end 
+               device_info, created_at, analysis_updated_at, custom_night_start, custom_night_end 
         FROM reports 
         ORDER BY created_at DESC
     """)
@@ -264,14 +273,15 @@ def update_report_night_window(report_id, start_dt, end_dt):
     conn.close()
     invalidate_report_cache(report_id)
 
-def update_report_analysis(report_id, analysis_text, reasoning_trace=""):
+def update_report_analysis(report_id, analysis_text, reasoning_trace="", updated_at=None):
     conn = get_connection()
     cursor = conn.cursor()
+    now_str = updated_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor.execute("""
         UPDATE reports 
-        SET initial_analysis = ?, reasoning_trace = ? 
+        SET initial_analysis = ?, reasoning_trace = ?, analysis_updated_at = ?
         WHERE id = ?
-    """, (analysis_text, reasoning_trace, report_id))
+    """, (analysis_text, reasoning_trace, now_str, report_id))
     conn.commit()
     conn.close()
     invalidate_report_cache(report_id)
@@ -802,9 +812,9 @@ def update_device_profile_analysis(profile_id, analysis_text, reasoning_trace=""
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor.execute("""
         UPDATE device_profiles
-        SET ai_analysis = ?, ai_analysis_trace = ?, updated_at = ?
+        SET ai_analysis = ?, ai_analysis_trace = ?, ai_analysis_updated_at = ?, updated_at = ?
         WHERE id = ?
-    """, (analysis_text, reasoning_trace, now_str, profile_id))
+    """, (analysis_text, reasoning_trace, now_str, now_str, profile_id))
     conn.commit()
     conn.close()
 
@@ -966,5 +976,8 @@ def _deserialize_report(report_dict):
             report_dict["custom_night_end"] = None
     else:
         report_dict["custom_night_end"] = None
+
+    if not report_dict.get("analysis_updated_at"):
+        report_dict["analysis_updated_at"] = report_dict.get("created_at") or report_dict.get("timestamp_str") or ""
 
     return report_dict
