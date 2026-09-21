@@ -959,6 +959,10 @@ def execute_ai_action(action_type: str, payload: dict, progress_bar, status_box,
         profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
         if profile_summary:
             filtered_telemetry = f"{profile_summary}\n\n{filtered_telemetry}"
+        active_routers = db.get_active_wifi_routers()
+        router_summary = parser.format_router_context_for_llm(active_routers)
+        if router_summary:
+            filtered_telemetry = f"{router_summary}\n\n{filtered_telemetry}"
 
         progress_bar.progress(40, text="📝 Assembling diagnostic prompt & context...")
         status_box.info("Injecting device profile, AppOps & power metrics...")
@@ -1013,6 +1017,10 @@ def execute_ai_action(action_type: str, payload: dict, progress_bar, status_box,
         profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
         if profile_summary:
             reports_summary_text = f"{profile_summary}\n\n{reports_summary_text}"
+        active_routers = db.get_active_wifi_routers()
+        router_summary = parser.format_router_context_for_llm(active_routers)
+        if router_summary:
+            reports_summary_text = f"{router_summary}\n\n{reports_summary_text}"
 
         progress_bar.progress(40, text="📝 Building comparative synthesis prompt...")
         status_box.info("Structuring cross-report power differentials...")
@@ -1046,6 +1054,10 @@ def execute_ai_action(action_type: str, payload: dict, progress_bar, status_box,
             raise ValueError(f"Profile ID {payload['profile_id']} not found in database.")
         p_data = profile.get("parsed_data", {})
         profile_telemetry_str = parser.get_inventory_summary_for_llm(p_data)
+        active_routers = db.get_active_wifi_routers()
+        router_summary = parser.format_router_context_for_llm(active_routers)
+        if router_summary:
+            profile_telemetry_str = f"{router_summary}\n\n{profile_telemetry_str}"
 
         progress_bar.progress(45, text="📝 Assembling audit prompt...")
         status_box.info("Structuring AppOps anomalies and Doze configuration...")
@@ -1121,6 +1133,10 @@ def execute_ai_action(action_type: str, payload: dict, progress_bar, status_box,
         profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
         if profile_summary:
             chronicle.append(profile_summary + "\n")
+        active_routers = db.get_active_wifi_routers()
+        router_summary = parser.format_router_context_for_llm(active_routers)
+        if router_summary:
+            chronicle.append(router_summary + "\n")
 
         n_s = payload.get("night_start_cfg", 23)
         n_e = payload.get("night_end_cfg", 7)
@@ -1624,6 +1640,198 @@ else:
 # Reload fresh report list
 all_reports = db.get_all_reports()
 
+def render_wifi_routers_management_ui():
+    """Render the WiFi router environment management interface with AI specs discovery."""
+    st.markdown("### 📡 Registered WiFi Routers & Network Access Points")
+    st.caption("Register the WiFi routers and access points your phone operates around (home, office, travel). Oracle uses AI to discover your exact hardware's power-saving capabilities (DTIM interval support, 802.11ax Target Wake Time, Band Steering) and firmware navigation paths, injecting them directly into all diagnostic reports and consultation chats.")
+
+    routers = db.get_all_wifi_routers()
+    active_count = sum(1 for r in routers if r.get("is_active", 1))
+
+    c_m1, c_m2, _ = st.columns([2, 2, 4])
+    c_m1.metric("Total Routers", len(routers))
+    c_m2.metric("Active in AI Context", active_count)
+
+    # Add new router expander
+    with st.expander("➕ Register New WiFi Router Profile", expanded=(len(routers) == 0)):
+        st.markdown("##### Add Router & Auto-Discover Technical Specifications")
+        c_r1, c_r2, c_r3 = st.columns([2, 2, 2])
+        with c_r1:
+            new_r_name = st.text_input("Router / Profile Name *", placeholder="e.g. Home Asus Main Router", key="new_r_name_input")
+        with c_r2:
+            new_brand = st.text_input("Brand / Manufacturer *", placeholder="e.g. Asus, TP-Link, AVM, Netgear, UniFi", key="new_brand_input")
+        with c_r3:
+            new_model = st.text_input("Model Number *", placeholder="e.g. RT-AX88U Pro, Archer AX55, FRITZ!Box 7590 AX", key="new_model_input")
+
+        c_r4, c_r5 = st.columns([2, 4])
+        with c_r4:
+            new_loc = st.text_input("Location Tag", value="Home", placeholder="e.g. Home, Office, Bedroom", key="new_loc_input")
+        with c_r5:
+            new_notes = st.text_input("Notes / Environment Details (Optional)", placeholder="e.g. Connected on 5GHz, dual-band Smart Connect enabled", key="new_notes_input")
+
+        # Discovery action button
+        c_disc1, c_disc2 = st.columns([2.5, 3.5], vertical_alignment="center")
+        with c_disc1:
+            btn_discover = st.button("🔍 Auto-Discover Specs with AI", key="btn_discover_router_specs", type="secondary", use_container_width=True)
+        with c_disc2:
+            st.caption("AI analyzes official hardware datasheets and admin UI navigation for this exact model.")
+
+        if btn_discover:
+            if not new_brand.strip() or not new_model.strip():
+                st.error("Please provide both Brand and Model before running AI discovery.")
+            else:
+                with st.spinner(f"Querying AI knowledge base for {new_brand} {new_model} technical specs & firmware UI..."):
+                    discovered_specs, disc_err = llm_manager.discover_router_specs(new_brand.strip(), new_model.strip())
+                    if disc_err:
+                        st.warning(f"Note: AI generated baseline specs ({disc_err})")
+                    st.session_state["discovered_router_specs"] = discovered_specs
+
+        # If specs exist in session state, display editable preview
+        specs_to_save = st.session_state.get("discovered_router_specs")
+        if specs_to_save:
+            st.markdown("###### Discovered Hardware Specifications & Firmware Navigation")
+            with st.container(border=True):
+                col_sp1, col_sp2 = st.columns(2)
+                with col_sp1:
+                    edit_gen = st.text_input("Wi-Fi Generation", value=specs_to_save.get("wifi_generation", "Wi-Fi 6 (802.11ax)"), key="edit_disc_gen")
+                    edit_dtim = st.text_input("DTIM Interval Support", value=specs_to_save.get("dtim_support", "Configurable"), key="edit_disc_dtim")
+                    edit_fw = st.text_input("Firmware Family", value=specs_to_save.get("firmware_family", f"{new_brand} Firmware"), key="edit_disc_fw")
+                with col_sp2:
+                    edit_twt = st.text_input("Target Wake Time (TWT)", value=specs_to_save.get("twt_support", "Supported"), key="edit_disc_twt")
+                    edit_band = st.text_input("Band Steering / Smart Connect", value=specs_to_save.get("band_steering", "Supported"), key="edit_disc_band")
+                    edit_path = st.text_input("Firmware Path to Settings", value=specs_to_save.get("firmware_path", "Wireless > Professional"), key="edit_disc_path")
+                
+                edit_sum = st.text_area("Power Efficiency Summary", value=specs_to_save.get("summary", ""), height=70, key="edit_disc_sum")
+                
+                specs_to_save = {
+                    "wifi_generation": edit_gen,
+                    "firmware_family": edit_fw,
+                    "dtim_support": edit_dtim,
+                    "twt_support": edit_twt,
+                    "band_steering": edit_band,
+                    "firmware_path": edit_path,
+                    "summary": edit_sum
+                }
+
+        c_save, _ = st.columns([2, 4])
+        with c_save:
+            if st.button("💾 Save Router Profile", key="btn_save_new_router", type="primary", use_container_width=True):
+                if not new_r_name.strip() or not new_brand.strip() or not new_model.strip():
+                    st.error("Please fill in Router Name, Brand, and Model.")
+                else:
+                    final_specs = specs_to_save if specs_to_save else {
+                        "wifi_generation": "Wi-Fi 6 (802.11ax)",
+                        "firmware_family": f"{new_brand.strip()} Firmware",
+                        "dtim_support": "Configurable (Recommended: DTIM Interval = 3)",
+                        "twt_support": "Supported if 802.11ax",
+                        "band_steering": "Smart Connect / Band Steering",
+                        "firmware_path": "Wireless > Advanced / Professional Settings",
+                        "summary": f"{new_brand.strip()} {new_model.strip()} wireless network."
+                    }
+                    db.save_wifi_router(
+                        router_name=new_r_name.strip(),
+                        brand=new_brand.strip(),
+                        model=new_model.strip(),
+                        specs_json=final_specs,
+                        location_tag=new_loc.strip() or "Home",
+                        is_active=1,
+                        notes=new_notes.strip()
+                    )
+                    st.session_state.pop("discovered_router_specs", None)
+                    st.success(f"Router '{new_r_name.strip()}' saved successfully!")
+                    st.rerun()
+
+    st.divider()
+
+    # Router list
+    if not routers:
+        st.info("No WiFi routers registered yet. Add your router above so Oracle can personalize battery diagnoses with your exact network hardware!")
+        return
+
+    st.markdown(f"#### 📋 Registered Routers ({len(routers)})")
+    for r in routers:
+        specs = r.get("specs", {})
+        is_act = bool(r.get("is_active", 1))
+        with st.container(border=True):
+            head_col1, head_col2, head_col3 = st.columns([5, 2.5, 1.2], vertical_alignment="center")
+            with head_col1:
+                active_badge = "🟢 **Active in AI Context**" if is_act else "⚪ **Inactive (Ignored by AI)**"
+                st.markdown(f"##### 📡 {r['router_name']} &nbsp;•&nbsp; {active_badge}")
+                st.caption(f"**Hardware:** {r['brand']} {r['model']} &nbsp;|&nbsp; 📍 **Location:** `{r.get('location_tag', 'Home')}` &nbsp;|&nbsp; 🕒 **Updated:** `{r.get('updated_at', '')[:16]}`")
+            with head_col2:
+                new_act = st.checkbox("Active for AI Reports", value=is_act, key=f"chk_act_router_{r['id']}")
+                if new_act != is_act:
+                    db.update_wifi_router_active(r["id"], new_act)
+                    st.rerun()
+            with head_col3:
+                with st.popover("🗑️ Delete", use_container_width=True):
+                    st.warning(f"Delete router '{r['router_name']}'?")
+                    if st.button("Confirm Delete", key=f"btn_del_router_{r['id']}", type="primary", use_container_width=True):
+                        db.delete_wifi_router(r["id"])
+                        st.rerun()
+
+            # Spec Badges / KPIs
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("📶 Standard", specs.get("wifi_generation", "Wi-Fi 6"))
+            k2.metric("⚙️ Firmware OS", specs.get("firmware_family", "Vendor Default"))
+            dtim_val = specs.get("dtim_support", "Configurable")
+            k3.metric("⏱️ DTIM Interval", dtim_val[:22] + "..." if len(dtim_val) > 22 else dtim_val)
+            twt_val = specs.get("twt_support", "Supported")
+            k4.metric("🎯 Target Wake Time", twt_val[:22] + "..." if len(twt_val) > 22 else twt_val)
+
+            st.markdown(f"🧭 **Firmware Navigation Path for Power Tuning:** `{specs.get('firmware_path', 'Wireless > Advanced')}`")
+            if specs.get("summary"):
+                st.caption(f"💡 **AI Hardware Analysis:** {specs['summary']}")
+            if r.get("notes"):
+                st.info(f"📝 **Environment Notes:** {r['notes']}")
+
+            with st.expander("✏️ Edit Details & Re-Run AI Discovery", expanded=False):
+                e_c1, e_c2, e_c3 = st.columns([2, 2, 2])
+                with e_c1:
+                    e_name = st.text_input("Router Name:", value=r["router_name"], key=f"e_name_{r['id']}")
+                with e_c2:
+                    e_brand = st.text_input("Brand:", value=r["brand"], key=f"e_brand_{r['id']}")
+                with e_c3:
+                    e_model = st.text_input("Model:", value=r["model"], key=f"e_model_{r['id']}")
+
+                e_c4, e_c5 = st.columns([2, 4])
+                with e_c4:
+                    e_loc = st.text_input("Location:", value=r.get("location_tag", "Home"), key=f"e_loc_{r['id']}")
+                with e_c5:
+                    e_notes = st.text_input("Notes:", value=r.get("notes", ""), key=f"e_notes_{r['id']}")
+
+                e_c_btn1, e_c_btn2 = st.columns([2.5, 3.5])
+                with e_c_btn1:
+                    if st.button("🔍 Refresh Specs with AI", key=f"btn_refresh_specs_{r['id']}"):
+                        with st.spinner(f"Discovering specs for {e_brand} {e_model}..."):
+                            new_disc, _ = llm_manager.discover_router_specs(e_brand, e_model)
+                            db.save_wifi_router(
+                                router_id=r["id"],
+                                router_name=e_name.strip(),
+                                brand=e_brand.strip(),
+                                model=e_model.strip(),
+                                specs_json=new_disc,
+                                location_tag=e_loc.strip(),
+                                is_active=1 if is_act else 0,
+                                notes=e_notes.strip()
+                            )
+                            st.success("Refreshed specs with AI!")
+                            st.rerun()
+                with e_c_btn2:
+                    if st.button("Save Profile Edits", key=f"btn_save_edits_{r['id']}", type="primary"):
+                        db.save_wifi_router(
+                            router_id=r["id"],
+                            router_name=e_name.strip(),
+                            brand=e_brand.strip(),
+                            model=e_model.strip(),
+                            specs_json=specs,
+                            location_tag=e_loc.strip(),
+                            is_active=1 if is_act else 0,
+                            notes=e_notes.strip()
+                        )
+                        st.success("Router profile updated!")
+                        st.rerun()
+
 # ==============================================================================
 # VIEW 1: SINGLE REPORT VIEW
 # ==============================================================================
@@ -2005,6 +2213,10 @@ if st.session_state.active_tab == "single":
                 profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
                 if profile_summary:
                     filtered_telemetry = f"{profile_summary}\n\n{filtered_telemetry}"
+                active_routers = db.get_active_wifi_routers()
+                router_summary = parser.format_router_context_for_llm(active_routers)
+                if router_summary:
+                    filtered_telemetry = f"{router_summary}\n\n{filtered_telemetry}"
 
                 chat_tmpl = llm_manager.get_prompt_template("chat_assistant")
                 return chat_tmpl.format(
@@ -2356,6 +2568,10 @@ elif st.session_state.active_tab == "merged":
                     profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
                     if profile_summary:
                         context_prompt += f"\n{profile_summary}\n"
+                    active_routers = db.get_active_wifi_routers()
+                    router_summary = parser.format_router_context_for_llm(active_routers)
+                    if router_summary:
+                        context_prompt += f"\n{router_summary}\n"
 
                     for r in compared_reports:
                         r_s, r_e, _ = get_effective_bounds(r, merged_filter_mode)
@@ -2413,6 +2629,15 @@ cmd appops query-op --user 0 RUN_ANY_IN_BACKGROUND allow
 
 echo -e '\\n=== APPOPS WAKELOCK EXEMPTIONS ==='
 cmd appops query-op --user 0 WAKE_LOCK allow
+
+echo -e '\\n=== APPOPS RESTRICTED APPS ==='
+cmd appops query-op --user 0 RUN_IN_BACKGROUND ignore
+cmd appops query-op --user 0 RUN_ANY_IN_BACKGROUND ignore
+
+echo -e '\\n=== APPOPS LOCATION PERMISSIONS ==='
+cmd appops query-op --user 0 FINE_LOCATION allow
+cmd appops query-op --user 0 COARSE_LOCATION allow
+cmd appops query-op --user 0 MONITOR_LOCATION allow
 
 echo -e '\\n=== DISABLED PACKAGES ==='
 pm list packages -d
@@ -2550,9 +2775,10 @@ settings get secure location_providers_allowed
 
             st.divider()
 
-            # Two dedicated top-level tabs: Configuration Audit & System Environment vs Full-Screen Consultation Chat
-            tab_prof_audit, tab_prof_chat = st.tabs([
+            # Three dedicated top-level tabs: Configuration Audit & System Environment, WiFi Router Environment, and Consultation Chat
+            tab_prof_audit, tab_prof_routers, tab_prof_chat = st.tabs([
                 "🛡️ Configuration Audit & System Environment",
+                "📡 WiFi Router Environment ✨",
                 "💬 Configuration & Doze Consultation Chat ✨"
             ])
 
@@ -2686,9 +2912,11 @@ settings get secure location_providers_allowed
                 st.divider()
 
                 # 4. Detailed Drill-downs: Doze Whitelists, App Standby & Raw Key-Value Explorer
+                n_allowed = len(p_data.get('appops_allowed', []))
+                n_restricted = len(p_data.get('appops_restricted', []))
                 tab_doze, tab_appops, tab_kv = st.tabs([
                     f"🛡️ Doze Whitelist ({len(p_data.get('user_whitelisted', []))} User Apps)",
-                    f"⚡ AppOps Run-in-Background ({len(p_data.get('appops_allowed', []))})",
+                    f"⚡ AppOps & Battery Restrictions ({n_allowed} allowed, {n_restricted} restricted)",
                     f"🔍 System Settings Explorer ({p_data.get('raw_counts', {}).get('global_count', 0) + p_data.get('raw_counts', {}).get('secure_count', 0) + p_data.get('raw_counts', {}).get('system_count', 0)} keys)"
                 ])
 
@@ -2709,14 +2937,55 @@ settings get secure location_providers_allowed
                             st.dataframe(pd.DataFrame(s_wl)[["friendly", "package", "uid"]].rename(columns={"friendly": "System Service", "package": "Package Identifier", "uid": "UID"}), use_container_width=True)
 
                 with tab_appops:
-                    st.markdown("#### Applications Granted `RUN_IN_BACKGROUND` AppOps Permission")
-                    st.caption("Android AppOps policy allows these packages to initiate background services and background tasks without restriction.")
-                    a_ops = p_data.get("appops_allowed", [])
-                    if a_ops:
-                        df_aops = pd.DataFrame(a_ops).rename(columns={"friendly": "App Name", "package": "Package Identifier"})
-                        st.dataframe(df_aops, use_container_width=True)
-                    else:
-                        st.info("No apps explicitly granted unrestricted background execution.")
+                    st.markdown("#### ⚡ Android AppOps Execution & Battery Policies")
+                    st.caption("Ground truth from Android AppOps policies defining background execution, battery restrictions, and location access.")
+
+                    subtab_allowed, subtab_restr, subtab_loc, subtab_wake = st.tabs([
+                        f"🟢 Unrestricted ({len(p_data.get('appops_allowed', []))})",
+                        f"🚫 Explicitly Restricted ({len(p_data.get('appops_restricted', []))})",
+                        f"📍 Location Access ({len(p_data.get('appops_location_allowed', []))})",
+                        f"⏰ Wakelock Exemptions ({len(p_data.get('appops_wakelock_allowed', []))})"
+                    ])
+
+                    with subtab_allowed:
+                        st.markdown("##### Applications Granted `RUN_IN_BACKGROUND` AppOps Permission")
+                        st.caption("These packages have been granted permission to execute background services without standard Android OS battery throttling.")
+                        a_ops = p_data.get("appops_allowed", [])
+                        if a_ops:
+                            df_aops = pd.DataFrame(a_ops).rename(columns={"friendly": "App Name", "package": "Package Identifier"})
+                            st.dataframe(df_aops, use_container_width=True)
+                        else:
+                            st.info("No apps explicitly granted unrestricted background execution.")
+
+                    with subtab_restr:
+                        st.markdown("##### Applications Explicitly Restricted (`RUN_IN_BACKGROUND ignore`)")
+                        st.caption("These apps are set to 'Restricted' battery mode in Android Settings. If any of these apps still exhibit energy consumption, it is driven by Foreground Services, user interaction, or FCM high-priority push, NOT background polling.")
+                        r_ops = p_data.get("appops_restricted", [])
+                        if r_ops:
+                            df_rops = pd.DataFrame(r_ops).rename(columns={"friendly": "App Name", "package": "Package Identifier"})
+                            st.dataframe(df_rops, use_container_width=True)
+                        else:
+                            st.info("No apps marked as explicitly restricted in the current profile snapshot. (Run the updated ADB script to audit).")
+
+                    with subtab_loc:
+                        st.markdown("##### Applications with Active Location Permissions")
+                        st.caption("Packages permitted to request `FINE_LOCATION`, `COARSE_LOCATION`, or `MONITOR_LOCATION`. Background GPS/GNSS scans prevent modem and SoC low-power sleep states.")
+                        l_ops = p_data.get("appops_location_allowed", [])
+                        if l_ops:
+                            df_lops = pd.DataFrame(l_ops).rename(columns={"friendly": "App Name", "package": "Package Identifier"})
+                            st.dataframe(df_lops, use_container_width=True)
+                        else:
+                            st.info("No user-level location permissions captured in this snapshot.")
+
+                    with subtab_wake:
+                        st.markdown("##### Applications Granted `WAKE_LOCK` AppOps Exemption")
+                        st.caption("Packages explicitly authorized to acquire partial wakelocks keeping CPU active.")
+                        w_ops = p_data.get("appops_wakelock_allowed", [])
+                        if w_ops:
+                            df_wops = pd.DataFrame(w_ops).rename(columns={"friendly": "App Name", "package": "Package Identifier"})
+                            st.dataframe(df_wops, use_container_width=True)
+                        else:
+                            st.info("No apps granted explicit WAKE_LOCK AppOps exemption.")
 
                 with tab_kv:
                     st.markdown("#### Comprehensive Android Settings Registry")
@@ -2739,11 +3008,18 @@ settings get secure location_providers_allowed
                     else:
                         st.info("No raw settings data available for this profile.")
 
+            with tab_prof_routers:
+                render_wifi_routers_management_ui()
+
             with tab_prof_chat:
                 # --- FULL-SCREEN PROFILE AUDIT CHAT WORKSPACE (FRAGMENT ISOLATED) ---
                 prof_rep_id = -current_profile["id"]
                 def _build_prof_sys_prompt():
                     prof_telemetry_summary = parser.get_inventory_summary_for_llm(p_data)
+                    active_routers = db.get_active_wifi_routers()
+                    router_summary = parser.format_router_context_for_llm(active_routers)
+                    if router_summary:
+                        prof_telemetry_summary = f"{router_summary}\n\n{prof_telemetry_summary}"
                     prof_chat_tmpl = llm_manager.get_prompt_template("profile_chat")
                     return prof_chat_tmpl.format(
                         device_model=p_data.get("device_model", "Unknown Device"),
@@ -2765,6 +3041,15 @@ settings get secure location_providers_allowed
                     action_type="profile_chat",
                     filter_label=f"Profile: {current_profile['profile_name']}"
                 )
+        else:
+            tab_no_prof, tab_no_prof_routers = st.tabs([
+                "🛡️ Device Configuration Audit",
+                "📡 WiFi Router Environment ✨"
+            ])
+            with tab_no_prof:
+                st.info("No device profile snapshot selected or available. Connect your device via ADB and upload a `full_device_inventory.txt` using the buttons above to begin the audit.")
+            with tab_no_prof_routers:
+                render_wifi_routers_management_ui()
 
     elif view_mode == "🔀 Compare Profiles":
         st.markdown("### 🔀 Device Configuration Snapshot Comparison")
@@ -3000,6 +3285,10 @@ elif st.session_state.active_tab == "master":
                 profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
                 if profile_summary:
                     chronicle_lines.append(profile_summary + "\n")
+                active_routers = db.get_active_wifi_routers()
+                router_summary = parser.format_router_context_for_llm(active_routers)
+                if router_summary:
+                    chronicle_lines.append(router_summary + "\n")
 
                 for idx, r in enumerate(all_rep):
                     chronicle_lines.append(f"SESSION {idx+1}: {r['custom_name']} ({r['timestamp_str']}) - {r.get('description', '')}")

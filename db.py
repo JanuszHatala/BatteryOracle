@@ -133,13 +133,22 @@ def init_db():
         )
     """)
 
-    cursor.execute("PRAGMA table_info(device_profiles)")
-    dp_cols = [col["name"] for col in cursor.fetchall()]
-    if "ai_analysis" not in dp_cols:
-        cursor.execute("ALTER TABLE device_profiles ADD COLUMN ai_analysis TEXT DEFAULT ''")
-    if "ai_analysis_trace" not in dp_cols:
-        cursor.execute("ALTER TABLE device_profiles ADD COLUMN ai_analysis_trace TEXT DEFAULT ''")
-    
+    # 8. WiFi Routers table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS wifi_routers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            router_name TEXT NOT NULL,
+            brand TEXT NOT NULL,
+            model TEXT NOT NULL,
+            location_tag TEXT DEFAULT 'Home',
+            is_active INTEGER DEFAULT 1,
+            specs_json TEXT NOT NULL,
+            notes TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -811,6 +820,106 @@ def delete_device_profile(profile_id):
     cursor.execute("DELETE FROM token_ledger WHERE report_id = ?", (prof_rep_id,))
     conn.commit()
     conn.close()
+
+# --- WiFi Routers CRUD ---
+
+def save_wifi_router(router_name, brand, model, specs_json, location_tag="Home", is_active=1, notes="", router_id=None):
+    """Insert or update a WiFi router environment profile."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(specs_json, dict):
+        specs_json = json.dumps(specs_json, indent=2)
+
+    if router_id:
+        cursor.execute("""
+            UPDATE wifi_routers
+            SET router_name = ?, brand = ?, model = ?, location_tag = ?, is_active = ?, specs_json = ?, notes = ?, updated_at = ?
+            WHERE id = ?
+        """, (router_name, brand, model, location_tag, is_active, specs_json, notes, now_str, router_id))
+        saved_id = router_id
+    else:
+        cursor.execute("""
+            INSERT INTO wifi_routers (router_name, brand, model, location_tag, is_active, specs_json, notes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (router_name, brand, model, location_tag, is_active, specs_json, notes, now_str, now_str))
+        saved_id = cursor.lastrowid
+
+    conn.commit()
+    conn.close()
+    return saved_id
+
+def get_all_wifi_routers():
+    """Retrieve all configured WiFi router profiles."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM wifi_routers ORDER BY is_active DESC, updated_at DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    res = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["specs"] = json.loads(d["specs_json"])
+        except Exception:
+            d["specs"] = {}
+        res.append(d)
+    return res
+
+def get_active_wifi_routers():
+    """Retrieve all currently active WiFi router profiles for AI context injection."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM wifi_routers WHERE is_active = 1 ORDER BY updated_at DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    res = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["specs"] = json.loads(d["specs_json"])
+        except Exception:
+            d["specs"] = {}
+        res.append(d)
+    return res
+
+def get_wifi_router(router_id):
+    """Retrieve a single WiFi router by ID."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM wifi_routers WHERE id = ?", (router_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    d = dict(row)
+    try:
+        d["specs"] = json.loads(d["specs_json"])
+    except Exception:
+        d["specs"] = {}
+    return d
+
+def update_wifi_router_active(router_id, is_active):
+    """Toggle whether a router profile is active in current AI context."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+        UPDATE wifi_routers
+        SET is_active = ?, updated_at = ?
+        WHERE id = ?
+    """, (1 if is_active else 0, now_str, router_id))
+    conn.commit()
+    conn.close()
+
+def delete_wifi_router(router_id):
+    """Delete a WiFi router profile."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM wifi_routers WHERE id = ?", (router_id,))
+    conn.commit()
+    conn.close()
+
 
 
 
