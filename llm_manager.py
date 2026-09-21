@@ -562,7 +562,7 @@ def get_model_pricing(model_id):
     return "Pricing not listed"
 
 
-@retry(wait=wait_exponential(multiplier=2, min=2, max=10), stop=stop_after_attempt(4), reraise=True)
+@retry(wait=wait_exponential(multiplier=2, min=2, max=15), stop=stop_after_attempt(5), reraise=True)
 def call_llm_tracked(messages, report_id=None, thread_id=None, action_type="chat"):
     """Execute LLM completion with automatic token and cost accounting saved to SQLite."""
     cfg = get_active_config()
@@ -657,11 +657,23 @@ Provide the technical profile of this specific router. Return ONLY a valid, pars
 
 Do not include any markdown formatting around the JSON (or wrap it in standard ```json ``` codeblock). Be strictly accurate to this specific hardware and its official firmware UI."""
 
-    res_text = call_llm_tracked(
-        messages=[{"role": "user", "content": prompt}],
-        action_type="router_specs_discovery"
-    )
-    
+    try:
+        res_text = call_llm_tracked(
+            messages=[{"role": "user", "content": prompt}],
+            action_type="router_specs_discovery"
+        )
+    except Exception as e:
+        fallback = {
+            "wifi_generation": "Wi-Fi 6 (802.11ax)",
+            "firmware_family": f"{brand} Firmware",
+            "dtim_support": "Configurable (Recommended: DTIM Interval = 3)",
+            "twt_support": "Supported if 802.11ax is active",
+            "band_steering": "Smart Connect / Band Steering",
+            "firmware_path": "Wireless > Advanced / Professional Settings",
+            "summary": f"Could not retrieve live specs ({str(e)[:160]}). Default Wi-Fi 6 profile provided."
+        }
+        return fallback, str(e)
+
     # Clean json formatting if wrapped in codeblocks
     cleaned = res_text.strip()
     if cleaned.startswith("```json"):
@@ -671,7 +683,7 @@ Do not include any markdown formatting around the JSON (or wrap it in standard `
     if cleaned.endswith("```"):
         cleaned = cleaned[:-3]
     cleaned = cleaned.strip()
-    
+
     try:
         data = json.loads(cleaned)
         return data, None
