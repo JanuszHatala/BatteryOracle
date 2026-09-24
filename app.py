@@ -1424,31 +1424,54 @@ def show_llm_config_dialog(active_cfg, n_start_val, n_end_val):
             selected_prov = st.selectbox("Provider Preset", provider_list, index=prov_idx, key="cfg_provider_select")
             preset_info = llm_manager.PROVIDER_PRESETS[selected_prov]
         
-        # Prepare dynamic model list from session cache or preset
+        # Prepare dynamic model list from session cache, SQLite saved models, and preset
         cache_key = f"models_{selected_prov}"
+        saved_all = llm_manager.get_all_models_for_provider(selected_prov)
         if cache_key not in st.session_state:
-            st.session_state[cache_key] = list(preset_info.get("models", []))
+            st.session_state[cache_key] = saved_all
+        else:
+            for m in saved_all:
+                if m not in st.session_state[cache_key]:
+                    st.session_state[cache_key].append(m)
             
-        available_models = st.session_state[cache_key]
+        available_models = list(st.session_state[cache_key])
         
         with c_model:
-            if available_models:
-                current_model = active_cfg["model"]
-                mod_idx = available_models.index(current_model) if current_model in available_models else 0
-                selected_model = st.selectbox(
-                    "Model",
-                    available_models,
-                    index=mod_idx,
-                    format_func=lambda m: f"{m}  —  [{llm_manager.get_model_pricing(m)}]",
-                    key="cfg_model_select"
-                )
+            CUSTOM_OPTION = "➕ Type Custom Model ID..."
+            model_options = list(available_models)
+            if CUSTOM_OPTION not in model_options:
+                model_options.append(CUSTOM_OPTION)
+                
+            current_model = active_cfg["model"]
+            if current_model in available_models:
+                mod_idx = model_options.index(current_model)
+            elif current_model and selected_prov == active_cfg["provider"]:
+                model_options.insert(0, current_model)
+                mod_idx = 0
             else:
-                selected_model = st.text_input(
-                    "Custom Model ID",
-                    value=active_cfg["model"],
-                    placeholder="e.g., openrouter/anthropic/claude-3.5-sonnet",
-                    autocomplete="off"
+                mod_idx = 0
+                
+            chosen_option = st.selectbox(
+                "Model",
+                model_options,
+                index=mod_idx,
+                format_func=lambda m: (
+                    "➕ Type Custom Model ID..." if m == CUSTOM_OPTION
+                    else f"{m}  —  [{llm_manager.get_model_pricing(m)}]"
+                ),
+                key="cfg_model_select"
+            )
+            
+            if chosen_option == CUSTOM_OPTION:
+                custom_input = st.text_input(
+                    "Enter Custom Model ID",
+                    value="",
+                    placeholder="e.g. gemini-3.5-flash-lite, gemini-3.6-flash, or openrouter/...",
+                    key="cfg_custom_model_input"
                 )
+                selected_model = llm_manager.normalize_model_name(selected_prov, custom_input) if custom_input else ""
+            else:
+                selected_model = chosen_option
             
         c_key, c_base = st.columns([1, 1])
         with c_key:
@@ -1488,28 +1511,78 @@ def show_llm_config_dialog(active_cfg, n_start_val, n_end_val):
                         st.info(fetch_msg)
                     st.rerun()
         with col_info:
-            active_pricing = llm_manager.get_model_pricing(selected_model)
+            active_pricing = llm_manager.get_model_pricing(selected_model) if selected_model else "N/A"
             st.caption(f"**Selected Model Standard Pricing:** `{active_pricing}`\n\n*Total available:* **{len(available_models)}** models for {selected_prov}.")
+        
+        # Expandable custom models manager
+        with st.expander("🛠️ Manage & Register Custom Models for " + selected_prov, expanded=False):
+            st.caption("Any model entered or used is permanently saved to SQLite settings. You can also pre-register or remove models below:")
+            c_add_in, c_add_btn = st.columns([3, 1])
+            with c_add_in:
+                new_m_input = st.text_input(
+                    "New Model ID",
+                    placeholder="e.g. gemini-3.5-flash-lite, claude-3-opus, etc.",
+                    key="add_custom_model_input",
+                    label_visibility="collapsed"
+                )
+            with c_add_btn:
+                if st.button("➕ Add to List", key="btn_save_custom_model_id", use_container_width=True):
+                    if new_m_input.strip():
+                        saved_m = llm_manager.save_custom_model(selected_prov, new_m_input.strip())
+                        if saved_m not in st.session_state[cache_key]:
+                            st.session_state[cache_key].append(saved_m)
+                        st.toast(f"Saved custom model '{saved_m}' to {selected_prov}!", icon="✅")
+                        st.rerun()
+                        
+            existing_custom = llm_manager.get_custom_models(selected_prov)
+            if existing_custom:
+                st.write("**Persisted Custom Models in DB:**")
+                for cm in existing_custom:
+                    c_cm_label, c_cm_del = st.columns([4, 1])
+                    with c_cm_label:
+                        st.code(cm, language=None)
+                    with c_cm_del:
+                        if st.button("🗑️ Remove", key=f"del_cm_{selected_prov}_{cm}", use_container_width=True):
+                            llm_manager.delete_custom_model(selected_prov, cm)
+                            if cm in st.session_state[cache_key]:
+                                st.session_state[cache_key].remove(cm)
+                            st.toast(f"Removed '{cm}'", icon="ℹ️")
+                            st.rerun()
         
         st.divider()
         col_test, col_save = st.columns([1, 1])
         with col_test:
             if st.button("🧪 Test Connection", key="btn_test_conn", use_container_width=True):
-                with st.spinner("Pinging model..."):
-                    is_ok, msg = llm_manager.test_connection(selected_model, api_key_val, api_base_val)
-                    if is_ok:
-                        st.success(msg)
-                    else:
-                        st.error(msg)
+                if not selected_model:
+                    st.warning("Please specify or select a Model ID to test.")
+                else:
+                    with st.spinner(f"Pinging {selected_model}..."):
+                        is_ok, msg = llm_manager.test_connection(
+                            selected_model,
+                            api_key=api_key_val,
+                            api_base=api_base_val,
+                            provider=selected_prov
+                        )
+                        if is_ok:
+                            st.success(msg)
+                            llm_manager.save_custom_model(selected_prov, selected_model)
+                            if selected_model not in st.session_state[cache_key]:
+                                st.session_state[cache_key].append(selected_model)
+                        else:
+                            st.error(msg)
         with col_save:
             if st.button("💾 Save & Apply Credentials", type="primary", key="btn_save_conn", use_container_width=True):
-                db.set_setting("llm_provider", selected_prov)
-                db.set_setting("llm_model", selected_model)
-                db.set_setting("llm_api_key", api_key_val)
-                db.set_setting("llm_api_base", api_base_val)
-                st.success("Settings saved! Reloading...")
-                time.sleep(0.5)
-                st.rerun()
+                if not selected_model:
+                    st.error("Please specify or select a valid Model ID.")
+                else:
+                    norm_model = llm_manager.save_custom_model(selected_prov, selected_model)
+                    db.set_setting("llm_provider", selected_prov)
+                    db.set_setting("llm_model", norm_model)
+                    db.set_setting("llm_api_key", api_key_val)
+                    db.set_setting("llm_api_base", api_base_val)
+                    st.success(f"Settings saved! Using '{norm_model}'. Reloading...")
+                    time.sleep(0.5)
+                    st.rerun()
                 
     with settings_tab2:
         st.markdown("#### ✍️ Expert Prompt Studio")
