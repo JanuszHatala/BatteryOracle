@@ -302,29 +302,110 @@ def parse_llm_error(error: Exception):
     suggestions = []
     retry_delay_sec = None
     
-    # 1. Check for Rate Limit / Quota Exhaustion (429)
+    rate_limit_meta = None
+    
+    # 1. Check for Rate Limit / Quota Exhaustion (429 / RESOURCE_EXHAUSTED)
     if "ratelimit" in err_lower or "429" in err_lower or "resource_exhausted" in err_lower or "quota" in err_lower:
         category = "Rate Limit & Quota Exhausted (429)"
         title = "AI Model Quota / Rate Limit Exceeded"
         icon = "⏳"
         
-        # Try to extract retry delay from Gemini / LiteLLM error string (e.g. "retry in 29.103s" or "retryDelay': '29s'")
-        m_delay = re.search(r"retry\s+(?:in\s+)?([0-9]+(?:\.[0-9]+)?)\s*s", err_str, re.IGNORECASE)
-        if not m_delay:
-            m_delay = re.search(r"retryDelay['\"]?\s*:\s*['\"]?([0-9]+)s?", err_str, re.IGNORECASE)
-        if m_delay:
+        # Deep inspection of embedded JSON error details from Gemini / LiteLLM
+        rl = {
+            "retry_delay_sec": None,
+            "model": None,
+            "is_daily": False,
+            "is_minute": False,
+            "is_tokens": False,
+            "is_requests": False,
+            "zero_limit": False,
+            "violations": []
+        }
+        
+        json_match = re.search(r'\{.*\}', err_str, re.DOTALL)
+        parsed_json = None
+        if json_match:
             try:
-                retry_delay_sec = int(float(m_delay.group(1)))
+                parsed_json = json.loads(json_match.group(0))
             except Exception:
-                retry_delay_sec = None
+                parsed_json = None
 
-        if retry_delay_sec:
-            suggestions.append(f"⏱️ **Wait {retry_delay_sec} seconds** for the provider's rate-limiting window to roll over, then retry.")
+        if parsed_json and isinstance(parsed_json, dict) and "error" in parsed_json:
+            err_obj = parsed_json["error"]
+            msg = err_obj.get("message", "")
+            if "limit: 0" in msg:
+                rl["zero_limit"] = True
+                
+            details = err_obj.get("details", [])
+            for item in details:
+                if item.get("@type") == "type.googleapis.com/google.rpc.RetryInfo":
+                    delay_str = item.get("retryDelay", "")
+                    m = re.search(r'([0-9]+(?:\.[0-9]+)?)', delay_str)
+                    if m:
+                        rl["retry_delay_sec"] = int(float(m.group(1)))
+                elif item.get("@type") == "type.googleapis.com/google.rpc.QuotaFailure":
+                    for v in item.get("violations", []):
+                        qid = v.get("quotaId", "")
+                        qmetric = v.get("quotaMetric", "")
+                        model = v.get("quotaDimensions", {}).get("model")
+                        if model and not rl["model"]:
+                            rl["model"] = model
+                        if "PerDay" in qid or "Day" in qid:
+                            rl["is_daily"] = True
+                        if "PerMinute" in qid or "Minute" in qid:
+                            rl["is_minute"] = True
+                        if "Token" in qid or "token" in qmetric:
+                            rl["is_tokens"] = True
+                        if "Request" in qid or "request" in qmetric:
+                            rl["is_requests"] = True
+                        rl["violations"].append(qid or qmetric)
+
+        # Fallbacks via regex
+        if not rl["retry_delay_sec"]:
+            m_delay = re.search(r"retry\s+(?:in\s+)?([0-9]+(?:\.[0-9]+)?)\s*s", err_str, re.IGNORECASE)
+            if not m_delay:
+                m_delay = re.search(r"retryDelay['\"]?\s*:\s*['\"]?([0-9]+)s?", err_str, re.IGNORECASE)
+            if m_delay:
+                try:
+                    rl["retry_delay_sec"] = int(float(m_delay.group(1)))
+                except Exception:
+                    pass
+
+        if not rl["model"]:
+            m_model = re.search(r"model:\s*([a-zA-Z0-9_\-\.]+)", err_str, re.IGNORECASE)
+            if m_model:
+                rl["model"] = m_model.group(1)
+
+        if not rl["is_daily"] and re.search(r"perday|daily", err_str, re.IGNORECASE):
+            rl["is_daily"] = True
+        if not rl["is_minute"] and re.search(r"perminute|minute", err_str, re.IGNORECASE):
+            rl["is_minute"] = True
+        if not rl["is_tokens"] and re.search(r"token", err_str, re.IGNORECASE):
+            rl["is_tokens"] = True
+        if not rl["is_requests"] and re.search(r"request", err_str, re.IGNORECASE):
+            rl["is_requests"] = True
+
+        retry_delay_sec = rl["retry_delay_sec"]
+        rate_limit_meta = rl
+
+        model_display = f"`{rl['model']}`" if rl["model"] else "your selected model"
+
+        if rl["is_daily"]:
+            icon = "🛑"
+            title = f"Daily Quota Exhausted for {model_display} (Free Tier)"
+            suggestions.append(f"🛑 **Daily Free Quota Exhausted**: Google Gemini API has depleted its daily requests or tokens for {model_display}. Daily free quotas reset at **Midnight Pacific Time (09:00 CEST / 07:00 UTC)**.")
+            if retry_delay_sec:
+                suggestions.append(f"⚠️ **Note on Retry Delay**: The raw error mentions *'retry in {retry_delay_sec}s'*, but that cooldown only clears the sliding 1-minute window bucket. It will **not** bypass the daily quota.")
+            suggestions.append(f"⚡ **Immediate Fix — Switch to `gemini-2.5-flash`**: In **⚙️ AI & LLM Settings** (sidebar), switch model to `gemini-2.5-flash`. The Flash model offers **1,500 requests/day** and **1,000,000 tokens/minute** on the Free Tier (compared to only 50 requests/day and 32k tokens/min on Pro) and finishes battery reports in seconds.")
+            suggestions.append("🔑 **Switch to Alternative Provider**: Select **OpenRouter**, **OpenAI**, or **Groq** in settings if you have an alternative API key.")
+            suggestions.append("💳 **Add Billing to Google AI Studio**: Attaching a credit card to your Google AI Studio project upgrades your key to Pay-As-You-Go, removing the harsh 50 requests/day free limit (Flash costs pennies for hundreds of runs).")
         else:
-            suggestions.append("⏱️ **Wait 30–60 seconds** for your API provider's rate-limit window to reset, then retry.")
-            
-        suggestions.append("🔄 **Switch Model**: Open **⚙️ AI & LLM Settings** in the left sidebar and select a model with higher free allowances (e.g., `gemini-2.5-flash` instead of `gemini-3.7-flash`).")
-        suggestions.append("🔑 **Add / Switch Provider Key**: Switch to an **OpenRouter**, **OpenAI**, or **Groq** key in Settings to bypass provider-specific quotas.")
+            if retry_delay_sec:
+                suggestions.append(f"⏱️ **Wait {retry_delay_sec} seconds** for the provider's per-minute rate-limiting window to roll over, then retry.")
+            else:
+                suggestions.append("⏱️ **Wait 30–60 seconds** for your API provider's rate-limit window to reset, then retry.")
+            suggestions.append("⚡ **Switch to `gemini-2.5-flash`**: Flash has significantly higher rate limits (15 RPM vs 2 RPM on Pro).")
+            suggestions.append("🔑 **Add / Switch Provider Key**: Switch to an **OpenRouter**, **OpenAI**, or **Groq** key in Settings.")
 
     # 2. Check for Authentication / Bad Key (401 / 403)
     elif "auth" in err_lower or "401" in err_lower or "unauthorized" in err_lower or "api_key" in err_lower or "forbidden" in err_lower:
@@ -370,7 +451,8 @@ def parse_llm_error(error: Exception):
         "icon": icon,
         "raw_error": err_str,
         "suggestions": suggestions,
-        "retry_delay_sec": retry_delay_sec
+        "retry_delay_sec": retry_delay_sec,
+        "rate_limit_meta": rate_limit_meta
     }
 
 def render_ai_error(error: Exception, action_description: str = "generating AI analysis", key_suffix: str = "err"):
@@ -380,6 +462,33 @@ def render_ai_error(error: Exception, action_description: str = "generating AI a
         st.markdown(f"### {diag['icon']} {diag['title']}")
         st.markdown(f"**Failed while {action_description}.** Category: `{diag['category']}`")
         
+        # Dedicated Rate Limit & Quota Monitoring Callout
+        rl = diag.get("rate_limit_meta")
+        if rl:
+            if rl.get("is_daily"):
+                st.markdown(
+                    '<div style="background: rgba(239, 68, 68, 0.12); border-left: 4px solid #ef4444; padding: 10px 14px; border-radius: 4px; margin: 10px 0; font-size: 0.9rem;">'
+                    '<strong>🛑 Daily Free Tier Quota Exhausted:</strong> Your daily token or request allocation has run out.<br>'
+                    '• <strong>Daily Reset Schedule:</strong> Daily quotas reset at <strong>Midnight Pacific Time (PT) / 09:00 CEST (Poland)</strong>.<br>'
+                    '• <strong>47s Delay Notice:</strong> The <em>"Please retry in 47s"</em> message only applies to the 1-minute rate-limiter, not the daily allowance.'
+                    '</div>',
+                    unsafe_allow_html=True
+                )
+            elif rl.get("retry_delay_sec"):
+                st.markdown(
+                    f'<div style="background: rgba(245, 158, 11, 0.12); border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 4px; margin: 10px 0; font-size: 0.9rem;">'
+                    f'<strong>⏳ Per-Minute Limit Cooldown:</strong> Please wait <strong>{rl["retry_delay_sec"]} seconds</strong> before retrying this query.'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
+            with st.expander("📊 Where to Check Your API Usage, Quotas & Reset Times", expanded=True):
+                st.markdown(
+                    "- 🌐 **[Google AI Studio Plan & Rate Limits](https://aistudio.google.com/app/plan_information)**: View current plan status (Free vs Pay-As-You-Go), requests-per-minute (RPM), and daily request limits (RPD).\n"
+                    "- 📈 **[Google Cloud Quotas & System Limits Dashboard](https://console.cloud.google.com/apis/api/generativelanguage.googleapis.com/quotas)**: View live metrics graphs and exact daily reset countdowns.\n"
+                    "- 📖 **[Google Gemini API Rate Limits Official Guide](https://ai.google.dev/gemini-api/docs/rate-limits)**: Official limits per tier and model."
+                )
+
         st.markdown("#### 💡 Recommended Next Steps:")
         for s in diag["suggestions"]:
             st.markdown(f"- {s}")
