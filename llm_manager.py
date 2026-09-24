@@ -24,13 +24,18 @@ PROVIDER_PRESETS = {
     },
     "Google Gemini": {
         "models": [
+            "gemini/gemini-3.6-flash",
+            "gemini/gemini-3.5-flash-lite",
+            "gemini/gemini-3.1-flash-lite",
+            "gemini/gemini-3.5-flash",
             "gemini/gemini-3.7-flash",
             "gemini/gemini-3.8-flash",
-            "gemini/gemini-3.6-flash",
+            "gemini/gemini-3-flash",
+            "gemini/gemini-2.5-flash-lite",
             "gemini/gemini-2.5-pro",
             "gemini/gemini-2.5-flash"
         ],
-        "default_model": "gemini/gemini-3.7-flash",
+        "default_model": "gemini/gemini-3.6-flash",
         "env_key": "GEMINI_API_KEY",
         "default_base": None,
         "requires_key": True
@@ -367,6 +372,75 @@ Device Telemetry Summary:
 """
 }
 
+def normalize_model_name(provider: str, model_name: str) -> str:
+    """Ensure proper LiteLLM prefix for provider-specific model IDs."""
+    if not model_name:
+        return ""
+    m = model_name.strip()
+    if provider == "Google Gemini":
+        if m.startswith("models/"):
+            m = m[len("models/"):]
+        if not m.startswith("gemini/"):
+            m = f"gemini/{m}"
+    elif provider == "OpenRouter":
+        if not m.startswith("openrouter/"):
+            m = f"openrouter/{m}"
+    elif provider == "Ollama":
+        if not m.startswith("ollama/"):
+            m = f"ollama/{m}"
+    elif provider == "OpenAI":
+        if not m.startswith("openai/"):
+            m = f"openai/{m}"
+    elif provider == "Anthropic":
+        if not m.startswith("anthropic/"):
+            m = f"anthropic/{m}"
+    elif provider == "Groq":
+        if not m.startswith("groq/"):
+            m = f"groq/{m}"
+    return m
+
+def get_custom_models(provider: str) -> list:
+    """Retrieve saved custom models from SQLite settings for a given provider."""
+    raw = db.get_setting(f"custom_models_{provider}", "[]")
+    try:
+        models = json.loads(raw)
+        if isinstance(models, list):
+            return [str(m).strip() for m in models if str(m).strip()]
+    except Exception:
+        pass
+    return []
+
+def save_custom_model(provider: str, model_name: str) -> str:
+    """Persist a custom model ID into the provider's saved models list in SQLite."""
+    cleaned = normalize_model_name(provider, model_name)
+    if not cleaned:
+        return cleaned
+    
+    current = get_custom_models(provider)
+    if cleaned not in current:
+        current.append(cleaned)
+        db.set_setting(f"custom_models_{provider}", json.dumps(current))
+    return cleaned
+
+def delete_custom_model(provider: str, model_name: str):
+    """Remove a custom model from the provider's saved models list in SQLite."""
+    current = get_custom_models(provider)
+    if model_name in current:
+        current.remove(model_name)
+        db.set_setting(f"custom_models_{provider}", json.dumps(current))
+
+def get_all_models_for_provider(provider: str) -> list:
+    """Combine static preset models and saved custom models for a provider without duplicates."""
+    preset = PROVIDER_PRESETS.get(provider, {})
+    static_models = list(preset.get("models", []))
+    custom_models = get_custom_models(provider)
+    
+    combined = []
+    for m in static_models + custom_models:
+        if m and m not in combined:
+            combined.append(m)
+    return combined
+
 def get_active_config():
     """Retrieve active LLM configuration from database with fallback to environment."""
     provider = db.get_setting("llm_provider", "Google Gemini")
@@ -392,10 +466,11 @@ def get_active_config():
         "api_base": api_base or None
     }
 
-def test_connection(model, api_key=None, api_base=None):
+def test_connection(model, api_key=None, api_base=None, provider=None):
     """Send a lightweight test ping to verify credentials and model connectivity."""
     try:
-        kwargs = {"model": model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}
+        norm_model = normalize_model_name(provider, model) if provider else model
+        kwargs = {"model": norm_model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}
         if api_key:
             kwargs["api_key"] = api_key
         if api_base:
@@ -403,21 +478,20 @@ def test_connection(model, api_key=None, api_base=None):
             
         res = completion(**kwargs)
         tokens_used = res.usage.total_tokens if res.usage else "OK"
-        return True, f"✅ Connection successful to '{model}'! (Round-trip verified, tokens: {tokens_used})"
+        if provider and norm_model:
+            save_custom_model(provider, norm_model)
+        return True, f"✅ Connection successful to '{norm_model}'! (Round-trip verified, tokens: {tokens_used})"
     except Exception as e:
         return False, f"❌ Connection failed: {str(e)}"
 
 def fetch_available_models(provider, api_key=None, api_base=None):
-    """Dynamically query the provider's API for available models."""
-    results = []
-    # Always include static defaults first
-    preset = PROVIDER_PRESETS.get(provider, {})
-    static_models = list(preset.get("models", []))
+    """Dynamically query the provider's API for available models, preserving custom models."""
+    base_models = get_all_models_for_provider(provider)
     
     if provider == "Google Gemini":
         key = api_key or os.getenv("GEMINI_API_KEY", "")
         if not key:
-            return static_models, "⚠️ No Gemini API key provided to fetch models."
+            return base_models, "⚠️ No Gemini API key provided to fetch models."
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
             req = urllib.request.Request(url, headers={"User-Agent": "BatteryOracle/1.0"})
@@ -434,33 +508,41 @@ def fetch_available_models(provider, api_key=None, api_base=None):
                         discovered.append(litellm_id)
                 def gemini_rank(name):
                     n = name.lower()
-                    if "gemini-3.8" in n:
+                    if "gemini-3.6-flash" in n:
                         return 0
-                    if "gemini-3.7" in n:
+                    if "gemini-3.5-flash-lite" in n:
                         return 1
-                    if "gemini-3.6" in n:
+                    if "gemini-3.1-flash-lite" in n:
                         return 2
-                    if "gemini-2.5-pro" in n:
+                    if "gemini-3.5-flash" in n:
                         return 3
-                    if "gemini-2.5-flash" in n:
+                    if "gemini-3.7-flash" in n:
                         return 4
-                    if "gemini-3.5" in n:
+                    if "gemini-3.8-flash" in n:
                         return 5
-                    if "gemini-3" in n:
+                    if "gemini-3-flash" in n:
                         return 6
-                    if "gemini-2.5" in n:
+                    if "gemini-2.5-flash-lite" in n:
                         return 7
+                    if "gemini-2.5-pro" in n:
+                        return 8
+                    if "gemini-2.5-flash" in n:
+                        return 9
+                    if "gemini-3" in n:
+                        return 10
+                    if "gemini-2.5" in n:
+                        return 11
                     return 20
                     
                 sorted_discovered = sorted(discovered, key=lambda x: (gemini_rank(x), x))
-                # Combine static models with discovered without duplicates
+                # Combine base models with discovered without duplicates
                 combined = []
-                for m in static_models + sorted_discovered:
+                for m in base_models + sorted_discovered:
                     if m not in combined:
                         combined.append(m)
                 return combined, f"✅ Successfully fetched {len(sorted_discovered)} live models from Google Gemini API!"
         except Exception as e:
-            return static_models, f"⚠️ Failed to query Gemini API: {e}"
+            return base_models, f"⚠️ Failed to query Gemini API: {e}"
 
     elif provider == "OpenRouter":
         try:
@@ -492,12 +574,12 @@ def fetch_available_models(provider, api_key=None, api_base=None):
                     
                 sorted_discovered = sorted(discovered, key=lambda x: (or_rank(x), x))
                 combined = []
-                for m in static_models + sorted_discovered:
+                for m in base_models + sorted_discovered:
                     if m not in combined:
                         combined.append(m)
                 return combined, f"✅ Successfully fetched {len(discovered)} live models from OpenRouter!"
         except Exception as e:
-            return static_models, f"⚠️ Failed to query OpenRouter API: {e}"
+            return base_models, f"⚠️ Failed to query OpenRouter API: {e}"
 
     elif provider == "Ollama":
         base = api_base or "http://localhost:11434"
@@ -508,12 +590,16 @@ def fetch_available_models(provider, api_key=None, api_base=None):
                 data = json.loads(resp.read().decode("utf-8"))
                 discovered = [f"ollama/{m['name']}" for m in data.get("models", []) if "name" in m]
                 if discovered:
-                    return discovered, f"✅ Found {len(discovered)} local models in Ollama!"
-                return static_models, "⚠️ Connected to Ollama, but no models have been pulled yet."
+                    combined = []
+                    for m in base_models + discovered:
+                        if m not in combined:
+                            combined.append(m)
+                    return combined, f"✅ Found {len(discovered)} local models in Ollama!"
+                return base_models, "⚠️ Connected to Ollama, but no models have been pulled yet."
         except Exception as e:
-            return static_models, f"⚠️ Could not reach Ollama at {base}: {e}"
+            return base_models, f"⚠️ Could not reach Ollama at {base}: {e}"
 
-    return static_models, "ℹ️ Dynamic model listing not implemented for this provider; showing default presets."
+    return base_models, "ℹ️ Dynamic model listing not implemented for this provider; showing default presets."
 
 def get_model_pricing(model_id):
     """Return standard API pricing string ($ per 1M tokens) for a given model."""
@@ -527,6 +613,10 @@ def get_model_pricing(model_id):
         "gemini-3.7-flash": {"in": 0.15, "out": 0.60},
         "gemini-3.6-flash": {"in": 0.15, "out": 0.60},
         "gemini-3.5-flash": {"in": 0.15, "out": 0.60},
+        "gemini-3.5-flash-lite": {"in": 0.075, "out": 0.30},
+        "gemini-3.1-flash-lite": {"in": 0.075, "out": 0.30},
+        "gemini-3-flash": {"in": 0.15, "out": 0.60},
+        "gemini-2.5-flash-lite": {"in": 0.075, "out": 0.30},
         "gemini-2.5-flash": {"in": 0.15, "out": 0.60},
         "gemini-2.5-pro": {"in": 1.25, "out": 10.00},
         "claude-3.5-sonnet": {"in": 3.00, "out": 15.00},
@@ -567,8 +657,15 @@ def call_llm_tracked(messages, report_id=None, thread_id=None, action_type="chat
     """Execute LLM completion with automatic token and cost accounting saved to SQLite."""
     cfg = get_active_config()
     model = cfg["model"]
+    provider = cfg["provider"]
     api_key = cfg["api_key"]
     api_base = cfg["api_base"]
+    
+    if model and provider:
+        try:
+            save_custom_model(provider, model)
+        except Exception:
+            pass
     
     kwargs = {
         "model": model,
