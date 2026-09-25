@@ -31,19 +31,32 @@ GEMINI_API_KEY="AIzaSy..."
 
 ---
 
-## Running the App
+## Quick Start (One-Click Launch) 🚀
+
+### macOS / Linux
+In the project directory, run:
+```bash
+./run.sh
+```
+Or simply **double-click** `run.command` in Finder!
+
+> The script automatically detects or sets up the `.venv` virtual environment, installs any missing dependencies, and opens the application in your browser.
+
+### Windows
+Double-click `run.bat` in File Explorer, or in PowerShell / CMD:
+```cmd
+run.bat
+```
+
+---
+
+## Running the App Manually
 
 Start the Streamlit application from your terminal:
 
 ```bash
-cd C:\DevWorkspaces\jh\ProjektyIT\Android\BatteryOracle
+source .venv/bin/activate   # (On Windows: .venv\Scripts\activate)
 streamlit run app.py
-```
-
-Or via Python directly:
-
-```bash
-python -m streamlit run app.py
 ```
 
 Once started, open your web browser and navigate to:
