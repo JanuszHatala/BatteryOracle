@@ -196,3 +196,95 @@ def test_comparative_endpoints(client, monkeypatch):
     assert exp_res.status_code == 200
     assert "Multi-Report Comparative Analysis" in exp_res.text
 
+
+def test_chat_thread_and_messages(client, monkeypatch):
+    import llm_manager
+    monkeypatch.setattr(llm_manager, "call_llm_tracked", lambda *args, **kwargs: "Oracle Answer: High discharge caused by wifi scan wakelock.")
+
+    # 1. Create report
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("bugreport.txt", "Build: TQ3A-Chat\nBattery History:\n 0 (10) 100\nCapacity: 5000\n")
+    rep_id = client.post(
+        "/api/v1/reports/upload",
+        files={"file": ("chat_rep.zip", buf.getvalue(), "application/zip")},
+        data={"auto_diagnose": "false"}
+    ).json()["id"]
+
+    # 2. Create thread
+    th_res = client.post(
+        f"/api/v1/reports/{rep_id}/threads",
+        json={"title": "New Investigation"}
+    )
+    assert th_res.status_code == 200
+    th_id = th_res.json()["id"]
+    assert th_res.json()["title"] == "New Investigation"
+
+    # List threads for report
+    list_th = client.get(f"/api/v1/reports/{rep_id}/threads")
+    assert list_th.status_code == 200
+    assert len(list_th.json()) >= 1
+
+    # 3. Rename thread
+    ren_res = client.put(f"/api/v1/threads/{th_id}", json={"title": "Custom Investigation"})
+    assert ren_res.status_code == 200
+    assert ren_res.json()["title"] == "Custom Investigation"
+
+    # 4. Send user message and get assistant response
+    msg_res = client.post(
+        f"/api/v1/threads/{th_id}/messages",
+        json={"content": "Why did my battery drain overnight?", "filter_context": "Scope: Night Standby"}
+    )
+    assert msg_res.status_code == 200
+    assert msg_res.json()["role"] == "assistant"
+    assert "Oracle Answer" in msg_res.json()["content"]
+
+    # 5. List messages in thread
+    msgs_list = client.get(f"/api/v1/threads/{th_id}/messages")
+    assert msgs_list.status_code == 200
+    msgs = msgs_list.json()
+    assert len(msgs) == 2  # user + assistant
+    assert msgs[0]["role"] == "user"
+    assert msgs[1]["role"] == "assistant"
+    user_msg_id = msgs[0]["id"]
+    asst_msg_id = msgs[1]["id"]
+
+    # 6. Toggle collapse
+    col_res = client.put(f"/api/v1/messages/{asst_msg_id}/collapse")
+    assert col_res.status_code == 200
+    assert col_res.json()["is_collapsed"] is True
+
+    # 7. Fork thread from user message
+    fork_res = client.post(
+        f"/api/v1/threads/{th_id}/fork",
+        json={"from_message_id": user_msg_id, "new_title": "Forked Branch"}
+    )
+    assert fork_res.status_code == 200
+    fork_th_id = fork_res.json()["id"]
+    assert fork_res.json()["title"] == "Forked Branch"
+
+    # Verify forked thread has the message up to fork point
+    fork_msgs = client.get(f"/api/v1/threads/{fork_th_id}/messages").json()
+    assert len(fork_msgs) == 1
+
+    # 8. Export markdown transcript
+    exp_md = client.get(f"/api/v1/threads/{th_id}/export-md")
+    assert exp_md.status_code == 200
+    assert "Why did my battery drain overnight?" in exp_md.text
+
+    # 9. Delete single message
+    del_msg = client.delete(f"/api/v1/messages/{asst_msg_id}")
+    assert del_msg.status_code == 200
+    assert del_msg.json()["deleted"] is True
+
+    # 10. Clear thread
+    clr_res = client.post(f"/api/v1/threads/{th_id}/clear")
+    assert clr_res.status_code == 200
+    assert client.get(f"/api/v1/threads/{th_id}/messages").json() == []
+
+    # 11. Delete thread
+    del_th = client.delete(f"/api/v1/threads/{th_id}")
+    assert del_th.status_code == 200
+    assert del_th.json()["deleted"] is True
+
+
