@@ -41,9 +41,9 @@ COPY --from=frontend-builder /build/dist ./static
 # Ensure persistent SQLite data directory exists
 RUN mkdir -p /app/data
 
-EXPOSE 8000
+EXPOSE 8088
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:8000/api/v1/health || exit 1
+  CMD curl -f http://localhost:8088/api/v1/health || exit 1
 
-ENTRYPOINT ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8088"]

@@ -18,7 +18,7 @@
 - Preserve 100% of existing database contents in `battery_oracle.db`: zero destructive schema modifications or table drops.
 - Preserve 100% of proven telemetry parsing logic in [`parser.py`](file:///Users/jh/DevWorkspaces/jh/ProjektyIT/Android/BatteryOracle/parser.py), database layer in [`db.py`](file:///Users/jh/DevWorkspaces/jh/ProjektyIT/Android/BatteryOracle/db.py), and AI orchestration in [`llm_manager.py`](file:///Users/jh/DevWorkspaces/jh/ProjektyIT/Android/BatteryOracle/llm_manager.py).
 - No em-dashes (`—`) in code, documentation, or response prose: use standard hyphens (`-`) or colons.
-- Unified single-port deployment: FastAPI serves API at `/api/v1/*` and the compiled React SPA at `/*` on port 8000.
+- Unified single-port deployment: FastAPI serves API at `/api/v1/*` and the compiled React SPA at `/*` on port 8088.
 - Docker storage isolation: Host `./data` directory mapped to `/data` in container via `BATTERY_ORACLE_DB_PATH=/data/battery_oracle.db`.
 
 ## Review Focus
@@ -35,11 +35,11 @@ The five primary failure modes and edge cases addressed in this implementation:
 ## User Review Required
 
 > [!IMPORTANT]
-> **Port Change from 8501 to 8000**: Streamlit previously ran on port 8501. The unified FastAPI + React container will run on port **8000**.
+> **Port Change from 8501 to 8088**: Streamlit previously ran on port 8501. The unified FastAPI + React container runs on port **8088**.
 > **Database Location**: The default database path in Docker will be `/data/battery_oracle.db`, mounted from `./data/battery_oracle.db`. Existing databases in the repository root should be copied to `./data/` before running `docker compose up`.
 
 > [!NOTE]
-> During development, Vite dev server (`npm run dev`) runs on port 5173 with proxy configured to `http://localhost:8000` for FastAPI API calls. Production builds compile to `frontend/dist` which FastAPI serves directly.
+> During development, Vite dev server (`npm run dev`) runs on port 5173 with proxy configured to `http://localhost:8088` for FastAPI API calls. Production builds compile to `frontend/dist` which FastAPI serves directly.
 
 ---
 
@@ -267,7 +267,7 @@ Initialize the React 19 + TypeScript SPA in `frontend/`, configure Tailwind CSS,
   Configure React 19, Vite, TypeScript, Tailwind CSS, Lucide React, `react-resizable-panels`, `recharts`, `react-markdown`, `remark-gfm`, and classnames utilities. Run `npm install` in `frontend/`.
 
 - [ ] **Step 2: Configure Vite and Tailwind**
-  Set up `vite.config.ts` with API proxy forwarding `/api/v1` to `http://localhost:8000`. Configure Tailwind CSS with dark slate theme and custom branding colors (`#10b981` green, `#8b5cf6` indigo).
+  Set up `vite.config.ts` with API proxy forwarding `/api/v1` to `http://localhost:8088`. Configure Tailwind CSS with dark slate theme and custom branding colors (`#10b981` green, `#8b5cf6` indigo).
 
 - [ ] **Step 3: Implement TypeScript types in `frontend/src/types/api.ts`**
   Map all schemas: `ReportSummary`, `ReportDetail`, `TelemetryResponse`, `Thread`, `Message`, `Settings`, `Router`, `DeviceProfile`.
@@ -411,17 +411,17 @@ Configure FastAPI to serve compiled frontend assets with client-side routing fal
 
 **Interfaces:**
 - Consumes: `frontend/dist/`, `api_server.py`, `battery_oracle.db`.
-- Produces: Single Docker container image serving API and frontend on port 8000 with volume-mounted database.
+- Produces: Single Docker container image serving API and frontend on port 8088 with volume-mounted database.
 
 - [ ] **Step 1: Configure static file serving and SPA fallback in `api_server.py`**
   Mount `static/` at `/`. Add catch-all route serving `static/index.html` for unknown routes not beginning with `/api/`.
 
 - [ ] **Step 2: Update `Dockerfile` to multi-stage build**
   Stage 1: `node:20-alpine` builds frontend SPA to `frontend/dist`.
-  Stage 2: `python:3.12-slim` installs python dependencies, copies backend code and compiled frontend to `static/`, exposes port 8000 with healthcheck.
+  Stage 2: `python:3.12-slim` installs python dependencies, copies backend code and compiled frontend to `static/`, exposes port 8088 with healthcheck.
 
 - [ ] **Step 3: Update `docker-compose.yml`**
-  Map port 8000:8000, volume mount `./data:/data`, environment variable `BATTERY_ORACLE_DB_PATH=/data/battery_oracle.db`.
+  Map port 8088:8088, volume mount `./data:/data`, environment variable `BATTERY_ORACLE_DB_PATH=/data/battery_oracle.db`.
 
 - [ ] **Step 4: Write and run end-to-end integration tests in `tests/test_e2e_integration.py`**
   Test static asset serving, SPA fallback, full report and chat flow on an isolated test database.
@@ -469,8 +469,8 @@ Configure FastAPI to serve compiled frontend assets with client-side routing fal
 1. **Container Launch & DB Verification**:
    - Copy `battery_oracle.db` into `./data/`.
    - Run `docker compose up -d`.
-   - Verify `curl -f http://localhost:8000/api/v1/health` returns status `ok`.
-2. **Browser Exploration (`http://localhost:8000`)**:
+   - Verify `curl -f http://localhost:8088/api/v1/health` returns status `ok`.
+2. **Browser Exploration (`http://localhost:8088`)**:
    - Verify all 34 existing reports appear in the sidebar with proper timestamps and drain rate badges.
    - Select a report: verify discharge timeline chart renders with night standby shaded bands and top consumers bar chart renders.
    - Switch scopes (`🌐 Full Session`, `🌙 Night Standby`, `⏱️ Custom Window`, `📴 Screen-Off Only`): verify KPIs and chart update immediately.

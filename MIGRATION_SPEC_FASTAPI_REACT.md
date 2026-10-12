@@ -268,12 +268,12 @@ COPY --from=frontend-builder /app/frontend/dist /app/static
 # Create data directory for volume mounting
 RUN mkdir -p /data
 
-EXPOSE 8000
+EXPOSE 8088
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:8000/api/v1/health || exit 1
+  CMD curl -f http://localhost:8088/api/v1/health || exit 1
 
-CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8088"]
 ```
 
 ### 6.2 `docker-compose.yml`
@@ -288,7 +288,7 @@ services:
     container_name: battery_oracle_app
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8088:8088"
     volumes:
       # Persistent host directory for SQLite DB and uploaded bugreport store
       - ./data:/data
@@ -308,7 +308,7 @@ services:
    ```bash
    docker compose up -d --build
    ```
-3. Open browser at `http://localhost:8000`. All existing reports, threads, chat histories, and custom night windows load instantly.
+3. Open browser at `http://localhost:8088`. All existing reports, threads, chat histories, and custom night windows load instantly.
 
 ---
 
