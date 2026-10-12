@@ -1,8 +1,10 @@
 import React from 'react';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
-import { Zap, Upload, Settings as SettingsIcon, GitCompare, RefreshCw } from 'lucide-react';
+import { Zap, Upload, Settings as SettingsIcon, GitCompare, Columns, Rows, ExternalLink } from 'lucide-react';
 import { Settings } from '../../types/api';
+
+export type ChatLayoutMode = 'split' | 'stacked' | 'floating' | 'hidden';
 
 interface HeaderProps {
   settings: Settings | null;
@@ -11,6 +13,8 @@ interface HeaderProps {
   isComparativeMode: boolean;
   onToggleComparativeMode: () => void;
   selectedCount: number;
+  chatLayout: ChatLayoutMode;
+  onSelectChatLayout: (mode: ChatLayoutMode) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,7 +23,9 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   isComparativeMode,
   onToggleComparativeMode,
-  selectedCount
+  selectedCount,
+  chatLayout,
+  onSelectChatLayout
 }) => {
   return (
     <header className="h-14 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md px-4 flex items-center justify-between shrink-0 select-none z-20">
@@ -33,12 +39,50 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3">
         {settings && (
-          <div className="hidden md:flex items-center gap-2">
+          <div className="hidden lg:flex items-center gap-2">
             <Badge variant="scope" className="font-mono text-[11px] px-2 py-0.5">
               {settings.active_llm_model}
             </Badge>
+          </div>
+        )}
+
+        {/* 3-State Chat Layout Switcher (when not in comparative mode) */}
+        {!isComparativeMode && (
+          <div className="flex items-center bg-slate-950 border border-slate-800 rounded-lg p-0.5 text-xs">
+            <button
+              onClick={() => onSelectChatLayout('split')}
+              className={`p-1.5 rounded transition-colors flex items-center gap-1 ${
+                chatLayout === 'split' ? 'bg-indigo-600/30 text-indigo-300' : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Side-by-side Layout"
+            >
+              <Columns className="w-3.5 h-3.5" />
+              <span className="hidden xl:inline text-[11px]">Side</span>
+            </button>
+
+            <button
+              onClick={() => onSelectChatLayout('stacked')}
+              className={`p-1.5 rounded transition-colors flex items-center gap-1 ${
+                chatLayout === 'stacked' ? 'bg-indigo-600/30 text-indigo-300' : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Stacked Layout"
+            >
+              <Rows className="w-3.5 h-3.5" />
+              <span className="hidden xl:inline text-[11px]">Stack</span>
+            </button>
+
+            <button
+              onClick={() => onSelectChatLayout('floating')}
+              className={`p-1.5 rounded transition-colors flex items-center gap-1 ${
+                chatLayout === 'floating' ? 'bg-indigo-600/30 text-indigo-300' : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Floating Window"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span className="hidden xl:inline text-[11px]">Float</span>
+            </button>
           </div>
         )}
 
@@ -59,7 +103,7 @@ export const Header: React.FC<HeaderProps> = ({
           className="text-xs bg-emerald-600 hover:bg-emerald-500"
         >
           <Upload className="w-3.5 h-3.5" />
-          <span>Upload Bugreport</span>
+          <span className="hidden sm:inline">Upload Bugreport</span>
         </Button>
 
         <Button
