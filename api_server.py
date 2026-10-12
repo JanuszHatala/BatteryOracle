@@ -114,6 +114,10 @@ async def upload_report(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process upload: {e}")
 
+    existing = db.get_report_by_hash(processed["file_hash"])
+    if existing:
+        return _format_report_detail(existing)
+
     report_id = db.save_report(
         file_hash=processed["file_hash"],
         filename=processed["filename"],
@@ -165,8 +169,6 @@ def update_report(report_id: int, req: schemas.ReportUpdateRequest):
     return _format_report_detail(updated)
 
 
-
-
 @app.delete("/api/v1/reports/{report_id}")
 def delete_report(report_id: int):
     rep = db.get_report_by_id(report_id)
@@ -197,3 +199,137 @@ def export_report_markdown(report_id: int, scope: str = "night"):
         media_type="text/markdown",
         headers={"Content-Disposition": f'attachment; filename="{clean_filename}"'}
     )
+
+
+# --- Telemetry Slicing & Metrics ---
+
+@app.get("/api/v1/reports/{report_id}/telemetry", response_model=schemas.TelemetryResponse)
+def get_report_telemetry(
+    report_id: int,
+    scope: str = "night",
+    start: Optional[str] = None,
+    end: Optional[str] = None
+):
+    rep = db.get_report_by_id(report_id)
+    if not rep:
+        raise HTTPException(status_code=404, detail="Report not found.")
+
+    payload = telemetry_service.build_telemetry_payload(
+        report=rep,
+        scope=scope,
+        custom_start=start,
+        custom_end=end
+    )
+    return schemas.TelemetryResponse(
+        scope=payload["scope"],
+        kpis=schemas.KpiMetrics(**payload["kpis"]),
+        timeline=[schemas.TimelinePoint(**p) for p in payload["timeline"]],
+        components=[schemas.PowerComponent(**c) for c in payload["components"]],
+        night_bounds=payload.get("night_bounds")
+    )
+
+
+# --- AI Diagnosis Generation ---
+
+@app.post("/api/v1/reports/{report_id}/diagnose", response_model=schemas.DiagnosisResponse)
+def diagnose_report(report_id: int, req: schemas.DiagnosisRequest):
+    rep = db.get_report_by_id(report_id)
+    if not rep:
+        raise HTTPException(status_code=404, detail="Report not found.")
+
+    try:
+        analysis, trace = telemetry_service.run_single_diagnosis(
+            report=rep,
+            scope=req.scope,
+            custom_start=req.custom_start,
+            custom_end=req.custom_end
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI diagnosis generation failed: {e}")
+
+    now_iso = datetime.now().isoformat()
+    db.update_report_analysis(report_id, analysis, trace, now_iso)
+
+    return schemas.DiagnosisResponse(
+        report_id=report_id,
+        scope=req.scope,
+        diagnosis=analysis,
+        reasoning_trace=trace,
+        updated_at=now_iso
+    )
+
+
+# --- Comparative Multi-Report Analysis ---
+
+@app.post("/api/v1/comparative/analyze", response_model=schemas.ComparativeResponse)
+def analyze_comparative(req: schemas.ComparativeRequest):
+    if not req.report_ids:
+        raise HTTPException(status_code=400, detail="No report IDs provided.")
+
+    comp_key = "_".join(str(i) for i in sorted(req.report_ids))
+    cached = db.get_combined_analysis(comp_key, scope_key=req.scope)
+    if cached and cached.get("analysis_text"):
+        return schemas.ComparativeResponse(
+            report_ids=req.report_ids,
+            scope=req.scope,
+            analysis=cached["analysis_text"],
+            reasoning_trace=cached.get("reasoning_trace", ""),
+            cached=True
+        )
+
+    all_reps = [db.get_report_by_id(rid) for rid in req.report_ids]
+    valid_reps = [r for r in all_reps if r]
+    if len(valid_reps) < len(req.report_ids):
+        raise HTTPException(status_code=404, detail="One or more specified reports were not found.")
+
+    try:
+        combined_text, trace = telemetry_service.run_comparative_analysis(
+            reports=valid_reps,
+            scope=req.scope
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Comparative analysis failed: {e}")
+
+    db.save_combined_analysis(comp_key, combined_text, reasoning_trace=trace, scope_key=req.scope)
+
+    return schemas.ComparativeResponse(
+        report_ids=req.report_ids,
+        scope=req.scope,
+        analysis=combined_text,
+        reasoning_trace=trace,
+        cached=False
+    )
+
+
+@app.get("/api/v1/comparative/export-md")
+def export_comparative_markdown(report_ids: str, scope: str = "night"):
+    try:
+        rids = [int(x.strip()) for x in report_ids.split(",") if x.strip()]
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid report_ids format. Expected comma-separated integers.")
+
+    if not rids:
+        raise HTTPException(status_code=400, detail="No report IDs supplied.")
+
+    reports = [db.get_report_by_id(rid) for rid in rids]
+    valid_reps = [r for r in reports if r]
+    if not valid_reps:
+        raise HTTPException(status_code=404, detail="None of the specified reports were found.")
+
+    comp_key = "_".join(str(i) for i in sorted(rids))
+    cached = db.get_combined_analysis(comp_key, scope_key=scope)
+    analysis_text = cached.get("analysis_text", "") if cached else ""
+
+    md = telemetry_service.build_comparative_markdown(
+        reports=valid_reps,
+        filter_mode=scope,
+        analysis_text=analysis_text
+    )
+
+    clean_filename = f"comparative_{scope}_{comp_key}.md"
+    return PlainTextResponse(
+        content=md,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{clean_filename}"'}
+    )
+

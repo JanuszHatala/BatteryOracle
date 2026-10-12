@@ -379,3 +379,92 @@ def build_compact_summary(
         lines.extend([f"    {l}" for l in text_lines[:35]])
 
     return "\n".join(lines)
+
+
+def run_single_diagnosis(
+    report: Dict[str, Any],
+    scope: str = "night",
+    custom_start: Optional[str] = None,
+    custom_end: Optional[str] = None
+) -> Tuple[str, str]:
+    """Execute LLM diagnosis for report under specific scope."""
+    diag_prompt_tmpl = llm_manager.get_prompt_template("single_diagnosis")
+
+    s_dt, e_dt, sl_df = get_effective_telemetry_bounds(
+        report=report,
+        scope=scope,
+        custom_start_str=custom_start,
+        custom_end_str=custom_end
+    )
+    kpis = parser.compute_window_kpis(sl_df)
+    filtered_telemetry = parser.get_filtered_telemetry_for_llm(report.get("summary_text", ""), scope, kpis)
+
+    active_inv_profile = db.get_latest_device_profile()
+    profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+    if profile_summary:
+        filtered_telemetry = f"{profile_summary}\n\n{filtered_telemetry}"
+
+    active_routers = db.get_active_wifi_routers()
+    router_summary = parser.format_router_context_for_llm(active_routers)
+    if router_summary:
+        filtered_telemetry = f"{router_summary}\n\n{filtered_telemetry}"
+
+    timezone = db.get_setting("device_timezone", "UTC")
+    formatted_diag_prompt = diag_prompt_tmpl.format(
+        report_name=report.get("filename", "Bugreport"),
+        timestamp_str=report.get("timestamp_str", "Unknown"),
+        device_info=report.get("device_info", "Android Device"),
+        timezone_info=timezone,
+        telemetry_data=filtered_telemetry
+    )
+
+    raw_analysis = llm_manager.call_llm_tracked(
+        messages=[{"role": "system", "content": formatted_diag_prompt}],
+        report_id=report["id"],
+        action_type=f"diagnosis_{scope}"
+    )
+    analysis = parser.sanitize_ai_output(raw_analysis, report.get("summary_text", ""))
+    trace = f"Analyzed {scope} telemetry for {report.get('custom_name', 'Report')} ({kpis['start_time']} - {kpis['end_time']})."
+    return analysis, trace
+
+
+def run_comparative_analysis(
+    reports: List[Dict[str, Any]],
+    scope: str = "night"
+) -> Tuple[str, str]:
+    """Execute LLM comparative evaluation across multiple reports."""
+    reports_summary_text = ""
+    n_s = int(db.get_setting("night_start_hour", "23"))
+    n_e = int(db.get_setting("night_end_hour", "7"))
+
+    for idx, rep in enumerate(reports):
+        reports_summary_text += f"\n--- REPORT {idx + 1}: {rep.get('custom_name', 'Report')} (Captured: {rep.get('timestamp_str', 'Unknown')}) ---\n"
+        reports_summary_text += f"Device: {rep.get('device_info', 'Unknown')}\n"
+        reports_summary_text += f"Notes: {rep.get('description', 'None')}\n"
+        reports_summary_text += build_compact_summary(rep, filter_mode=scope, n_start=n_s, n_end=n_e) + "\n"
+
+    active_inv_profile = db.get_latest_device_profile()
+    profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+    if profile_summary:
+        reports_summary_text = f"{profile_summary}\n\n{reports_summary_text}"
+
+    active_routers = db.get_active_wifi_routers()
+    router_summary = parser.format_router_context_for_llm(active_routers)
+    if router_summary:
+        reports_summary_text = f"{router_summary}\n\n{reports_summary_text}"
+
+    comp_prompt_tmpl = llm_manager.get_prompt_template("comparison")
+    timezone = db.get_setting("device_timezone", "UTC")
+    formatted_comp_prompt = comp_prompt_tmpl.format(
+        report_count=len(reports),
+        timezone_info=timezone,
+        reports_summary=reports_summary_text
+    )
+
+    combined_text = llm_manager.call_llm_tracked(
+        messages=[{"role": "system", "content": formatted_comp_prompt}],
+        action_type=f"comparative_evaluation_{scope}"
+    )
+    trace = f"Compared {len(reports)} sessions under scope {scope}."
+    return combined_text, trace
+

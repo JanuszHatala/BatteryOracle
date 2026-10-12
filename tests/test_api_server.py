@@ -107,3 +107,92 @@ def test_upload_invalid_file(client):
     )
     assert res.status_code == 400
     assert "Invalid bugreport archive" in res.json()["detail"]
+
+
+def test_telemetry_and_diagnose_endpoints(client, monkeypatch):
+    # Upload sample bugreport
+    content = """========================================================
+== dumpstate: 2026-09-04 06:47:00
+========================================================
+Build: TQ3A.230901.001
+Battery History:
+    0 (10) 100 status=discharging
+    +1m (10) 099
+    Capacity: 5000
+Estimated power use (mAh):
+  Screen: 50.0
+"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("bugreport-test.txt", content)
+
+    up = client.post(
+        "/api/v1/reports/upload",
+        files={"file": ("202609040647_bugreport.zip", buf.getvalue(), "application/zip")},
+        data={"auto_diagnose": "false"}
+    )
+    rep_id = up.json()["id"]
+
+    # 1. Test telemetry endpoint with scopes
+    tel_full = client.get(f"/api/v1/reports/{rep_id}/telemetry?scope=full")
+    assert tel_full.status_code == 200
+    data_full = tel_full.json()
+    assert data_full["scope"] == "full"
+    assert "kpis" in data_full
+    assert "timeline" in data_full
+
+    tel_night = client.get(f"/api/v1/reports/{rep_id}/telemetry?scope=night")
+    assert tel_night.status_code == 200
+
+    tel_custom = client.get(f"/api/v1/reports/{rep_id}/telemetry?scope=custom&start=2026-09-04T05:00:00&end=2026-09-04T01:00:00")
+    assert tel_custom.status_code == 200
+
+    # 2. Test diagnose endpoint with mock LLM
+    import llm_manager
+    monkeypatch.setattr(llm_manager, "call_llm_tracked", lambda *args, **kwargs: "Mocked AI Diagnosis: Standby optimal.")
+
+    diag_res = client.post(
+        f"/api/v1/reports/{rep_id}/diagnose",
+        json={"scope": "night"}
+    )
+    assert diag_res.status_code == 200
+    diag_data = diag_res.json()
+    assert "Mocked AI Diagnosis" in diag_data["diagnosis"]
+
+    # Verify report in DB was updated with new diagnosis
+    get_rep = client.get(f"/api/v1/reports/{rep_id}").json()
+    assert "Mocked AI Diagnosis" in get_rep["initial_analysis"]
+
+
+def test_comparative_endpoints(client, monkeypatch):
+    import llm_manager
+    monkeypatch.setattr(llm_manager, "call_llm_tracked", lambda *args, **kwargs: "Comparative Regression Diagnosis: Session 2 dropped 2% faster.")
+
+    # Upload two reports
+    def make_zip(name):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("bugreport.txt", f"Build: TQ3A-{name}\nBattery History:\n 0 (10) 100\nCapacity: 5000\n")
+        return client.post(
+            "/api/v1/reports/upload",
+            files={"file": (name, buf.getvalue(), "application/zip")},
+            data={"auto_diagnose": "false"}
+        ).json()["id"]
+
+    id1 = make_zip("rep1.zip")
+    id2 = make_zip("rep2.zip")
+
+    # 1. Analyze
+    cmp_res = client.post(
+        "/api/v1/comparative/analyze",
+        json={"report_ids": [id1, id2], "scope": "night"}
+    )
+    assert cmp_res.status_code == 200
+    cmp_data = cmp_res.json()
+    assert "Comparative Regression Diagnosis" in cmp_data["analysis"]
+
+    # 2. Export comparative Markdown
+    exp_res = client.get(f"/api/v1/comparative/export-md?report_ids={id1},{id2}&scope=night")
+    assert exp_res.status_code == 200
+    assert "Multi-Report Comparative Analysis" in exp_res.text
+
