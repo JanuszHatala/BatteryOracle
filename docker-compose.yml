@@ -4,7 +4,7 @@ services:
     container_name: battery-oracle
     restart: unless-stopped
     ports:
-      - "8501:8501"
+      - "8000:8000"
     environment:
       - BATTERY_ORACLE_DB_PATH=/app/data/battery_oracle.db
       - GEMINI_API_KEY=

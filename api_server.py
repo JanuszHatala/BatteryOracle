@@ -6,7 +6,8 @@ from datetime import datetime
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 import db
 import parser
@@ -772,6 +773,21 @@ def delete_wifi_router(router_id: int):
 
     db.delete_wifi_router(router_id)
     return {"deleted": True, "id": router_id}
+
+
+# --- Static Files & SPA Catch-All Route ---
+
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(static_dir):
+    app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
+
+    @app.get("/{full_path:path}")
+    def serve_spa(full_path: str):
+        file_path = os.path.join(static_dir, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(static_dir, "index.html"))
+
 
 
 

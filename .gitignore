@@ -52,3 +52,4 @@ summary_input.txt
 .superpowers/
 node_modules/
 frontend/dist/
+static/
