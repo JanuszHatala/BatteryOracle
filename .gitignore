@@ -50,3 +50,5 @@ summary_input.txt
 # Skills symlinks from packages/venv
 .agents/skills/
 .superpowers/
+node_modules/
+frontend/dist/
