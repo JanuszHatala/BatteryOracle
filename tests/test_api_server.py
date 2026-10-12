@@ -288,3 +288,108 @@ def test_chat_thread_and_messages(client, monkeypatch):
     assert del_th.json()["deleted"] is True
 
 
+def test_settings_and_models(client, monkeypatch):
+    # 1. Get settings
+    res = client.get("/api/v1/settings")
+    assert res.status_code == 200
+    data = res.json()
+    assert "device_timezone" in data
+    assert "active_llm_model" in data
+
+    # 2. Update settings
+    up_res = client.post(
+        "/api/v1/settings",
+        json={
+            "device_timezone": "Europe/Warsaw",
+            "night_start_hour": 22,
+            "night_end_hour": 6,
+            "chat_enter_mode": "send",
+            "active_llm_provider": "Google Gemini",
+            "active_llm_model": "gemini-3.8-flash"
+        }
+    )
+    assert up_res.status_code == 200
+    up_data = up_res.json()
+    assert up_data["device_timezone"] == "Europe/Warsaw"
+    assert up_data["night_start_hour"] == 22
+    assert up_data["chat_enter_mode"] == "send"
+
+    # 3. Get models
+    m_res = client.get("/api/v1/models?provider=Google Gemini")
+    assert m_res.status_code == 200
+    m_data = m_res.json()
+    assert "gemini-3.8-flash" in m_data["models"]
+
+    # 4. Test connection
+    import llm_manager
+    monkeypatch.setattr(llm_manager, "test_connection", lambda model, **kwargs: (True, "Connection successful!"))
+    tc_res = client.post("/api/v1/settings/test-connection", json={"model": "gemini-3.8-flash"})
+    assert tc_res.status_code == 200
+    assert tc_res.json()["success"] is True
+
+
+def test_device_profiles(client):
+    # Upload profile
+    content = "Package [com.google.android.gms] (1000): version=123\n"
+    up_res = client.post(
+        "/api/v1/device-profiles/upload",
+        files={"file": ("profile.txt", content.encode("utf-8"), "text/plain")},
+        data={"profile_name": "Pixel 6 Android 14 Baseline"}
+    )
+    assert up_res.status_code == 200
+    prof = up_res.json()
+    prof_id = prof["id"]
+    assert prof["profile_name"] == "Pixel 6 Android 14 Baseline"
+
+    # List profiles
+    list_res = client.get("/api/v1/device-profiles")
+    assert list_res.status_code == 200
+    assert len(list_res.json()) >= 1
+
+    # Get single profile
+    get_res = client.get(f"/api/v1/device-profiles/{prof_id}")
+    assert get_res.status_code == 200
+    assert get_res.json()["id"] == prof_id
+
+    # Delete profile
+    del_res = client.delete(f"/api/v1/device-profiles/{prof_id}")
+    assert del_res.status_code == 200
+    assert del_res.json()["deleted"] is True
+
+
+def test_wifi_routers(client):
+    # 1. Create router
+    c_res = client.post(
+        "/api/v1/wifi-routers",
+        json={
+            "router_name": "Home Fritz!Box 7590",
+            "brand": "AVM",
+            "model": "FRITZ!Box 7590 AX",
+            "specs_json": {"wifi_standard": "Wi-Fi 6", "frequency": "2.4GHz / 5GHz"},
+            "location_tag": "Living Room",
+            "is_active": 1,
+            "notes": "Main mesh router"
+        }
+    )
+    assert c_res.status_code == 200
+    r = c_res.json()
+    r_id = r["id"]
+    assert r["router_name"] == "Home Fritz!Box 7590"
+
+    # 2. List routers
+    l_res = client.get("/api/v1/wifi-routers")
+    assert l_res.status_code == 200
+    assert any(x["id"] == r_id for x in l_res.json())
+
+    # 3. Update router active status
+    u_res = client.put(f"/api/v1/wifi-routers/{r_id}", json={"is_active": 0})
+    assert u_res.status_code == 200
+    assert u_res.json()["is_active"] == 0
+
+    # 4. Delete router
+    d_res = client.delete(f"/api/v1/wifi-routers/{r_id}")
+    assert d_res.status_code == 200
+    assert d_res.json()["deleted"] is True
+
+
+

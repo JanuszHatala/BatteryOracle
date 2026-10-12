@@ -177,6 +177,13 @@ class ModelsResponse(BaseModel):
     default_model: str
 
 
+class ConnectionTestRequest(BaseModel):
+    model: str
+    api_key: Optional[str] = None
+    provider: Optional[str] = None
+
+
+
 # --- Device Profile & Wi-Fi Router Schemas ---
 
 class DeviceProfileSummary(BaseModel):

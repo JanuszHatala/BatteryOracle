@@ -1,6 +1,7 @@
 import os
+import json
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Response, status
@@ -53,6 +54,31 @@ def _to_iso(val: Optional[Any]) -> Optional[str]:
     if hasattr(val, "isoformat"):
         return val.isoformat()
     return str(val)
+
+
+def _parse_json(val: Any) -> Dict[str, Any]:
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, str) and val.strip():
+        try:
+            return json.loads(val)
+        except Exception:
+            return {}
+    return {}
+
+
+def _format_wifi_router(r: dict) -> schemas.WifiRouterResponse:
+    return schemas.WifiRouterResponse(
+        id=r["id"],
+        router_name=r["router_name"],
+        brand=r["brand"],
+        model=r["model"],
+        specs_json=_parse_json(r.get("specs_json", {})),
+        location_tag=r.get("location_tag", "Home"),
+        is_active=r.get("is_active", 1),
+        notes=r.get("notes", ""),
+        created_at=_to_iso(r.get("created_at"))
+    )
 
 
 def _format_report_detail(rep: dict) -> schemas.ReportDetail:
@@ -575,5 +601,178 @@ def export_thread_markdown(thread_id: int):
         media_type="text/markdown",
         headers={"Content-Disposition": f'attachment; filename="{clean_filename}"'}
     )
+
+
+# --- System Settings & LLM Configuration ---
+
+@app.get("/api/v1/settings", response_model=schemas.SettingsResponse)
+def get_settings():
+    return schemas.SettingsResponse(
+        device_timezone=db.get_setting("device_timezone", "UTC"),
+        night_start_hour=int(db.get_setting("night_start_hour", "23")),
+        night_end_hour=int(db.get_setting("night_end_hour", "7")),
+        chat_enter_mode=db.get_setting("chat_enter_mode", "newline"),
+        active_llm_provider=db.get_setting("active_llm_provider", "Google Gemini"),
+        active_llm_model=db.get_setting("active_llm_model", "gemini-3.8-flash"),
+        gemini_key_set=bool(os.getenv("GEMINI_API_KEY") or db.get_setting("gemini_api_key")),
+        openrouter_key_set=bool(os.getenv("OPENROUTER_API_KEY") or db.get_setting("openrouter_api_key"))
+    )
+
+
+@app.post("/api/v1/settings", response_model=schemas.SettingsResponse)
+def update_settings(req: schemas.SettingsUpdateRequest):
+    if req.device_timezone is not None:
+        db.set_setting("device_timezone", req.device_timezone)
+    if req.night_start_hour is not None:
+        db.set_setting("night_start_hour", str(req.night_start_hour))
+    if req.night_end_hour is not None:
+        db.set_setting("night_end_hour", str(req.night_end_hour))
+    if req.chat_enter_mode is not None:
+        db.set_setting("chat_enter_mode", req.chat_enter_mode)
+    if req.active_llm_provider is not None:
+        db.set_setting("active_llm_provider", req.active_llm_provider)
+    if req.active_llm_model is not None:
+        db.set_setting("active_llm_model", req.active_llm_model)
+    if req.gemini_api_key is not None:
+        db.set_setting("gemini_api_key", req.gemini_api_key)
+    if req.openrouter_api_key is not None:
+        db.set_setting("openrouter_api_key", req.openrouter_api_key)
+
+    return get_settings()
+
+
+@app.get("/api/v1/models", response_model=schemas.ModelsResponse)
+def get_models(provider: str = "Google Gemini"):
+    models = llm_manager.get_all_models_for_provider(provider)
+    preset = llm_manager.PROVIDER_PRESETS.get(provider, {})
+    clean_models = [m.replace("gemini/", "").replace("openrouter/", "") for m in models]
+    raw_default = preset.get("default_model", models[0] if models else "")
+    clean_default = raw_default.replace("gemini/", "").replace("openrouter/", "")
+    return schemas.ModelsResponse(
+        provider=provider,
+        models=clean_models,
+        default_model=clean_default
+    )
+
+
+
+@app.post("/api/v1/settings/test-connection")
+def test_connection_endpoint(req: schemas.ConnectionTestRequest):
+    ok, msg = llm_manager.test_connection(
+        model=req.model,
+        api_key=req.api_key,
+        provider=req.provider
+    )
+    return {"success": ok, "message": msg}
+
+
+# --- Device Profiles ---
+
+@app.get("/api/v1/device-profiles", response_model=List[schemas.DeviceProfileSummary])
+def list_device_profiles():
+    profiles = db.get_all_device_profiles()
+    return [
+        schemas.DeviceProfileSummary(
+            id=p["id"],
+            profile_name=p["profile_name"],
+            created_at=_to_iso(p.get("created_at"))
+        )
+        for p in profiles
+    ]
+
+
+@app.post("/api/v1/device-profiles/upload", response_model=schemas.DeviceProfileDetail)
+async def upload_device_profile(
+    file: UploadFile = File(...),
+    profile_name: Optional[str] = Form(None)
+):
+    content = await file.read()
+    raw_text = content.decode("utf-8", errors="replace")
+    parsed_data = parser.parse_device_inventory(raw_text)
+
+    name = profile_name or (file.filename or "Device Profile").replace(".txt", "")
+    pid = db.save_device_profile(profile_name=name, raw_content=raw_text, parsed_data=parsed_data)
+    created = db.get_device_profile(pid)
+
+    return schemas.DeviceProfileDetail(
+        id=created["id"],
+        profile_name=created["profile_name"],
+        raw_content=created["raw_content"],
+        parsed_data=created.get("parsed_data", {}),
+        analysis_text=created.get("analysis_text", ""),
+        reasoning_trace=created.get("reasoning_trace", ""),
+        created_at=_to_iso(created.get("created_at"))
+    )
+
+
+@app.get("/api/v1/device-profiles/{profile_id}", response_model=schemas.DeviceProfileDetail)
+def get_device_profile(profile_id: int):
+    p = db.get_device_profile(profile_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Device profile not found.")
+    return schemas.DeviceProfileDetail(
+        id=p["id"],
+        profile_name=p["profile_name"],
+        raw_content=p["raw_content"],
+        parsed_data=p.get("parsed_data", {}),
+        analysis_text=p.get("analysis_text", ""),
+        reasoning_trace=p.get("reasoning_trace", ""),
+        created_at=_to_iso(p.get("created_at"))
+    )
+
+
+@app.delete("/api/v1/device-profiles/{profile_id}")
+def delete_device_profile(profile_id: int):
+    p = db.get_device_profile(profile_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Device profile not found.")
+    db.delete_device_profile(profile_id)
+    return {"deleted": True, "id": profile_id}
+
+
+# --- Wi-Fi Routers ---
+
+@app.get("/api/v1/wifi-routers", response_model=List[schemas.WifiRouterResponse])
+def list_wifi_routers():
+    routers = db.get_all_wifi_routers()
+    return [_format_wifi_router(r) for r in routers]
+
+
+@app.post("/api/v1/wifi-routers", response_model=schemas.WifiRouterResponse)
+def create_wifi_router(req: schemas.WifiRouterCreate):
+    rid = db.save_wifi_router(
+        router_name=req.router_name,
+        brand=req.brand,
+        model=req.model,
+        specs_json=req.specs_json,
+        location_tag=req.location_tag,
+        is_active=req.is_active,
+        notes=req.notes or ""
+    )
+    r = db.get_wifi_router(rid)
+    return _format_wifi_router(r)
+
+
+@app.put("/api/v1/wifi-routers/{router_id}", response_model=schemas.WifiRouterResponse)
+def update_wifi_router_status(router_id: int, req: schemas.WifiRouterUpdate):
+    r = db.get_wifi_router(router_id)
+    if not r:
+        raise HTTPException(status_code=404, detail="Router not found.")
+
+    db.update_wifi_router_active(router_id, req.is_active)
+    updated = db.get_wifi_router(router_id)
+    return _format_wifi_router(updated)
+
+
+@app.delete("/api/v1/wifi-routers/{router_id}")
+def delete_wifi_router(router_id: int):
+    r = db.get_wifi_router(router_id)
+    if not r:
+        raise HTTPException(status_code=404, detail="Router not found.")
+
+    db.delete_wifi_router(router_id)
+    return {"deleted": True, "id": router_id}
+
+
 
 
