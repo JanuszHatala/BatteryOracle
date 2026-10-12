@@ -5,6 +5,7 @@ import tempfile
 import time
 from datetime import datetime, timedelta
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -256,15 +257,17 @@ div[data-testid="stDownloadButton"] > button[kind="primary"]:hover {
 .chat-header-wrap {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     flex-wrap: wrap;
-    margin-bottom: 2px;
+    margin-top: 8px;
+    margin-bottom: 10px;
+    padding: 2px 0;
 }
 
 .chat-header-title {
     font-size: 1.15rem;
     font-weight: 700;
-    color: #1e293b;
+    color: #f8fafc !important;
 }
 
 .scope-pill {
@@ -272,12 +275,217 @@ div[data-testid="stDownloadButton"] > button[kind="primary"]:hover {
     align-items: center;
     gap: 5px;
     font-size: 0.8rem;
-    color: #475569;
-    background: #f1f5f9;
-    border: 1px solid #cbd5e1;
-    padding: 3px 10px;
+    color: #cbd5e1 !important;
+    background: #1e293b !important;
+    border: 1px solid #475569 !important;
+    padding: 4px 10px;
     border-radius: 12px;
     font-weight: 500;
+}
+
+.chat-shortcut-hint {
+    font-size: 0.82rem;
+    color: #94a3b8;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.chat-shortcut-hint strong {
+    color: #e2e8f0;
+}
+
+/* User avatar and message styling - vibrant green */
+div[data-testid="stChatMessage"] [data-testid="chatAvatarIcon-user"],
+div[data-testid="stChatMessage"] div:has(> [data-testid="chatAvatarIcon-user"]) {
+    background-color: #10b981 !important;
+    color: #ffffff !important;
+}
+
+div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
+    border: 1px solid rgba(16, 185, 129, 0.25) !important;
+    border-left: 3px solid #10b981 !important;
+    background: rgba(16, 185, 129, 0.04) !important;
+    border-radius: 10px !important;
+    margin-bottom: 8px !important;
+}
+
+/* Stick chat message action buttons strictly to the right edge */
+div[data-testid="stChatMessage"] div[data-testid="stHorizontalBlock"]:first-child {
+    display: flex !important;
+    align-items: center !important;
+    width: 100% !important;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="column"]:last-child {
+    display: flex !important;
+    flex-direction: row !important;
+    justify-content: flex-end !important;
+    align-items: center !important;
+    gap: 4px !important;
+    margin-left: auto !important;
+    min-width: 65px !important;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="column"]:last-child div[data-testid="stButton"] {
+    width: auto !important;
+    margin: 0 !important;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="column"]:last-child button {
+    padding: 2px 6px !important;
+    font-size: 0.88rem !important;
+    color: #94a3b8 !important;
+    border-radius: 6px !important;
+    background: transparent !important;
+    border: none !important;
+    line-height: 1 !important;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="column"]:last-child button:hover {
+    color: #f1f5f9 !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Chat Input Multiline Bottom Spacing Fix & Button Absolute Anchoring */
+div[data-testid="stChatInput"] {
+    position: relative !important;
+    padding: 0 !important;
+    margin: 8px 6px 12px 6px !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+div[data-testid="stChatInput"]:focus-within {
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* Neutral subtle border on inner container - no green border */
+div[data-testid="stChatInput"] > div {
+    background: #181926 !important;
+    border: 1px solid #334155 !important;
+    border-radius: 10px !important;
+    padding: 2px 6px !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
+    transition: border-color 0.15s ease;
+}
+
+div[data-testid="stChatInput"] > div:focus-within {
+    border-color: #6366f1 !important;
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2) !important;
+}
+
+div[data-testid="stChatInput"] textarea[data-testid="stChatInputTextArea"] {
+    padding-right: 44px !important;
+    padding-bottom: 6px !important;
+    padding-top: 6px !important;
+    margin-bottom: 0px !important;
+    line-height: 1.45 !important;
+    min-height: 38px !important;
+}
+
+/* Send button absolute positioning in bottom right corner */
+div[data-testid="stChatInput"] button[data-testid="stChatInputSubmitButton"] {
+    position: absolute !important;
+    right: 8px !important;
+    bottom: 8px !important;
+    z-index: 10 !important;
+    background: #10b981 !important;
+    border: 1px solid #059669 !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 6px rgba(16, 185, 129, 0.35) !important;
+}
+
+div[data-testid="stChatInput"] button[data-testid="stChatInputSubmitButton"]:hover {
+    background: #059669 !important;
+    border-color: #047857 !important;
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.5) !important;
+}
+
+/* Collapse empty button wrapper row below textarea */
+div[data-testid="stChatInput"] div:has(> button[data-testid="stChatInputSubmitButton"]) {
+    margin: 0 !important;
+    padding: 0 !important;
+    height: 0px !important;
+    min-height: 0px !important;
+    line-height: 0 !important;
+    border: none !important;
+}
+
+div[data-testid="stChatInput"] > div:last-child {
+/* Togglable shortcut control */
+.chat-shortcut-toggle-wrap {
+    margin: 2px 0 4px 0;
+}
+
+.chat-shortcut-toggle-wrap button {
+    font-size: 0.82rem !important;
+    color: #94a3b8 !important;
+    background: transparent !important;
+    border: none !important;
+    padding: 3px 8px !important;
+    margin: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    cursor: pointer !important;
+    font-weight: 500 !important;
+    border-radius: 6px !important;
+    transition: color 0.15s ease, background-color 0.15s ease !important;
+}
+
+.chat-shortcut-toggle-wrap button:hover {
+    color: #e2e8f0 !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* Resizable and Movable Floating Modal Window */
+.oracle-floating-window {
+    position: fixed !important;
+    top: 90px;
+    right: 30px;
+    width: 620px;
+    height: 750px;
+    min-width: 380px;
+    min-height: 400px;
+    max-width: 95vw;
+    max-height: 90vh;
+    z-index: 999999 !important;
+    background: #181926 !important;
+    border: 1.5px solid #8b5cf6 !important;
+    border-radius: 12px !important;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.65), 0 0 25px rgba(139, 92, 246, 0.25) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    resize: both !important;
+    overflow: hidden !important;
+    padding: 0 0 12px 0 !important;
+}
+
+.oracle-floating-window div[data-testid="stVerticalBlockBorderWrapper"],
+.oracle-floating-window div[data-testid="stVerticalBlock"] {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+}
+
+.oracle-floating-header {
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
+    border-bottom: 1.5px solid rgba(139, 92, 246, 0.45);
+    padding: 10px 14px;
+    cursor: move;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 600;
+    font-size: 0.92rem;
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 </style>
 """, unsafe_allow_html=True)
@@ -396,7 +604,7 @@ def parse_llm_error(error: Exception):
             suggestions.append(f"🛑 **Daily Free Quota Exhausted**: Google Gemini API has depleted its daily requests or tokens for {model_display}. Daily free quotas reset at **Midnight Pacific Time (09:00 CEST / 07:00 UTC)**.")
             if retry_delay_sec:
                 suggestions.append(f"⚠️ **Note on Retry Delay**: The raw error mentions *'retry in {retry_delay_sec}s'*, but that cooldown only clears the sliding 1-minute window bucket. It will **not** bypass the daily quota.")
-            suggestions.append(f"⚡ **Immediate Fix — Switch to `gemini-2.5-flash`**: In **⚙️ AI & LLM Settings** (sidebar), switch model to `gemini-2.5-flash`. The Flash model offers **1,500 requests/day** and **1,000,000 tokens/minute** on the Free Tier (compared to only 50 requests/day and 32k tokens/min on Pro) and finishes battery reports in seconds.")
+            suggestions.append(f"⚡ **Immediate Fix — Switch to `gemini-3.8-flash`**: In **⚙️ AI & LLM Settings** (sidebar), switch model to `gemini-3.8-flash`. The Flash model offers high request quotas and **1,000,000 tokens/minute** on Google AI Studio and finishes battery reports in seconds.")
             suggestions.append("🔑 **Switch to Alternative Provider**: Select **OpenRouter**, **OpenAI**, or **Groq** in settings if you have an alternative API key.")
             suggestions.append("💳 **Add Billing to Google AI Studio**: Attaching a credit card to your Google AI Studio project upgrades your key to Pay-As-You-Go, removing the harsh 50 requests/day free limit (Flash costs pennies for hundreds of runs).")
         else:
@@ -404,7 +612,7 @@ def parse_llm_error(error: Exception):
                 suggestions.append(f"⏱️ **Wait {retry_delay_sec} seconds** for the provider's per-minute rate-limiting window to roll over, then retry.")
             else:
                 suggestions.append("⏱️ **Wait 30–60 seconds** for your API provider's rate-limit window to reset, then retry.")
-            suggestions.append("⚡ **Switch to `gemini-2.5-flash`**: Flash has significantly higher rate limits (15 RPM vs 2 RPM on Pro).")
+            suggestions.append("⚡ **Switch to `gemini-3.8-flash`**: Flash has significantly higher rate limits.")
             suggestions.append("🔑 **Add / Switch Provider Key**: Switch to an **OpenRouter**, **OpenAI**, or **Groq** key in Settings.")
 
     # 2. Check for Authentication / Bad Key (401 / 403)
@@ -421,7 +629,7 @@ def parse_llm_error(error: Exception):
         title = "Telemetry Exceeds Model Context Window"
         icon = "📜"
         suggestions.append("✂️ **Narrow Filter Scope**: Try selecting a specific **Night Standby** or **Screen-Off** interval rather than a multi-day full window.")
-        suggestions.append("🧠 **Switch to High-Context Model**: Switch to `gemini-2.5-flash` or `gemini-2.5-pro` (up to 1M–2M token context window) in **⚙️ AI & LLM Settings**.")
+        suggestions.append("🧠 **Switch to High-Context Model**: Switch to `gemini-3.8-flash` or `gemini-3.6-flash` (up to 1M token context window) in **⚙️ AI & LLM Settings**.")
 
     # 4. Check for Service Unavailable / High Demand / Capacity (503)
     elif "serviceunavailable" in err_lower or "503" in err_lower or "high demand" in err_lower or "unavailable" in err_lower:
@@ -429,7 +637,7 @@ def parse_llm_error(error: Exception):
         title = "Model Temporarily Overloaded (503 High Demand)"
         icon = "🔥"
         suggestions.append("⏱️ **Wait a Moment & Retry**: Spikes in demand on preview/experimental models are temporary. Wait 10–30 seconds and click the button again.")
-        suggestions.append("🔄 **Switch Model**: In **⚙️ AI & LLM Settings**, switch to a stable production model (e.g. `gemini-2.5-flash` or `gemini-2.5-pro`) which has dedicated capacity.")
+        suggestions.append("🔄 **Switch Model**: In **⚙️ AI & LLM Settings**, switch to a stable production model (e.g. `gemini-3.8-flash` or `gemini-3.6-flash`) which has dedicated capacity.")
         suggestions.append("🔑 **Try Another Provider**: If Google Gemini is congested, switch provider to **OpenRouter** or **OpenAI** in settings.")
 
     # 5. Check for Connection / Timeout / Network
@@ -760,9 +968,8 @@ def add_night_shading(fig, df_time, night_start=23, night_end=7):
         
     return fig
 
-@st.fragment
 def render_chat_message_item(msg, rep_id=None, active_th_id=None, thread_dict=None, is_global=False, search_query=""):
-    """Renders a single chat message inside an independent Streamlit fragment for instantaneous toggling and search highlighting."""
+    """Renders a single chat message inside the chat panel with support for toggling, search highlighting, and deletion."""
     msg_id = msg["id"]
     state_key = f"msg_col_{msg_id}"
     if state_key not in st.session_state:
@@ -785,7 +992,7 @@ def render_chat_message_item(msg, rep_id=None, active_th_id=None, thread_dict=No
         else:
             display_ts = ts_str
 
-        col_toggle, col_meta, col_del = st.columns([0.03, 0.94, 0.03], vertical_alignment="center")
+        col_toggle, col_meta, col_act = st.columns([0.03, 0.87, 0.10], vertical_alignment="center")
         with col_toggle:
             toggle_icon = "▶" if is_col else "▼"
             tooltip = "Click to expand message" if is_col else "Click to collapse message"
@@ -819,7 +1026,18 @@ def render_chat_message_item(msg, rep_id=None, active_th_id=None, thread_dict=No
                 if header_parts:
                     st.caption(" &nbsp;•&nbsp; ".join(header_parts), unsafe_allow_html=True)
 
-        with col_del:
+        with col_act:
+            if msg["role"] == "assistant" and not is_global and active_th_id and thread_dict:
+                if st.button("🔀", key=f"fork_{msg_id}", type="tertiary", help="Fork into a new thread from this response"):
+                    forked_id = db.fork_thread(
+                        source_thread_id=active_th_id,
+                        from_message_id=msg_id,
+                        new_title=f"Branch: {thread_dict.get(active_th_id, 'Thread')[:15]}..."
+                    )
+                    st.session_state.active_thread_id = forked_id
+                    st.success("Forked into a new thread!")
+                    st.rerun(scope="fragment")
+
             del_key = f"del_gmsg_{msg_id}" if is_global else f"delmsg_{msg_id}"
             if st.button("🗑️", key=del_key, type="tertiary", help="Delete message from history"):
                 db.delete_chat_message(msg_id)
@@ -827,20 +1045,6 @@ def render_chat_message_item(msg, rep_id=None, active_th_id=None, thread_dict=No
 
         if not is_col:
             st.markdown(highlighted_content, unsafe_allow_html=True)
-            
-            # Fork option for assistant messages in Single Report view
-            if msg["role"] == "assistant" and not is_global and active_th_id and thread_dict:
-                col_spacer, col_fork = st.columns([4, 1])
-                with col_fork:
-                    if st.button("🔀 Fork from here", key=f"fork_{msg_id}"):
-                        forked_id = db.fork_thread(
-                            source_thread_id=active_th_id,
-                            from_message_id=msg_id,
-                            new_title=f"Branch: {thread_dict.get(active_th_id, 'Thread')[:15]}..."
-                        )
-                        st.session_state.active_thread_id = forked_id
-                        st.success("Forked into a new thread!")
-                        st.rerun(scope="fragment")
 
 @st.fragment
 def render_ai_chat_panel(
@@ -851,7 +1055,8 @@ def render_ai_chat_panel(
     active_thread_state_key: str,
     sys_prompt_builder,
     action_type: str = "chat",
-    filter_label: str = ""
+    filter_label: str = "",
+    is_floating: bool = False
 ):
     """
     Renders an isolated, full-screen AI chat consultation workspace within its dedicated tab.
@@ -859,6 +1064,8 @@ def render_ai_chat_panel(
     updates only this tab without dimming the application or resetting scroll position.
     """
     is_global = (report_id is None)
+    if is_floating:
+        st.markdown('<div id="oracle-floating-panel-marker" style="display:none;"></div>', unsafe_allow_html=True)
     threads = db.get_threads_for_report(report_id)
     if not threads:
         init_title = "Global Thread" if is_global else "Main Thread"
@@ -877,7 +1084,7 @@ def render_ai_chat_panel(
         f"""
         <div class="chat-header-wrap">
             <div class="chat-header-title">💬 {panel_title}</div>
-            <div>
+            <div style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px;">
                 <span class="scope-pill">{scope_badge}</span>
                 <span class="scope-pill">🧵 {len(threads)} thread{'s' if len(threads) != 1 else ''}</span>
                 <span class="scope-pill">💬 {total_msgs} message{'s' if total_msgs != 1 else ''}</span>
@@ -886,6 +1093,15 @@ def render_ai_chat_panel(
         """,
         unsafe_allow_html=True
     )
+
+    if is_floating:
+        # Hidden trigger button invoked by floating window header dock action
+        if st.button("TRIGGER_DOCK_SBS", key=f"btn_trig_dock_{scope_key}"):
+            if report_id:
+                st.session_state[f"cur_layout_{report_id}"] = "👥 Side-by-side"
+                st.session_state[f"radio_layout_{report_id}"] = "👥 Side-by-side"
+                db.set_setting(f"layout_pref_{report_id}", "👥 Side-by-side")
+            st.rerun(scope="app")
 
     # Primary Chat Management Toolbar: Thread select, New, Rename, Clear/Delete, Export
     c_sel, c_new, c_ren, c_del, c_exp = st.columns([3.6, 1.2, 1.2, 1.2, 1.2], vertical_alignment="center")
@@ -993,23 +1209,279 @@ def render_ai_chat_panel(
 
     st.divider()
 
-    # Full Page Viewport: Render conversation messages naturally on the full page
-    if not thread_messages:
-        st.info("💡 No messages in this thread yet. Ask anything below to start the consultation!")
+    # Dedicated Messages Container
+    # Fixed scrollable container only in floating modal window; natural flow without scrolling in side-by-side or stacked
+    if is_floating:
+        messages_box = st.container(height=480, border=False)
     else:
-        for msg in thread_messages:
-            render_chat_message_item(
-                msg=msg,
-                rep_id=report_id,
-                active_th_id=active_th_id,
-                thread_dict=thread_dict,
-                is_global=is_global,
-                search_query=search_q
-            )
+        messages_box = st.container(border=False)
+
+    with messages_box:
+        if not thread_messages:
+            st.info("💡 No messages in this thread yet. Ask anything below to start the consultation!")
+        else:
+            for msg in thread_messages:
+                render_chat_message_item(
+                    msg=msg,
+                    rep_id=report_id,
+                    active_th_id=active_th_id,
+                    thread_dict=thread_dict,
+                    is_global=is_global,
+                    search_query=search_q
+                )
+
+    # Keyboard shortcut mode togglable control
+    chat_enter_mode = db.get_setting("chat_enter_mode", "newline")
+    if chat_enter_mode == "newline":
+        mode_label = "⌨️ Enter: New Line • Ctrl+Enter / ⌘+Enter: Send ⇄"
+        mode_help = "Click to toggle: Enter will Send message directly"
+    else:
+        mode_label = "⌨️ Enter: Send • Shift+Enter: New Line ⇄"
+        mode_help = "Click to toggle: Enter will insert New Line"
+
+    st.markdown('<div class="chat-shortcut-toggle-wrap">', unsafe_allow_html=True)
+    if st.button(mode_label, key=f"btn_enter_mode_{scope_key}", type="tertiary", help=mode_help):
+        new_mode = "send" if chat_enter_mode == "newline" else "newline"
+        db.set_setting("chat_enter_mode", new_mode)
+        st.rerun(scope="fragment")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    if chat_enter_mode == "newline":
+        ph_text = "Ask a question... (Enter: New line, Ctrl+Enter / ⌘+Enter: Send)"
+    else:
+        ph_text = "Ask a question... (Enter: Send, Shift+Enter: New line)"
 
     # Dedicated Chat Input Box
     input_key = f"chat_input_{scope_key}"
-    if prompt := st.chat_input("Ask a question, query telemetry, or consult about wakelocks...", key=input_key):
+    prompt = st.chat_input(ph_text, key=input_key)
+
+    # Injected Keyboard Shortcuts & Floating Modal Manager Script
+    is_float_js = "true" if is_floating else "false"
+    components.html(
+        f"""
+        <script>
+        (function() {{
+            const win = window.parent || window;
+            const pDoc = win.document;
+            win._oracleChatEnterMode = "{chat_enter_mode}";
+
+            function hideInternalDockTriggers() {{
+                pDoc.querySelectorAll('button').forEach(b => {{
+                    if (b.innerText && b.innerText.includes('TRIGGER_DOCK_SBS')) {{
+                        const wrap = b.closest('[data-testid="stButton"]') || b;
+                        wrap.style.display = 'none';
+                        wrap.style.height = '0px';
+                        wrap.style.padding = '0px';
+                        wrap.style.margin = '0px';
+                        wrap.style.overflow = 'hidden';
+                    }}
+                }});
+            }}
+            hideInternalDockTriggers();
+            setTimeout(hideInternalDockTriggers, 100);
+            setTimeout(hideInternalDockTriggers, 300);
+
+            function autoResize(ta) {{
+                if (!ta) return;
+                const maxHeight = Math.min(220, win.innerHeight * 0.35);
+                ta.style.height = 'auto';
+                const fit = Math.min(ta.scrollHeight, maxHeight);
+                ta.style.height = Math.max(38, fit) + 'px';
+                ta.style.overflowY = ta.scrollHeight > maxHeight ? 'auto' : 'hidden';
+                const wrap = ta.closest('[data-testid="stChatInput"] > div');
+                if (wrap) wrap.style.height = 'auto';
+            }}
+
+            // Global capture listener cleanup and registration
+            if (win._oracleKeydownCapture) {{
+                pDoc.removeEventListener('keydown', win._oracleKeydownCapture, true);
+            }}
+            if (win._oracleInputCapture) {{
+                pDoc.removeEventListener('input', win._oracleInputCapture, true);
+            }}
+
+            win._oracleInputCapture = function(e) {{
+                if (e.target && e.target.tagName === 'TEXTAREA' && e.target.closest && e.target.closest('[data-testid="stChatInput"]')) {{
+                    autoResize(e.target);
+                }}
+            }};
+            pDoc.addEventListener('input', win._oracleInputCapture, true);
+
+            win._oracleKeydownCapture = function(e) {{
+                const isChatTextarea = e.target && e.target.tagName === 'TEXTAREA' && e.target.closest && e.target.closest('[data-testid="stChatInput"]');
+                if (!isChatTextarea) return;
+
+                if (e.key === 'Enter') {{
+                    const curMode = win._oracleChatEnterMode || "{chat_enter_mode}";
+                    if (curMode === 'newline') {{
+                        if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {{
+                            e.preventDefault();
+                            e.stopPropagation();
+                            e.stopImmediatePropagation();
+                            
+                            const ta = e.target;
+                            let ok = false;
+                            try {{
+                                ok = pDoc.execCommand('insertText', false, '\\n');
+                            }} catch(err) {{
+                                ok = false;
+                            }}
+                            if (!ok) {{
+                                const s = ta.selectionStart;
+                                const end = ta.selectionEnd;
+                                const v = ta.value;
+                                const nativeSetter = Object.getOwnPropertyDescriptor(win.HTMLTextAreaElement.prototype, 'value')?.set || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+                                if (nativeSetter) {{
+                                    nativeSetter.call(ta, v.substring(0, s) + '\\n' + v.substring(end));
+                                }} else {{
+                                    ta.value = v.substring(0, s) + '\\n' + v.substring(end);
+                                }}
+                                ta.selectionStart = ta.selectionEnd = s + 1;
+                                ta.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                            }}
+                            autoResize(ta);
+                        }} else if (e.ctrlKey || e.metaKey) {{
+                            e.preventDefault();
+                            e.stopPropagation();
+                            e.stopImmediatePropagation();
+                            const box = e.target.closest('[data-testid="stChatInput"]');
+                            const btn = box ? box.querySelector('button[data-testid="stChatInputSubmitButton"]') : null;
+                            if (btn && !btn.disabled) {{
+                                btn.click();
+                            }}
+                        }}
+                    }} else {{
+                        if (e.ctrlKey || e.metaKey) {{
+                            e.preventDefault();
+                            e.stopPropagation();
+                            e.stopImmediatePropagation();
+                            const box = e.target.closest('[data-testid="stChatInput"]');
+                            const btn = box ? box.querySelector('button[data-testid="stChatInputSubmitButton"]') : null;
+                            if (btn && !btn.disabled) {{
+                                btn.click();
+                            }}
+                        }}
+                    }}
+                }}
+            }};
+            pDoc.addEventListener('keydown', win._oracleKeydownCapture, true);
+
+            pDoc.querySelectorAll('[data-testid="stChatInput"] textarea').forEach(autoResize);
+
+            // Floating Window Handling
+            const shouldFloat = {is_float_js};
+            if (shouldFloat) {{
+                const marker = pDoc.getElementById('oracle-floating-panel-marker');
+                if (marker) {{
+                    const win = marker.closest('[data-testid="stVerticalBlock"]');
+                    if (win) {{
+                        win.classList.add('oracle-floating-window');
+                        if (!win.querySelector('.oracle-floating-header')) {{
+                            const hdr = pDoc.createElement('div');
+                            hdr.className = 'oracle-floating-header';
+                            hdr.innerHTML = `
+                                <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">
+                                    <span style="font-size:1.05rem;">💬</span>
+                                    <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><strong>AI Investigation Chat</strong></span>
+                                    <span style="font-size:0.75rem;color:#c4b5fd;font-weight:400;margin-left:6px;white-space:nowrap;">(Drag header • resize corner)</span>
+                                </div>
+                                <div style="display:flex;align-items:center;margin-left:16px;flex-shrink:0;">
+                                    <button id="btn_dock_sbs" style="background:#4338ca;border:1px solid #6366f1;color:#ffffff;border-radius:5px;padding:4px 10px;font-size:0.78rem;cursor:pointer;font-weight:600;display:inline-flex;align-items:center;gap:5px;box-shadow:0 1px 4px rgba(0,0,0,0.3);">🗗 Dock to View</button>
+                                </div>
+                            `;
+                            win.insertBefore(hdr, win.firstChild);
+                            hdr.querySelector('#btn_dock_sbs')?.addEventListener('click', () => {{
+                                win.classList.remove('oracle-floating-window');
+                                const dockBtns = pDoc.querySelectorAll('button');
+                                for (let b of dockBtns) {{
+                                    if (b.innerText && b.innerText.includes('TRIGGER_DOCK_SBS')) {{
+                                        b.click();
+                                        return;
+                                    }}
+                                }}
+                            }});
+
+                            // Dragging logic
+                            let isDrag = false, startX, startY, startL, startT;
+                            hdr.addEventListener('mousedown', (ev) => {{
+                                if (ev.target.tagName === 'BUTTON') return;
+                                isDrag = true;
+                                startX = ev.clientX;
+                                startY = ev.clientY;
+                                const rect = win.getBoundingClientRect();
+                                startL = rect.left;
+                                startT = rect.top;
+                                ev.preventDefault();
+                            }});
+                            pDoc.addEventListener('mousemove', (ev) => {{
+                                if (!isDrag) return;
+                                const nL = Math.max(10, Math.min(window.parent.innerWidth - win.offsetWidth - 10, startL + (ev.clientX - startX)));
+                                const nT = Math.max(10, Math.min(window.parent.innerHeight - 60, startT + (ev.clientY - startY)));
+                                win.style.left = nL + 'px';
+                                win.style.top = nT + 'px';
+                                win.style.right = 'auto';
+                                win.style.bottom = 'auto';
+                            }});
+                            pDoc.addEventListener('mouseup', () => {{
+                                if (isDrag) {{
+                                    isDrag = false;
+                                    const g = {{ left: win.style.left, top: win.style.top, width: win.style.width, height: win.style.height }};
+                                    localStorage.setItem('oracle_float_chat_geo', JSON.stringify(g));
+                                }}
+                            }});
+                        }}
+
+                        // Restore saved geometry
+                        try {{
+                            const saved = localStorage.getItem('oracle_float_chat_geo');
+                            if (saved) {{
+                                const g = JSON.parse(saved);
+                                if (g.left) win.style.left = g.left;
+                                if (g.top) win.style.top = g.top;
+                                if (g.width) win.style.width = g.width;
+                                if (g.height) win.style.height = g.height;
+                                win.style.right = 'auto';
+                                win.style.bottom = 'auto';
+                            }}
+                        }} catch(e) {{}}
+
+                        // Resize observation
+                        if (!win._oracleResizeObs) {{
+                            const ro = new ResizeObserver(() => {{
+                                if (!win.classList.contains('oracle-floating-window')) return;
+                                try {{
+                                    const saved = localStorage.getItem('oracle_float_chat_geo');
+                                    const g = saved ? JSON.parse(saved) : {{}};
+                                    g.width = win.style.width || (win.offsetWidth + 'px');
+                                    g.height = win.style.height || (win.offsetHeight + 'px');
+                                    localStorage.setItem('oracle_float_chat_geo', JSON.stringify(g));
+                                }} catch(e) {{}}
+                            }});
+                            ro.observe(win);
+                            win._oracleResizeObs = ro;
+                        }}
+                    }}
+                }}
+            }} else {{
+                // Clean up if not floating
+                const oldWin = pDoc.querySelector('.oracle-floating-window');
+                if (oldWin) {{
+                    oldWin.classList.remove('oracle-floating-window');
+                    oldWin.querySelector('.oracle-floating-header')?.remove();
+                    oldWin.style.left = '';
+                    oldWin.style.top = '';
+                    oldWin.style.width = '';
+                    oldWin.style.height = '';
+                }}
+            }}
+        }})();
+        </script>
+        """,
+        height=0,
+        width=0
+    )
+
+    if prompt:
         # 1. Save user message
         db.save_chat_message(
             report_id=report_id,
@@ -1024,44 +1496,76 @@ def render_ai_chat_panel(
             auto_title = prompt[:25].strip() + "..."
             db.rename_thread(active_th_id, auto_title)
 
-        # 3. Stream/execute LLM response with live status on the full page
-        with st.chat_message("user"):
-            if filter_label:
-                st.caption(f"🎯 *Scope: {filter_label}*")
-            st.markdown(prompt)
+        # 3. Stream/execute LLM response with live status inside messages box
+        with messages_box:
+            with st.chat_message("user"):
+                st.markdown('<div id="oracle-new-user-anchor"></div>', unsafe_allow_html=True)
+                if filter_label:
+                    st.caption(f"🎯 *Scope: {filter_label}*")
+                st.markdown(prompt)
 
-        with st.chat_message("assistant"):
-            msg_ph = st.empty()
-            with st.status("🧠 Oracle AI is analyzing context and generating response...", expanded=True) as status_box:
-                st.write("Synthesizing telemetry context & prompt...")
-                sys_prompt = sys_prompt_builder()
+            components.html(
+                """
+                <script>
+                (function() {
+                    const pDoc = window.parent.document;
+                    const a = pDoc.getElementById('oracle-new-user-anchor');
+                    if (a) a.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                })();
+                </script>
+                """,
+                height=0,
+                width=0
+            )
 
-                messages = [{"role": "system", "content": sys_prompt}]
-                for m in thread_messages:
-                    messages.append({"role": m["role"], "content": m["content"]})
-                messages.append({"role": "user", "content": prompt})
+            with st.chat_message("assistant"):
+                st.markdown('<div id="oracle-new-assistant-anchor"></div>', unsafe_allow_html=True)
+                msg_ph = st.empty()
+                with st.status("🧠 Oracle AI is analyzing context and generating response...", expanded=True) as status_box:
+                    st.write("Synthesizing telemetry context & prompt...")
+                    sys_prompt = sys_prompt_builder()
 
-                st.write("Invoking active LLM reasoning model...")
-                try:
-                    reply = llm_manager.call_llm_tracked(
-                        messages=messages,
-                        report_id=report_id if (report_id and report_id > 0) else None,
-                        thread_id=active_th_id,
-                        action_type=action_type
-                    )
-                    status_box.update(label="✨ Response generated successfully!", state="complete", expanded=False)
-                    msg_ph.markdown(reply)
-                    db.save_chat_message(
-                        report_id=report_id,
-                        role="assistant",
-                        content=reply,
-                        thread_id=active_th_id,
-                        filter_context=filter_label
-                    )
-                except Exception as e:
-                    status_box.update(label="❌ Failed to generate response", state="error", expanded=True)
-                    with msg_ph.container():
-                        render_ai_error(e, action_description="generating assistant reply", key_suffix=f"chat_{scope_key}_{active_th_id}")
+                    messages = [{"role": "system", "content": sys_prompt}]
+                    for m in thread_messages:
+                        messages.append({"role": m["role"], "content": m["content"]})
+                    messages.append({"role": "user", "content": prompt})
+
+                    st.write("Invoking active LLM reasoning model...")
+                    try:
+                        reply = llm_manager.call_llm_tracked(
+                            messages=messages,
+                            report_id=report_id if (report_id and report_id > 0) else None,
+                            thread_id=active_th_id,
+                            action_type=action_type
+                        )
+                        status_box.update(label="✨ Response generated successfully!", state="complete", expanded=False)
+                        msg_ph.markdown(reply)
+                        db.save_chat_message(
+                            report_id=report_id,
+                            role="assistant",
+                            content=reply,
+                            thread_id=active_th_id,
+                            filter_context=filter_label
+                        )
+
+                        # Smoothly scroll to the top of the AI response so user can read from line 1
+                        components.html(
+                            """
+                            <script>
+                            (function() {
+                                const pDoc = window.parent.document;
+                                const a = pDoc.getElementById('oracle-new-assistant-anchor');
+                                if (a) a.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            })();
+                            </script>
+                            """,
+                            height=0,
+                            width=0
+                        )
+                    except Exception as e:
+                        status_box.update(label="❌ Failed to generate response", state="error", expanded=True)
+                        with msg_ph.container():
+                            render_ai_error(e, action_description="generating assistant reply", key_suffix=f"chat_{scope_key}_{active_th_id}")
 
         # Fragment-only rerun to refresh viewport with newly saved messages
         st.rerun(scope="fragment")
@@ -2150,15 +2654,12 @@ if st.session_state.active_tab == "single":
         
         # --- TIME WINDOW & FOCUS FILTER BAR ---
         st.markdown("### 🎯 Analysis Scope & Time Filter")
-        scope_col1, scope_col2 = st.columns([2, 3])
-        
-        with scope_col1:
-            filter_mode_choice = st.radio(
-                "Filter Scope:",
-                ["🌐 Full Session", "🌙 Night Standby (Preset)", "⏱️ Custom Window", "📴 Screen-Off Only"],
-                horizontal=True,
-                key=f"scope_radio_{rep_id}"
-            )
+        filter_mode_choice = st.radio(
+            "Filter Scope:",
+            ["🌐 Full Session", "🌙 Night Standby (Preset)", "⏱️ Custom Window", "📴 Screen-Off Only"],
+            horizontal=True,
+            key=f"scope_radio_{rep_id}"
+        )
             
         raw_hist_df = active_report.get("history_data")
         has_history = raw_hist_df is not None and not raw_hist_df.empty and "Time" in raw_hist_df.columns
@@ -2235,78 +2736,74 @@ if st.session_state.active_tab == "single":
                 is_custom_saved = (db_c_s is not None and db_c_e is not None) or (start_dt != auto_s_dt or end_dt != auto_e_dt)
                 custom_badge = " *(Saved custom sleep interval active)*" if is_custom_saved else f" *(Default preset: {night_start_cfg:02d}:00 to {night_end_cfg:02d}:00)*"
                 
-                with scope_col2:
-                    st.info(f"🌙 **Targeted Overnight Interval:** `{start_dt.strftime('%Y-%m-%d %H:%M')}` → `{end_dt.strftime('%Y-%m-%d %H:%M')}` (Duration: {(end_dt - start_dt).total_seconds()/3600:.1f} hrs)\n\n{custom_badge}")
-                    with st.expander("⏱️ Adjust Night Sleep/Wake Window for this Report", expanded=False):
-                        st.caption("Specify your bedtime (evening/night) and wake-up time (morning). Changes are permanently saved for this report:")
-                        
-                        col_t1, col_t2 = st.columns(2)
-                        with col_t1:
-                            in_bed = st.time_input("🌙 Bedtime (Start):", value=start_dt.time(), key=f"t_bed_{rep_id}")
-                        with col_t2:
-                            in_wake = st.time_input("☀️ Wake-up (End):", value=end_dt.time(), key=f"t_wake_{rep_id}")
+                st.info(f"🌙 **Targeted Overnight Interval:** `{start_dt.strftime('%Y-%m-%d %H:%M')}` → `{end_dt.strftime('%Y-%m-%d %H:%M')}` (Duration: {(end_dt - start_dt).total_seconds()/3600:.1f} hrs)\n\n{custom_badge}")
+                with st.expander("⏱️ Adjust Night Sleep/Wake Window for this Report", expanded=False):
+                    st.caption("Specify your bedtime (evening/night) and wake-up time (morning). Changes are permanently saved for this report:")
+                    
+                    col_t1, col_t2 = st.columns(2)
+                    with col_t1:
+                        in_bed = st.time_input("🌙 Bedtime (Start):", value=start_dt.time(), key=f"t_bed_{rep_id}")
+                    with col_t2:
+                        in_wake = st.time_input("☀️ Wake-up (End):", value=end_dt.time(), key=f"t_wake_{rep_id}")
 
-                        # Calculate candidate start and end datetimes based on selected time
-                        # Wake time is on the last morning of the bugreport (end_dt's date or max_dt's date)
-                        wake_date = max_dt.date()
-                        new_cand_end = datetime.combine(wake_date, in_wake)
-                        # If bedtime hour is greater than wake-up hour (crosses midnight, e.g. 21:55 -> 07:22)
-                        if in_bed > in_wake:
-                            new_cand_start = datetime.combine(wake_date - pd.Timedelta(days=1), in_bed)
-                        else:
-                            new_cand_start = datetime.combine(wake_date, in_bed)
+                    # Calculate candidate start and end datetimes based on selected time
+                    # Wake time is on the last morning of the bugreport (end_dt's date or max_dt's date)
+                    wake_date = max_dt.date()
+                    new_cand_end = datetime.combine(wake_date, in_wake)
+                    # If bedtime hour is greater than wake-up hour (crosses midnight, e.g. 21:55 -> 07:22)
+                    if in_bed > in_wake:
+                        new_cand_start = datetime.combine(wake_date - pd.Timedelta(days=1), in_bed)
+                    else:
+                        new_cand_start = datetime.combine(wake_date, in_bed)
 
-                        # Clamp to available dataset bounds
-                        new_cand_start = max(min_dt, min(max_dt, new_cand_start))
-                        new_cand_end = max(min_dt, min(max_dt, new_cand_end))
+                    # Clamp to available dataset bounds
+                    new_cand_start = max(min_dt, min(max_dt, new_cand_start))
+                    new_cand_end = max(min_dt, min(max_dt, new_cand_end))
 
-                        btn_c1, btn_c2 = st.columns([1, 1])
-                        with btn_c1:
-                            if st.button("💾 Apply & Save Window", key=f"save_night_{rep_id}", type="primary"):
-                                if new_cand_start < new_cand_end:
-                                    db.update_report_night_window(rep_id, new_cand_start, new_cand_end)
-                                    active_report["custom_night_start"] = new_cand_start
-                                    active_report["custom_night_end"] = new_cand_end
-                                    st.session_state[night_key] = (new_cand_start, new_cand_end)
-                                    st.session_state[f"m_night_{rep_id}"] = (new_cand_start, new_cand_end)
-                                    st.rerun()
-                                else:
-                                    st.error("Bedtime must be earlier than Wake-up time.")
-                        with btn_c2:
-                            if st.button("↺ Reset to Detected Window", key=f"rst_night_{rep_id}"):
-                                db.update_report_night_window(rep_id, None, None)
-                                active_report["custom_night_start"] = None
-                                active_report["custom_night_end"] = None
-                                st.session_state[night_key] = (auto_s_dt, auto_e_dt)
-                                st.session_state[f"m_night_{rep_id}"] = (auto_s_dt, auto_e_dt)
-                                st.session_state.pop(f"t_bed_{rep_id}", None)
-                                st.session_state.pop(f"t_wake_{rep_id}", None)
+                    btn_c1, btn_c2 = st.columns([1, 1])
+                    with btn_c1:
+                        if st.button("💾 Apply & Save Window", key=f"save_night_{rep_id}", type="primary"):
+                            if new_cand_start < new_cand_end:
+                                db.update_report_night_window(rep_id, new_cand_start, new_cand_end)
+                                active_report["custom_night_start"] = new_cand_start
+                                active_report["custom_night_end"] = new_cand_end
+                                st.session_state[night_key] = (new_cand_start, new_cand_end)
+                                st.session_state[f"m_night_{rep_id}"] = (new_cand_start, new_cand_end)
                                 st.rerun()
+                            else:
+                                st.error("Bedtime must be earlier than Wake-up time.")
+                    with btn_c2:
+                        if st.button("↺ Reset to Detected Window", key=f"rst_night_{rep_id}"):
+                            db.update_report_night_window(rep_id, None, None)
+                            active_report["custom_night_start"] = None
+                            active_report["custom_night_end"] = None
+                            st.session_state[night_key] = (auto_s_dt, auto_e_dt)
+                            st.session_state[f"m_night_{rep_id}"] = (auto_s_dt, auto_e_dt)
+                            st.session_state.pop(f"t_bed_{rep_id}", None)
+                            st.session_state.pop(f"t_wake_{rep_id}", None)
+                            st.rerun()
         elif "Custom Window" in filter_mode_choice:
             filter_mode = "custom"
-            with scope_col2:
-                if has_history and min_dt < max_dt:
-                    slider_val = st.slider(
-                        "Drag custom window range (supports spanning across midnight):",
-                        min_value=min_dt,
-                        max_value=max_dt,
-                        value=(min_dt, max_dt),
-                        format="MM-DD HH:mm",
-                        key=f"custom_slider_{rep_id}"
-                    )
-                    start_dt, end_dt = slider_val[0], slider_val[1]
-                    sliced_df = parser.slice_timeline_range(raw_hist_df, start_dt, end_dt)
-                else:
-                    st.caption("Timeline history not sufficient for range slider.")
+            if has_history and min_dt < max_dt:
+                slider_val = st.slider(
+                    "Drag custom window range (supports spanning across midnight):",
+                    min_value=min_dt,
+                    max_value=max_dt,
+                    value=(min_dt, max_dt),
+                    format="MM-DD HH:mm",
+                    key=f"custom_slider_{rep_id}"
+                )
+                start_dt, end_dt = slider_val[0], slider_val[1]
+                sliced_df = parser.slice_timeline_range(raw_hist_df, start_dt, end_dt)
+            else:
+                st.caption("Timeline history not sufficient for range slider.")
         elif "Screen-Off" in filter_mode_choice:
             filter_mode = "screen_off"
-            with scope_col2:
-                st.info("📴 **Screen-Off Standby Focus:** Evaluates energy consumed exclusively when the display was turned off/dozing.")
+            st.info("📴 **Screen-Off Standby Focus:** Evaluates energy consumed exclusively when the display was turned off/dozing.")
             sliced_df = raw_hist_df
         else:
             filter_mode = "full"
-            with scope_col2:
-                st.caption(f"Showing entire recorded bugreport session ({min_dt.strftime('%Y-%m-%d %H:%M')} to {max_dt.strftime('%Y-%m-%d %H:%M')}).")
+            st.caption(f"Showing entire recorded bugreport session ({min_dt.strftime('%Y-%m-%d %H:%M')} to {max_dt.strftime('%Y-%m-%d %H:%M')}).")
             
         # Compute Sliced Timeline & KPIs
         kpis = parser.compute_window_kpis(sliced_df)
@@ -2321,98 +2818,136 @@ if st.session_state.active_tab == "single":
         
         st.divider()
 
-        # Two dedicated top-level tabs: Report vs Full-Screen Chat
-        tab_single_report, tab_single_chat = st.tabs([
-            "📊 Telemetry, Charts & Diagnosis Report",
-            "💬 AI Investigation Chat ✨"
-        ])
-
-        with tab_single_report:
-            # --- Visualizations Section ---
-            chart_col1, chart_col2 = st.columns([1, 1])
-            
-            # 1. Timeline Chart
-            with chart_col1:
-                st.markdown("#### 📈 Battery Level Timeline")
-                if sliced_df is not None and not sliced_df.empty and "Time" in sliced_df.columns and "Level" in sliced_df.columns:
-                    title_suffix = f"({filter_mode_choice})" if filter_mode != "full" else ""
-                    fig_hist = px.line(
-                        sliced_df, x='Time', y='Level',
-                        title=f"Discharge Curve {title_suffix}",
-                        labels={"Level": "Battery Level (%)", "Time": "Device Time"}
-                    )
-                    fig_hist.update_yaxes(range=[0, 105])
-                    fig_hist.update_traces(line=dict(width=2.5, color="#3b82f6"))
-                    if show_night_shading:
-                        if filter_mode == "night" and start_dt and end_dt:
-                            fig_hist.add_vrect(
-                                x0=start_dt, x1=end_dt,
-                                fillcolor="rgba(30, 41, 59, 0.20)",
-                                layer="below",
-                                line_width=0,
-                                annotation_text="🌙 Night",
-                                annotation_position="top left",
-                                annotation_font_size=10,
-                                annotation_font_color="gray"
-                            )
-                        else:
-                            fig_hist = add_night_shading(fig_hist, sliced_df, night_start=night_start_cfg, night_end=night_end_cfg)
-                    st.plotly_chart(fig_hist, use_container_width=True, key=f"hist_single_{rep_id}_{filter_mode}")
-                else:
-                    st.info("No timeline data matches this filter.")
-                    
-            # 2. Drain Breakdown Chart & Web Search Tool
-            with chart_col2:
-                st.markdown("#### ⚡ Power Consumers & App Research")
-                standby_df = parser.extract_screen_off_chart_data(active_report.get("summary_text", ""))
-                
-                if filter_mode in ["night", "screen_off"] and standby_df is not None and not standby_df.empty:
-                    df_to_plot = parser.clean_chart_dataframe(standby_df, active_report.get("summary_text", ""))
-                    fig_pie = px.pie(
-                        df_to_plot, values='mAh', names='Component',
-                        title=f"Standby Power Drain Breakdown (mAh - {filter_mode_choice})",
-                        hole=0.4
-                    )
-                    st.plotly_chart(fig_pie, use_container_width=True, key=f"pie_single_{rep_id}_{filter_mode}")
-                elif active_report.get("chart_data") is not None and not active_report["chart_data"].empty:
-                    df_to_plot = parser.clean_chart_dataframe(active_report["chart_data"], active_report.get("summary_text", ""))
-                    fig_pie = px.pie(
-                        df_to_plot, values='mAh', names='Component',
-                        title="Estimated Full-Session Power Drain Breakdown (mAh)",
-                        hole=0.4
-                    )
-                    st.plotly_chart(fig_pie, use_container_width=True, key=f"pie_single_full_{rep_id}")
-                else:
-                    st.info("No breakdown data available for this view.")
-                    
-            st.divider()
-            
-            # --- AI Diagnosis Section ---
-            st.markdown('### ✨ Oracle Diagnosis <span class="ai-badge">✨ AI GENERATED</span>', unsafe_allow_html=True)
-            
-            diag_cache_key = f"diag_{rep_id}_{filter_mode}"
-            if filter_mode == "full":
-                active_diagnosis = active_report.get("initial_analysis", "No baseline analysis available.")
-                diag_subtitle = "🌐 Full Session Baseline Diagnosis"
-                diag_ts = active_report.get("analysis_updated_at") or active_report.get("created_at") or active_report.get("timestamp_str", "")
+        # --- Visualizations Section ---
+        chart_col1, chart_col2 = st.columns([1, 1])
+        
+        # 1. Timeline Chart
+        with chart_col1:
+            st.markdown("#### 📈 Battery Level Timeline")
+            if sliced_df is not None and not sliced_df.empty and "Time" in sliced_df.columns and "Level" in sliced_df.columns:
+                title_suffix = f"({filter_mode_choice})" if filter_mode != "full" else ""
+                fig_hist = px.line(
+                    sliced_df, x='Time', y='Level',
+                    title=f"Discharge Curve {title_suffix}",
+                    labels={"Level": "Battery Level (%)", "Time": "Device Time"}
+                )
+                fig_hist.update_yaxes(range=[0, 105])
+                fig_hist.update_traces(line=dict(width=2.5, color="#3b82f6"))
+                if show_night_shading:
+                    if filter_mode == "night" and start_dt and end_dt:
+                        fig_hist.add_vrect(
+                            x0=start_dt, x1=end_dt,
+                            fillcolor="rgba(30, 41, 59, 0.20)",
+                            layer="below",
+                            line_width=0,
+                            annotation_text="🌙 Night",
+                            annotation_position="top left",
+                            annotation_font_size=10,
+                            annotation_font_color="gray"
+                        )
+                    else:
+                        fig_hist = add_night_shading(fig_hist, sliced_df, night_start=night_start_cfg, night_end=night_end_cfg)
+                st.plotly_chart(fig_hist, use_container_width=True, key=f"hist_single_{rep_id}_{filter_mode}")
             else:
-                cached_filtered = db.get_setting(diag_cache_key)
-                cached_ts = db.get_setting(f"{diag_cache_key}_ts")
-                if cached_filtered:
-                    active_diagnosis = cached_filtered
-                    diag_subtitle = f"🎯 Targeted Scope Diagnosis: {filter_mode_choice}"
-                    diag_ts = cached_ts or active_report.get("analysis_updated_at") or active_report.get("created_at", "")
-                else:
-                    active_diagnosis = None
-                    diag_subtitle = f"⏳ Targeted Scope: {filter_mode_choice} (Not yet generated)"
-                    diag_ts = None
-                    
-            # Action Command Bar: Primary trigger + export button on left, status on right/inline
+                st.info("No timeline data matches this filter.")
+                
+        # 2. Drain Breakdown Chart & Web Search Tool
+        with chart_col2:
+            st.markdown("#### ⚡ Power Consumers & App Research")
+            standby_df = parser.extract_screen_off_chart_data(active_report.get("summary_text", ""))
+            
+            if filter_mode in ["night", "screen_off"] and standby_df is not None and not standby_df.empty:
+                df_to_plot = parser.clean_chart_dataframe(standby_df, active_report.get("summary_text", ""))
+                fig_pie = px.pie(
+                    df_to_plot, values='mAh', names='Component',
+                    title=f"Standby Power Drain Breakdown (mAh - {filter_mode_choice})",
+                    hole=0.4
+                )
+                st.plotly_chart(fig_pie, use_container_width=True, key=f"pie_single_{rep_id}_{filter_mode}")
+            elif active_report.get("chart_data") is not None and not active_report["chart_data"].empty:
+                df_to_plot = parser.clean_chart_dataframe(active_report["chart_data"], active_report.get("summary_text", ""))
+                fig_pie = px.pie(
+                    df_to_plot, values='mAh', names='Component',
+                    title="Estimated Full-Session Power Drain Breakdown (mAh)",
+                    hole=0.4
+                )
+                st.plotly_chart(fig_pie, use_container_width=True, key=f"pie_single_full_{rep_id}")
+            else:
+                st.info("No breakdown data available for this view.")
+                
+        st.divider()
+
+        # --- UNIFIED AI WORKSPACE: DIAGNOSIS & INVESTIGATION CHAT ---
+        layout_opts = ["👥 Side-by-side", "📑 Stacked", "🪟 Floating Window"]
+        saved_layout = db.get_setting(f"layout_pref_{rep_id}", "👥 Side-by-side")
+        if f"cur_layout_{rep_id}" not in st.session_state:
+            st.session_state[f"cur_layout_{rep_id}"] = saved_layout
+
+        c_ws_title, c_ws_layout = st.columns([3, 2], vertical_alignment="center")
+        with c_ws_title:
+            st.markdown('### ✨ Oracle Diagnosis & Investigation <span class="ai-badge">✨ UNIFIED WORKSPACE</span>', unsafe_allow_html=True)
+        with c_ws_layout:
+            cur_layout = st.radio(
+                "Workspace Layout:",
+                layout_opts,
+                index=layout_opts.index(st.session_state[f"cur_layout_{rep_id}"]) if st.session_state[f"cur_layout_{rep_id}"] in layout_opts else 0,
+                horizontal=True,
+                key=f"radio_layout_{rep_id}",
+                label_visibility="collapsed"
+            )
+            if cur_layout != st.session_state[f"cur_layout_{rep_id}"]:
+                st.session_state[f"cur_layout_{rep_id}"] = cur_layout
+                db.set_setting(f"layout_pref_{rep_id}", cur_layout)
+                st.rerun()
+
+        diag_cache_key = f"diag_{rep_id}_{filter_mode}"
+        if filter_mode == "full":
+            active_diagnosis = active_report.get("initial_analysis", "No baseline analysis available.")
+            diag_subtitle = "🌐 Full Session Baseline Diagnosis"
+            diag_ts = active_report.get("analysis_updated_at") or active_report.get("created_at") or active_report.get("timestamp_str", "")
+        else:
+            cached_filtered = db.get_setting(diag_cache_key)
+            cached_ts = db.get_setting(f"{diag_cache_key}_ts")
+            if cached_filtered:
+                active_diagnosis = cached_filtered
+                diag_subtitle = f"🎯 Targeted Scope Diagnosis: {filter_mode_choice}"
+                diag_ts = cached_ts or active_report.get("analysis_updated_at") or active_report.get("created_at", "")
+            else:
+                active_diagnosis = None
+                diag_subtitle = f"⏳ Targeted Scope: {filter_mode_choice} (Not yet generated)"
+                diag_ts = None
+
+        br_ts = format_bugreport_timestamp(active_report.get("timestamp_str", ""))
+        filter_label_single = f"{filter_mode_choice} ({kpis['start_time']} -> {kpis['end_time']})"
+
+        def _build_single_sys_prompt():
+            filtered_telemetry = parser.get_filtered_telemetry_for_llm(active_report["summary_text"], filter_mode, kpis)
+            active_inv_profile = db.get_latest_device_profile()
+            profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+            if profile_summary:
+                filtered_telemetry = f"{profile_summary}\n\n{filtered_telemetry}"
+            active_routers = db.get_active_wifi_routers()
+            router_summary = parser.format_router_context_for_llm(active_routers)
+            if router_summary:
+                filtered_telemetry = f"{router_summary}\n\n{filtered_telemetry}"
+
+            chat_tmpl = llm_manager.get_prompt_template("chat_assistant")
+            return chat_tmpl.format(
+                filter_context=f"Active Scope: {filter_label_single} | Discharge Rate: {kpis['rate_per_hr']:.2f}%/hr | Status: {kpis['status']}",
+                report_name=active_report["custom_name"],
+                device_info=active_report.get("device_info", "Unknown"),
+                timestamp_str=active_report["timestamp_str"],
+                description=active_report.get("description", ""),
+                telemetry_data=filtered_telemetry
+            )
+
+        def _render_diagnosis_view():
+            st.markdown("#### 📄 AI Diagnostic Report")
             diag_action_key = f"diag_{rep_id}_{filter_mode}"
             btn_label = "🔄 Re-Diagnose" if active_diagnosis else f"✨ Generate Targeted Diagnosis"
-            
-            c_diag_act1, c_diag_act2, c_diag_status = st.columns([1.5, 1.3, 3], vertical_alignment="center")
-            with c_diag_act1:
+
+            c_act1, c_act2 = st.columns([1, 1], vertical_alignment="center")
+            with c_act1:
                 if st.button(btn_label, key=f"btn_diag_{rep_id}_{filter_mode}", type="primary" if not active_diagnosis else "secondary", use_container_width=True):
                     confirm_ai_analysis_dialog(
                         action_key=diag_action_key,
@@ -2434,7 +2969,7 @@ if st.session_state.active_tab == "single":
                             "kpis": kpis
                         }
                     )
-            with c_diag_act2:
+            with c_act2:
                 if active_diagnosis:
                     md_content = build_single_report_markdown(active_report, filter_mode, kpis, active_diagnosis, gen_timestamp=diag_ts)
                     st.download_button(
@@ -2445,16 +2980,14 @@ if st.session_state.active_tab == "single":
                         key=f"dl_single_md_{rep_id}_{filter_mode}",
                         use_container_width=True
                     )
-            br_ts = format_bugreport_timestamp(active_report.get("timestamp_str", ""))
-            with c_diag_status:
-                if active_diagnosis and diag_ts:
-                    clean_ts = str(diag_ts).replace("T", " ")[:19]
-                    br_tag = f" [Bugreport Generated: `{br_ts}`]" if br_ts else ""
-                    st.caption(f"🕒 **Report Generated:** `{clean_ts}`{br_tag} &nbsp;•&nbsp; **Scope:** {diag_subtitle}")
-                else:
-                    st.caption(f"**Current Scope:** {diag_subtitle}")
-                            
-            # Render any captured diagnosis error at full width below the action bar
+
+            if active_diagnosis and diag_ts:
+                clean_ts = str(diag_ts).replace("T", " ")[:19]
+                br_tag = f" [Bugreport Generated: `{br_ts}`]" if br_ts else ""
+                st.caption(f"🕒 **Report Generated:** `{clean_ts}`{br_tag} &nbsp;•&nbsp; **Scope:** {diag_subtitle}")
+            else:
+                st.caption(f"**Current Scope:** {diag_subtitle}")
+
             if st.session_state.get(f"err_diag_{rep_id}"):
                 err_obj, err_act = st.session_state[f"err_diag_{rep_id}"]
                 render_ai_error(err_obj, action_description=err_act, key_suffix=f"diag_{rep_id}")
@@ -2466,46 +2999,38 @@ if st.session_state.active_tab == "single":
                 with st.expander("📄 View Full Session Baseline Diagnosis for Reference", expanded=False):
                     base_ts = active_report.get("analysis_updated_at") or active_report.get("created_at") or active_report.get("timestamp_str", "")
                     render_ai_block(active_report.get("initial_analysis", "No baseline analysis available."), key_suffix=f"single_base_{rep_id}", gen_timestamp=base_ts, bugreport_timestamp=br_ts)
-                    
+
             with st.expander("🔍 View Telemetry Snippet & Diagnostic Trace", expanded=False):
                 if active_report.get("reasoning_trace"):
                     st.caption(f"**Diagnostic Trace:** {active_report['reasoning_trace']}")
                 st.text_area("Batterystats Excerpt", active_report["summary_text"][:2500], height=200, disabled=True)
 
-        with tab_single_chat:
-            # --- FULL-SCREEN AI CHAT WORKSPACE (FRAGMENT ISOLATED) ---
-            filter_label_single = f"{filter_mode_choice} ({kpis['start_time']} -> {kpis['end_time']})"
-            def _build_single_sys_prompt():
-                filtered_telemetry = parser.get_filtered_telemetry_for_llm(active_report["summary_text"], filter_mode, kpis)
-                active_inv_profile = db.get_latest_device_profile()
-                profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
-                if profile_summary:
-                    filtered_telemetry = f"{profile_summary}\n\n{filtered_telemetry}"
-                active_routers = db.get_active_wifi_routers()
-                router_summary = parser.format_router_context_for_llm(active_routers)
-                if router_summary:
-                    filtered_telemetry = f"{router_summary}\n\n{filtered_telemetry}"
-
-                chat_tmpl = llm_manager.get_prompt_template("chat_assistant")
-                return chat_tmpl.format(
-                    filter_context=f"Active Scope: {filter_label_single} | Discharge Rate: {kpis['rate_per_hr']:.2f}%/hr | Status: {kpis['status']}",
-                    report_name=active_report["custom_name"],
-                    device_info=active_report.get("device_info", "Unknown"),
-                    timestamp_str=active_report["timestamp_str"],
-                    description=active_report.get("description", ""),
-                    telemetry_data=filtered_telemetry
-                )
-
+        def _render_chat_view(is_floating_mode: bool = False):
             render_ai_chat_panel(
                 scope_key=f"single_{rep_id}",
-                panel_title=f"Session Telemetry Chat • {active_report['custom_name']}",
+                panel_title=f"Investigation Chat • {active_report['custom_name']}",
                 scope_badge=f"🎯 Scope: {filter_mode_choice}",
                 report_id=rep_id,
                 active_thread_state_key="active_thread_id",
                 sys_prompt_builder=_build_single_sys_prompt,
                 action_type="chat",
-                filter_label=filter_label_single
+                filter_label=filter_label_single,
+                is_floating=is_floating_mode
             )
+
+        if cur_layout == "👥 Side-by-side":
+            col_diag, col_chat = st.columns([1, 1], gap="medium")
+            with col_diag:
+                _render_diagnosis_view()
+            with col_chat:
+                _render_chat_view(is_floating_mode=False)
+        elif cur_layout == "📑 Stacked":
+            _render_diagnosis_view()
+            st.divider()
+            _render_chat_view(is_floating_mode=False)
+        else: # "🪟 Floating Window"
+            _render_diagnosis_view()
+            _render_chat_view(is_floating_mode=True)
 
 # ==============================================================================
 # VIEW 2: MERGED & COMPARE ALL REPORTS VIEW
@@ -2532,122 +3057,116 @@ elif st.session_state.active_tab == "merged":
             
             # --- Scope Filter for Merged Comparison ---
             st.markdown("### 🎯 Comparative Analysis Scope & Filter")
-            m_scope_col1, m_scope_col2 = st.columns([2, 3])
-            with m_scope_col1:
-                merged_filter_choice = st.radio(
-                    "Comparative Scope:",
-                    ["🌐 Full Session", "🌙 Night Standby (Preset)", "⏱️ Custom Window", "📴 Screen-Off Only"],
-                    horizontal=True,
-                    key="merged_scope_radio"
-                )
+            merged_filter_choice = st.radio(
+                "Comparative Scope:",
+                ["🌐 Full Session", "🌙 Night Standby (Preset)", "⏱️ Custom Window", "📴 Screen-Off Only"],
+                horizontal=True,
+                key="merged_scope_radio"
+            )
 
             merged_filter_mode = "full"
             if "Night Standby" in merged_filter_choice:
                 merged_filter_mode = "night"
-                with m_scope_col2:
-                    st.info(f"🌙 **Targeted Overnight Interval:** Analyzing sleep windows ({night_start_cfg:02d}:00 to {night_end_cfg:02d}:00) across all selected bugreports.")
-                    with st.expander("⏱️ Adjust Per-Report Night Sleep/Wake Intervals", expanded=False):
-                        st.caption("Fine-tune the exact bedtime and wake-up boundaries individually for each compared day. Changes are permanently saved:")
-                        for r in compared_reports:
-                            df_h_r = r.get("history_data")
-                            if df_h_r is not None and not df_h_r.empty and "Time" in df_h_r.columns:
-                                r_min_t = df_h_r["Time"].min()
-                                r_max_t = df_h_r["Time"].max()
-                                r_min_dt = r_min_t.to_pydatetime() if hasattr(r_min_t, "to_pydatetime") else r_min_t
-                                r_max_dt = r_max_t.to_pydatetime() if hasattr(r_max_t, "to_pydatetime") else r_max_t
+                st.info(f"🌙 **Targeted Overnight Interval:** Analyzing sleep windows ({night_start_cfg:02d}:00 to {night_end_cfg:02d}:00) across all selected bugreports.")
+                with st.expander("⏱️ Adjust Per-Report Night Sleep/Wake Intervals", expanded=False):
+                    st.caption("Fine-tune the exact bedtime and wake-up boundaries individually for each compared day. Changes are permanently saved:")
+                    for r in compared_reports:
+                        df_h_r = r.get("history_data")
+                        if df_h_r is not None and not df_h_r.empty and "Time" in df_h_r.columns:
+                            r_min_t = df_h_r["Time"].min()
+                            r_max_t = df_h_r["Time"].max()
+                            r_min_dt = r_min_t.to_pydatetime() if hasattr(r_min_t, "to_pydatetime") else r_min_t
+                            r_max_dt = r_max_t.to_pydatetime() if hasattr(r_max_t, "to_pydatetime") else r_max_t
 
-                                # Expand r_max_dt to include bugreport capture timestamp if present
-                                r_cap_str = r.get("timestamp_str", "")
-                                if r_cap_str:
-                                    r_cap_parts = re.split(r'[\s\-_:]+', r_cap_str.strip())
-                                    if len(r_cap_parts) >= 5:
-                                        r_sec_str = r_cap_parts[5] if len(r_cap_parts) >= 6 else '00'
-                                        try:
-                                            r_cap_dt = pd.to_datetime(f"{r_cap_parts[0]}-{r_cap_parts[1]}-{r_cap_parts[2]} {r_cap_parts[3]}:{r_cap_parts[4]}:{r_sec_str}").to_pydatetime()
-                                            if r_cap_dt > r_max_dt:
-                                                r_max_dt = r_cap_dt
-                                        except Exception:
-                                            pass
+                            # Expand r_max_dt to include bugreport capture timestamp if present
+                            r_cap_str = r.get("timestamp_str", "")
+                            if r_cap_str:
+                                r_cap_parts = re.split(r'[\s\-_:]+', r_cap_str.strip())
+                                if len(r_cap_parts) >= 5:
+                                    r_sec_str = r_cap_parts[5] if len(r_cap_parts) >= 6 else '00'
+                                    try:
+                                        r_cap_dt = pd.to_datetime(f"{r_cap_parts[0]}-{r_cap_parts[1]}-{r_cap_parts[2]} {r_cap_parts[3]}:{r_cap_parts[4]}:{r_sec_str}").to_pydatetime()
+                                        if r_cap_dt > r_max_dt:
+                                            r_max_dt = r_cap_dt
+                                    except Exception:
+                                        pass
+                            
+                            r_auto_s, r_auto_e = parser.get_latest_night_window(r_min_dt, r_max_dt, night_start_cfg, night_end_cfg)
+                            if hasattr(r_auto_s, "to_pydatetime"):
+                                r_auto_s = r_auto_s.to_pydatetime()
+                            if hasattr(r_auto_e, "to_pydatetime"):
+                                r_auto_e = r_auto_e.to_pydatetime()
                                 
-                                r_auto_s, r_auto_e = parser.get_latest_night_window(r_min_dt, r_max_dt, night_start_cfg, night_end_cfg)
-                                if hasattr(r_auto_s, "to_pydatetime"):
-                                    r_auto_s = r_auto_s.to_pydatetime()
-                                if hasattr(r_auto_e, "to_pydatetime"):
-                                    r_auto_e = r_auto_e.to_pydatetime()
-                                    
-                                db_c_s = r.get("custom_night_start")
-                                db_c_e = r.get("custom_night_end")
-                                def_s = db_c_s if (db_c_s and db_c_e) else r_auto_s
-                                def_e = db_c_e if (db_c_s and db_c_e) else r_auto_e
+                            db_c_s = r.get("custom_night_start")
+                            db_c_e = r.get("custom_night_end")
+                            def_s = db_c_s if (db_c_s and db_c_e) else r_auto_s
+                            def_e = db_c_e if (db_c_s and db_c_e) else r_auto_e
 
-                                r_ov_key = f"m_night_{r['id']}"
-                                if r_ov_key not in st.session_state:
-                                    st.session_state[r_ov_key] = (def_s, def_e)
-                                    
-                                cur_s, cur_e = st.session_state[r_ov_key]
-                                if hasattr(cur_s, "to_pydatetime"):
-                                    cur_s = cur_s.to_pydatetime()
-                                if hasattr(cur_e, "to_pydatetime"):
-                                    cur_e = cur_e.to_pydatetime()
-                                    
-                                # Guarantee bounds
-                                cur_s = max(r_min_dt, min(r_max_dt, cur_s))
-                                cur_e = max(r_min_dt, min(r_max_dt, cur_e))
+                            r_ov_key = f"m_night_{r['id']}"
+                            if r_ov_key not in st.session_state:
+                                st.session_state[r_ov_key] = (def_s, def_e)
                                 
-                                is_custom = (db_c_s is not None and db_c_e is not None) or (cur_s != r_auto_s or cur_e != r_auto_e)
-                                badge_txt = " *(Custom saved)*" if is_custom else ""
+                            cur_s, cur_e = st.session_state[r_ov_key]
+                            if hasattr(cur_s, "to_pydatetime"):
+                                cur_s = cur_s.to_pydatetime()
+                            if hasattr(cur_e, "to_pydatetime"):
+                                cur_e = cur_e.to_pydatetime()
+                                
+                            # Guarantee bounds
+                            cur_s = max(r_min_dt, min(r_max_dt, cur_s))
+                            cur_e = max(r_min_dt, min(r_max_dt, cur_e))
+                            
+                            is_custom = (db_c_s is not None and db_c_e is not None) or (cur_s != r_auto_s or cur_e != r_auto_e)
+                            badge_txt = " *(Custom saved)*" if is_custom else ""
 
-                                st.markdown(f"**{r['custom_name']}** ({r['timestamp_str']}){badge_txt}")
-                                mc1, mc2, mc3, mc4 = st.columns([2.5, 2.5, 1.5, 1.5])
-                                with mc1:
-                                    m_bed = st.time_input("🌙 Bedtime:", value=cur_s.time(), key=f"t_m_bed_{r['id']}")
-                                with mc2:
-                                    m_wake = st.time_input("☀️ Wake-up:", value=cur_e.time(), key=f"t_m_wake_{r['id']}")
+                            st.markdown(f"**{r['custom_name']}** ({r['timestamp_str']}){badge_txt}")
+                            mc1, mc2, mc3, mc4 = st.columns([2.5, 2.5, 1.5, 1.5])
+                            with mc1:
+                                m_bed = st.time_input("🌙 Bedtime:", value=cur_s.time(), key=f"t_m_bed_{r['id']}")
+                            with mc2:
+                                m_wake = st.time_input("☀️ Wake-up:", value=cur_e.time(), key=f"t_m_wake_{r['id']}")
 
-                                m_wake_date = r_max_dt.date()
-                                if m_bed > m_wake:
-                                    m_cand_s = datetime.combine(m_wake_date - pd.Timedelta(days=1), m_bed)
-                                else:
-                                    m_cand_s = datetime.combine(m_wake_date, m_bed)
-                                m_cand_e = datetime.combine(m_wake_date, m_wake)
-                                m_cand_s = max(r_min_dt, min(r_max_dt, m_cand_s))
-                                m_cand_e = max(r_min_dt, min(r_max_dt, m_cand_e))
+                            m_wake_date = r_max_dt.date()
+                            if m_bed > m_wake:
+                                m_cand_s = datetime.combine(m_wake_date - pd.Timedelta(days=1), m_bed)
+                            else:
+                                m_cand_s = datetime.combine(m_wake_date, m_bed)
+                            m_cand_e = datetime.combine(m_wake_date, m_wake)
+                            m_cand_s = max(r_min_dt, min(r_max_dt, m_cand_s))
+                            m_cand_e = max(r_min_dt, min(r_max_dt, m_cand_e))
 
-                                with mc3:
-                                    st.write("")
-                                    if st.button("💾 Apply", key=f"btn_save_m_{r['id']}", type="primary", help="Save sleep interval"):
-                                        if m_cand_s < m_cand_e:
-                                            db.update_report_night_window(r['id'], m_cand_s, m_cand_e)
-                                            r["custom_night_start"] = m_cand_s
-                                            r["custom_night_end"] = m_cand_e
-                                            st.session_state[r_ov_key] = (m_cand_s, m_cand_e)
-                                            st.session_state[f"night_bounds_{r['id']}"] = (m_cand_s, m_cand_e)
-                                            st.rerun()
-                                        else:
-                                            st.error("Invalid interval")
-                                with mc4:
-                                    st.write("")
-                                    if st.button("↺ Reset", key=f"btn_rst_m_{r['id']}", help="Reset to auto-detected preset"):
-                                        db.update_report_night_window(r['id'], None, None)
-                                        r["custom_night_start"] = None
-                                        r["custom_night_end"] = None
-                                        st.session_state[r_ov_key] = (r_auto_s, r_auto_e)
-                                        st.session_state[f"night_bounds_{r['id']}"] = (r_auto_s, r_auto_e)
-                                        st.session_state.pop(f"t_m_bed_{r['id']}", None)
-                                        st.session_state.pop(f"t_m_wake_{r['id']}", None)
+                            with mc3:
+                                st.write("")
+                                if st.button("💾 Apply", key=f"btn_save_m_{r['id']}", type="primary", help="Save sleep interval"):
+                                    if m_cand_s < m_cand_e:
+                                        db.update_report_night_window(r['id'], m_cand_s, m_cand_e)
+                                        r["custom_night_start"] = m_cand_s
+                                        r["custom_night_end"] = m_cand_e
+                                        st.session_state[r_ov_key] = (m_cand_s, m_cand_e)
+                                        st.session_state[f"night_bounds_{r['id']}"] = (m_cand_s, m_cand_e)
                                         st.rerun()
+                                    else:
+                                        st.error("Invalid interval")
+                            with mc4:
+                                st.write("")
+                                if st.button("↺ Reset", key=f"btn_rst_m_{r['id']}", help="Reset to auto-detected preset"):
+                                    db.update_report_night_window(r['id'], None, None)
+                                    r["custom_night_start"] = None
+                                    r["custom_night_end"] = None
+                                    st.session_state[r_ov_key] = (r_auto_s, r_auto_e)
+                                    st.session_state[f"night_bounds_{r['id']}"] = (r_auto_s, r_auto_e)
+                                    st.session_state.pop(f"t_m_bed_{r['id']}", None)
+                                    st.session_state.pop(f"t_m_wake_{r['id']}", None)
+                                    st.rerun()
             elif "Custom Window" in merged_filter_choice:
                 merged_filter_mode = "custom"
-                with m_scope_col2:
-                    st.caption("Comparing customized window intervals across the loaded reports.")
+                st.caption("Comparing customized window intervals across the loaded reports.")
             elif "Screen-Off" in merged_filter_choice:
                 merged_filter_mode = "screen_off"
-                with m_scope_col2:
-                    st.info("📴 **Screen-Off Standby Focus:** Comparing idle battery loss consumed specifically while displays were turned off/dozing.")
+                st.info("📴 **Screen-Off Standby Focus:** Comparing idle battery loss consumed specifically while displays were turned off/dozing.")
             else:
                 merged_filter_mode = "full"
-                with m_scope_col2:
-                    st.caption("Comparing full recorded bugreport durations.")
+                st.caption("Comparing full recorded bugreport durations.")
                     
             st.divider()
 

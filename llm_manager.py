@@ -10,32 +10,24 @@ import db
 PROVIDER_PRESETS = {
     "OpenRouter": {
         "models": [
-            "openrouter/google/gemini-3.7-flash",
             "openrouter/google/gemini-3.8-flash",
             "openrouter/anthropic/claude-3.5-sonnet",
             "openrouter/deepseek/deepseek-r1",
-            "openrouter/google/gemini-2.5-flash",
             "openrouter/meta-llama/llama-3.3-70b-instruct"
         ],
-        "default_model": "openrouter/google/gemini-3.7-flash",
+        "default_model": "openrouter/google/gemini-3.8-flash",
         "env_key": "OPENROUTER_API_KEY",
         "default_base": None,
         "requires_key": True
     },
     "Google Gemini": {
         "models": [
+            "gemini/gemini-3.8-flash",
             "gemini/gemini-3.6-flash",
             "gemini/gemini-3.5-flash-lite",
-            "gemini/gemini-3.1-flash-lite",
-            "gemini/gemini-3.5-flash",
-            "gemini/gemini-3.7-flash",
-            "gemini/gemini-3.8-flash",
-            "gemini/gemini-3-flash",
-            "gemini/gemini-2.5-flash-lite",
-            "gemini/gemini-2.5-pro",
-            "gemini/gemini-2.5-flash"
+            "gemini/gemini-3.1-flash-lite"
         ],
-        "default_model": "gemini/gemini-3.6-flash",
+        "default_model": "gemini/gemini-3.8-flash",
         "env_key": "GEMINI_API_KEY",
         "default_base": None,
         "requires_key": True
