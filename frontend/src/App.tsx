@@ -1,37 +1,156 @@
 import React, { useState, useEffect } from 'react';
 import { api } from './api/client';
-import { ReportSummary } from './types/api';
-import { Button } from './components/ui/Button';
-import { Badge } from './components/ui/Badge';
-import { Zap, Activity } from 'lucide-react';
+import { ReportSummary, ReportDetail, Settings } from './types/api';
+import { Header } from './components/layout/Header';
+import { Sidebar } from './components/layout/Sidebar';
+import { UploadModal } from './components/reports/UploadModal';
+import { ComparativeView } from './components/reports/ComparativeView';
+import { SettingsModal } from './components/settings/SettingsModal';
+import { Zap, Loader2 } from 'lucide-react';
 
 export default function App() {
   const [reports, setReports] = useState<ReportSummary[]>([]);
+  const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
+  const [selectedReportIds, setSelectedReportIds] = useState<number[]>([]);
+  const [isComparativeMode, setIsComparativeMode] = useState(false);
+  const [settings, setSettings] = useState<Settings | null>(null);
+
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  const loadData = async () => {
+    try {
+      const [reps, s] = await Promise.all([
+        api.getReports(),
+        api.getSettings().catch(() => null)
+      ]);
+      setReports(reps);
+      if (s) setSettings(s);
+      if (reps.length > 0 && selectedReportId === null) {
+        setSelectedReportId(reps[0].id);
+      }
+    } catch (err) {
+      console.error('Failed to load initial data', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    api.getReports()
-      .then(setReports)
-      .catch((err) => console.error('Failed to load reports', err))
-      .finally(() => setLoading(false));
+    loadData();
   }, []);
 
+  const handleToggleReportSelection = (id: number) => {
+    setSelectedReportIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const handleDeleteReport = async (id: number) => {
+    try {
+      await api.deleteReport(id);
+      setReports((prev) => prev.filter((r) => r.id !== id));
+      setSelectedReportIds((prev) => prev.filter((x) => x !== id));
+      if (selectedReportId === id) {
+        const remaining = reports.filter((r) => r.id !== id);
+        setSelectedReportId(remaining.length > 0 ? remaining[0].id : null);
+      }
+    } catch (err: any) {
+      alert(`Failed to delete report: ${err.message}`);
+    }
+  };
+
+  const handleUploadSuccess = (report: ReportDetail) => {
+    loadData();
+    setSelectedReportId(report.id);
+    setIsComparativeMode(false);
+  };
+
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
-      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-        <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-4 shadow-lg shadow-emerald-950/40">
-          <Zap className="w-8 h-8" />
-        </div>
-        <h1 className="text-2xl font-bold tracking-tight text-white mb-2">BatteryOracle 2.0 Workspace</h1>
-        <p className="text-sm text-slate-400 max-w-md mb-6">
-          High-performance Android bugreport telemetry diagnostics, discharge analytics, and AI reasoning.
-        </p>
-        <div className="flex items-center gap-3">
-          <Badge variant="optimal">FastAPI Connected</Badge>
-          <Badge variant="scope">React 19 SPA</Badge>
-          <Badge variant="neutral">{loading ? 'Loading...' : `${reports.length} Reports`}</Badge>
-        </div>
+    <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
+      {/* Top Header */}
+      <Header
+        settings={settings}
+        onOpenUpload={() => setIsUploadOpen(true)}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        isComparativeMode={isComparativeMode}
+        onToggleComparativeMode={() => setIsComparativeMode(!isComparativeMode)}
+        selectedCount={selectedReportIds.length}
+      />
+
+      {/* Main Container */}
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* Sidebar */}
+        <Sidebar
+          reports={reports}
+          selectedReportId={selectedReportId}
+          onSelectReport={(id) => {
+            setSelectedReportId(id);
+            setIsComparativeMode(false);
+          }}
+          onDeleteReport={handleDeleteReport}
+          isComparativeMode={isComparativeMode}
+          selectedReportIds={selectedReportIds}
+          onToggleReportSelection={handleToggleReportSelection}
+        />
+
+        {/* Workspace Area */}
+        <main className="flex-1 flex overflow-hidden bg-slate-950">
+          {loading ? (
+            <div className="flex-1 flex items-center justify-center text-slate-500 gap-2">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="text-sm">Loading Battery Oracle Workspace...</span>
+            </div>
+          ) : isComparativeMode ? (
+            <ComparativeView
+              selectedReportIds={selectedReportIds}
+              reports={reports}
+            />
+          ) : selectedReportId ? (
+            <div id="report-workspace-anchor" className="flex-1 flex overflow-hidden">
+              {/* Task 8 & 9 will mount ReportWorkspace here */}
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+                <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-3">
+                  <Zap className="w-6 h-6" />
+                </div>
+                <h3 className="text-base font-semibold text-slate-200">
+                  {reports.find((r) => r.id === selectedReportId)?.custom_name}
+                </h3>
+                <p className="text-xs text-slate-400 max-w-sm mt-1">
+                  Ready to mount telemetry visualizations, KPIs, Recharts timeline, and 3-state AI investigation workspace.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+              <div className="w-12 h-12 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400 mb-3">
+                <Zap className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-semibold text-slate-200">No Report Selected</h3>
+              <p className="text-xs text-slate-400 max-w-sm mt-1">
+                Select an Android bugreport from the sidebar or click "Upload Bugreport" above to begin.
+              </p>
+            </div>
+          )}
+        </main>
       </div>
+
+      {/* Upload Modal */}
+      <UploadModal
+        isOpen={isUploadOpen}
+        onClose={() => setIsUploadOpen(false)}
+        onUploadSuccess={handleUploadSuccess}
+        defaultTimezone={settings?.device_timezone || 'UTC'}
+      />
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        currentSettings={settings}
+        onSettingsUpdated={(newS) => setSettings(newS)}
+      />
     </div>
   );
 }
