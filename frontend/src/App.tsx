@@ -6,11 +6,14 @@ import { Sidebar } from './components/layout/Sidebar';
 import { UploadModal } from './components/reports/UploadModal';
 import { ComparativeView } from './components/reports/ComparativeView';
 import { SettingsModal } from './components/settings/SettingsModal';
+import { ReportWorkspace } from './components/workspace/ReportWorkspace';
 import { Zap, Loader2 } from 'lucide-react';
 
 export default function App() {
   const [reports, setReports] = useState<ReportSummary[]>([]);
   const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
+  const [currentReport, setCurrentReport] = useState<ReportDetail | null>(null);
+  const [loadingReport, setLoadingReport] = useState(false);
   const [selectedReportIds, setSelectedReportIds] = useState<number[]>([]);
   const [isComparativeMode, setIsComparativeMode] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -41,6 +44,26 @@ export default function App() {
     loadData();
   }, []);
 
+  const loadReportDetail = async (id: number) => {
+    setLoadingReport(true);
+    try {
+      const rep = await api.getReport(id);
+      setCurrentReport(rep);
+    } catch (err) {
+      console.error('Failed to load report detail', err);
+    } finally {
+      setLoadingReport(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedReportId) {
+      loadReportDetail(selectedReportId);
+    } else {
+      setCurrentReport(null);
+    }
+  }, [selectedReportId]);
+
   const handleToggleReportSelection = (id: number) => {
     setSelectedReportIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
@@ -64,6 +87,7 @@ export default function App() {
   const handleUploadSuccess = (report: ReportDetail) => {
     loadData();
     setSelectedReportId(report.id);
+    setCurrentReport(report);
     setIsComparativeMode(false);
   };
 
@@ -96,7 +120,7 @@ export default function App() {
         />
 
         {/* Workspace Area */}
-        <main className="flex-1 flex overflow-hidden bg-slate-950">
+        <main className="flex-1 flex flex-col overflow-y-auto bg-slate-950 p-6">
           {loading ? (
             <div className="flex-1 flex items-center justify-center text-slate-500 gap-2">
               <Loader2 className="w-5 h-5 animate-spin" />
@@ -107,21 +131,18 @@ export default function App() {
               selectedReportIds={selectedReportIds}
               reports={reports}
             />
-          ) : selectedReportId ? (
-            <div id="report-workspace-anchor" className="flex-1 flex overflow-hidden">
-              {/* Task 8 & 9 will mount ReportWorkspace here */}
-              <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-                <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-3">
-                  <Zap className="w-6 h-6" />
-                </div>
-                <h3 className="text-base font-semibold text-slate-200">
-                  {reports.find((r) => r.id === selectedReportId)?.custom_name}
-                </h3>
-                <p className="text-xs text-slate-400 max-w-sm mt-1">
-                  Ready to mount telemetry visualizations, KPIs, Recharts timeline, and 3-state AI investigation workspace.
-                </p>
-              </div>
+          ) : loadingReport ? (
+            <div className="flex-1 flex items-center justify-center text-slate-500 gap-2">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="text-sm">Loading report telemetry...</span>
             </div>
+          ) : currentReport ? (
+            <ReportWorkspace
+              report={currentReport}
+              onRefreshReport={() => {
+                if (selectedReportId) loadReportDetail(selectedReportId);
+              }}
+            />
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
               <div className="w-12 h-12 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400 mb-3">
