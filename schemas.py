@@ -142,17 +142,27 @@ class ThreadForkRequest(BaseModel):
     new_title: Optional[str] = "Forked Investigation"
 
 
-# --- Settings & Models Schemas ---
+# --- Settings, Providers, Models & Prompts Schemas ---
+
+class ProviderPresetInfo(BaseModel):
+    name: str
+    default_model: str
+    default_base: Optional[str] = None
+    requires_key: bool = True
+
 
 class SettingsResponse(BaseModel):
-    device_timezone: str = "UTC"
+    device_timezone: str = "Europe/Warsaw"
     night_start_hour: int = 23
     night_end_hour: int = 7
     chat_enter_mode: str = "newline"
     active_llm_provider: str = "Google Gemini"
-    active_llm_model: str = "gemini-3.8-flash"
+    active_llm_model: str = "gemini/gemini-3.8-flash"
+    llm_api_key: str = ""
+    llm_api_base: str = ""
     gemini_key_set: bool = False
     openrouter_key_set: bool = False
+    providers: List[ProviderPresetInfo] = Field(default_factory=list)
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -162,26 +172,59 @@ class SettingsUpdateRequest(BaseModel):
     chat_enter_mode: Optional[str] = None
     active_llm_provider: Optional[str] = None
     active_llm_model: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_api_base: Optional[str] = None
     gemini_api_key: Optional[str] = None
     openrouter_api_key: Optional[str] = None
 
 
-class ModelInfo(BaseModel):
-    name: str
-    is_default: bool = False
+class ModelItemDetail(BaseModel):
+    id: str
+    pricing: str
+    is_custom: bool = False
 
 
 class ModelsResponse(BaseModel):
     provider: str
     models: List[str]
+    model_details: List[ModelItemDetail] = Field(default_factory=list)
+    custom_models: List[str] = Field(default_factory=list)
     default_model: str
+
+
+class CustomModelRequest(BaseModel):
+    provider: str
+    model_name: str
+
+
+class FetchLiveModelsRequest(BaseModel):
+    provider: str
+    api_key: Optional[str] = None
+    api_base: Optional[str] = None
+
+
+class FetchLiveModelsResponse(BaseModel):
+    provider: str
+    models: List[str]
+    model_details: List[ModelItemDetail]
+    message: str
 
 
 class ConnectionTestRequest(BaseModel):
     model: str
     api_key: Optional[str] = None
+    api_base: Optional[str] = None
     provider: Optional[str] = None
 
+
+class PromptsUpdateRequest(BaseModel):
+    single_diagnosis: Optional[str] = None
+    comparison: Optional[str] = None
+    chat_assistant: Optional[str] = None
+    master_synthesis: Optional[str] = None
+    profile_audit: Optional[str] = None
+    profile_comparison: Optional[str] = None
+    profile_chat: Optional[str] = None
 
 
 # --- Device Profile & Wi-Fi Router Schemas ---
@@ -189,17 +232,33 @@ class ConnectionTestRequest(BaseModel):
 class DeviceProfileSummary(BaseModel):
     id: int
     profile_name: str
+    device_model: Optional[str] = "Unknown Device"
+    os_build: Optional[str] = "Unknown OS"
     created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 class DeviceProfileDetail(BaseModel):
     id: int
     profile_name: str
+    device_model: Optional[str] = "Unknown Device"
+    os_build: Optional[str] = "Unknown OS"
     raw_content: str
     parsed_data: Dict[str, Any]
     analysis_text: Optional[str] = ""
     reasoning_trace: Optional[str] = ""
+    analysis_updated_at: Optional[str] = None
     created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class DeviceProfileUpdate(BaseModel):
+    profile_name: str
+
+
+class ProfileCompareRequest(BaseModel):
+    profile_a_id: int
+    profile_b_id: int
 
 
 class WifiRouterCreate(BaseModel):
@@ -213,7 +272,18 @@ class WifiRouterCreate(BaseModel):
 
 
 class WifiRouterUpdate(BaseModel):
-    is_active: int
+    is_active: Optional[int] = None
+    router_name: Optional[str] = None
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    location_tag: Optional[str] = None
+    notes: Optional[str] = None
+    specs_json: Optional[Dict[str, Any]] = None
+
+
+class RouterDiscoverRequest(BaseModel):
+    brand: str
+    model: str
 
 
 class WifiRouterResponse(BaseModel):
@@ -226,3 +296,33 @@ class WifiRouterResponse(BaseModel):
     is_active: int
     notes: Optional[str] = ""
     created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+# --- Master Experiment Synthesis & Accounting Schemas ---
+
+class ScorecardItem(BaseModel):
+    report_id: int
+    session_name: str
+    recorded_interval: str
+    full_drop_rate: str
+    night_standby_rate: str
+    total_loss: str
+    night_drop: str
+    notes: str
+
+
+class MasterSynthesisResponse(BaseModel):
+    scorecard: List[ScorecardItem]
+    synthesis_text: str = ""
+    reasoning_trace: str = ""
+    updated_at: Optional[str] = None
+    report_count: int = 0
+    date_range: str = ""
+
+
+class AccountingDashboardResponse(BaseModel):
+    totals: Dict[str, Any]
+    by_report: List[Dict[str, Any]]
+    by_thread: List[Dict[str, Any]]
+    over_time: List[Dict[str, Any]]

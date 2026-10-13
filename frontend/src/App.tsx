@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from './api/client';
 import { ReportSummary, ReportDetail, Settings } from './types/api';
-import { Header, ChatLayoutMode } from './components/layout/Header';
+import { Header, ChatLayoutMode, WorkspaceViewMode } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
 import { UploadModal } from './components/reports/UploadModal';
 import { ComparativeView } from './components/reports/ComparativeView';
@@ -9,6 +9,9 @@ import { SettingsModal } from './components/settings/SettingsModal';
 import { ReportWorkspace } from './components/workspace/ReportWorkspace';
 import { ChatWorkspace } from './components/chat/ChatWorkspace';
 import { FloatingWindow } from './components/chat/FloatingWindow';
+import { DeviceProfileView } from './components/profiles/DeviceProfileView';
+import { MasterSynthesisView } from './components/synthesis/MasterSynthesisView';
+import { AccountingView } from './components/accounting/AccountingView';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
 import { Zap, Loader2 } from 'lucide-react';
 
@@ -18,7 +21,7 @@ export default function App() {
   const [currentReport, setCurrentReport] = useState<ReportDetail | null>(null);
   const [loadingReport, setLoadingReport] = useState(false);
   const [selectedReportIds, setSelectedReportIds] = useState<number[]>([]);
-  const [isComparativeMode, setIsComparativeMode] = useState(false);
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceViewMode>('single');
   const [settings, setSettings] = useState<Settings | null>(null);
   const [chatLayout, setChatLayout] = useState<ChatLayoutMode>('split');
 
@@ -92,8 +95,10 @@ export default function App() {
     loadData();
     setSelectedReportId(report.id);
     setCurrentReport(report);
-    setIsComparativeMode(false);
+    setWorkspaceView('single');
   };
+
+  const showSidebar = workspaceView === 'single' || workspaceView === 'compare';
 
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
@@ -102,8 +107,8 @@ export default function App() {
         settings={settings}
         onOpenUpload={() => setIsUploadOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        isComparativeMode={isComparativeMode}
-        onToggleComparativeMode={() => setIsComparativeMode(!isComparativeMode)}
+        workspaceView={workspaceView}
+        onSelectWorkspaceView={setWorkspaceView}
         selectedCount={selectedReportIds.length}
         chatLayout={chatLayout}
         onSelectChatLayout={setChatLayout}
@@ -111,19 +116,21 @@ export default function App() {
 
       {/* Main Container */}
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Sidebar */}
-        <Sidebar
-          reports={reports}
-          selectedReportId={selectedReportId}
-          onSelectReport={(id) => {
-            setSelectedReportId(id);
-            setIsComparativeMode(false);
-          }}
-          onDeleteReport={handleDeleteReport}
-          isComparativeMode={isComparativeMode}
-          selectedReportIds={selectedReportIds}
-          onToggleReportSelection={handleToggleReportSelection}
-        />
+        {/* Sidebar (shown in Single Report and Merged & Compare views) */}
+        {showSidebar && (
+          <Sidebar
+            reports={reports}
+            selectedReportId={selectedReportId}
+            onSelectReport={(id) => {
+              setSelectedReportId(id);
+              setWorkspaceView('single');
+            }}
+            onDeleteReport={handleDeleteReport}
+            isComparativeMode={workspaceView === 'compare'}
+            selectedReportIds={selectedReportIds}
+            onToggleReportSelection={handleToggleReportSelection}
+          />
+        )}
 
         {/* Workspace Area */}
         <main className="flex-1 flex flex-col overflow-hidden bg-slate-950">
@@ -132,7 +139,19 @@ export default function App() {
               <Loader2 className="w-5 h-5 animate-spin" />
               <span className="text-sm">Loading Battery Oracle Workspace...</span>
             </div>
-          ) : isComparativeMode ? (
+          ) : workspaceView === 'profile' ? (
+            <div className="flex-1 overflow-y-auto p-6">
+              <DeviceProfileView />
+            </div>
+          ) : workspaceView === 'master' ? (
+            <div className="flex-1 overflow-y-auto p-6">
+              <MasterSynthesisView />
+            </div>
+          ) : workspaceView === 'accounting' ? (
+            <div className="flex-1 overflow-y-auto p-6">
+              <AccountingView />
+            </div>
+          ) : workspaceView === 'compare' ? (
             <div className="flex-1 overflow-y-auto p-6">
               <ComparativeView
                 selectedReportIds={selectedReportIds}
@@ -151,6 +170,8 @@ export default function App() {
                 <Panel defaultSize={55} minSize={30} className="overflow-y-auto p-6">
                   <ReportWorkspace
                     report={currentReport}
+                    nightStartHour={settings?.night_start_hour}
+                    nightEndHour={settings?.night_end_hour}
                     onRefreshReport={() => {
                       if (selectedReportId) loadReportDetail(selectedReportId);
                     }}
@@ -167,6 +188,8 @@ export default function App() {
                 <Panel defaultSize={60} minSize={30} className="overflow-y-auto p-6">
                   <ReportWorkspace
                     report={currentReport}
+                    nightStartHour={settings?.night_start_hour}
+                    nightEndHour={settings?.night_end_hour}
                     onRefreshReport={() => {
                       if (selectedReportId) loadReportDetail(selectedReportId);
                     }}
@@ -182,6 +205,8 @@ export default function App() {
               <div className="flex-1 overflow-y-auto p-6">
                 <ReportWorkspace
                   report={currentReport}
+                  nightStartHour={settings?.night_start_hour}
+                  nightEndHour={settings?.night_end_hour}
                   onRefreshReport={() => {
                     if (selectedReportId) loadReportDetail(selectedReportId);
                   }}
@@ -215,7 +240,7 @@ export default function App() {
         isOpen={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
         onUploadSuccess={handleUploadSuccess}
-        defaultTimezone={settings?.device_timezone || 'UTC'}
+        defaultTimezone={settings?.device_timezone || 'Europe/Warsaw'}
       />
 
       {/* Settings Modal */}

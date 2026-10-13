@@ -45,8 +45,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside className="w-80 border-r border-slate-800 bg-slate-900/40 flex flex-col shrink-0 select-none overflow-hidden h-full">
-      {/* Search Bar */}
-      <div className="p-3 border-b border-slate-800/80">
+      {/* Search Bar & Count */}
+      <div className="p-3 border-b border-slate-800/80 space-y-2">
+        <div className="flex items-center justify-between text-xs font-semibold text-slate-300 px-0.5">
+          <span>Reports & Import ({reports.length})</span>
+          {isComparativeMode && (
+            <span className="text-[11px] text-indigo-400 font-medium">
+              {selectedReportIds.length} selected
+            </span>
+          )}
+        </div>
         <div className="relative">
           <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5 pointer-events-none" />
           <Input
@@ -150,6 +158,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             );
           })
         )}
+      </div>
+
+      {/* Footer Tip */}
+      <div className="p-2.5 border-t border-slate-800/80 bg-slate-950/60 text-[11px] text-slate-400">
+        Tip: Run <code className="text-emerald-400 font-mono bg-slate-900 px-1 py-0.5 rounded">adb bugreport bugreport.zip</code> in your terminal to create bug reports.
       </div>
     </aside>
   );

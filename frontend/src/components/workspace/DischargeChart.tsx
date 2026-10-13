@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Card } from '../ui/Card';
 import {
   ResponsiveContainer,
@@ -20,45 +20,66 @@ interface DischargePoint {
 interface DischargeChartProps {
   data: DischargePoint[];
   title?: string;
+  nightStartHour?: number;
+  nightEndHour?: number;
 }
 
 export const DischargeChart: React.FC<DischargeChartProps> = ({
   data,
-  title = 'Discharge Curve & Timeline'
+  title = 'Discharge Curve & Timeline',
+  nightStartHour = 23,
+  nightEndHour = 7
 }) => {
-  // Format timestamps and find night/screen-off periods for shading if present
+  const [showNightShading, setShowNightShading] = useState(true);
+
+  // Format timestamps and detect night / screen-off periods for shading
   const formattedData = useMemo(() => {
     return data.map((item, idx) => {
       let label = `${idx}`;
+      let hour: number | null = null;
       if (typeof item.timestamp === 'string') {
         const d = new Date(item.timestamp);
         if (!isNaN(d.getTime())) {
           label = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          hour = d.getHours();
         } else {
           label = item.timestamp;
+          const m = item.timestamp.match(/(\d{1,2}):\d{2}/);
+          if (m) hour = parseInt(m[1], 10);
         }
       } else if (typeof item.timestamp === 'number') {
-        // Assume epoch ms or seconds
         const ms = item.timestamp > 1e11 ? item.timestamp : item.timestamp * 1000;
         const d = new Date(ms);
         label = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        hour = d.getHours();
       }
+
+      let isNightWindow = false;
+      if (hour !== null) {
+        if (nightStartHour > nightEndHour) {
+          isNightWindow = hour >= nightStartHour || hour < nightEndHour;
+        } else {
+          isNightWindow = hour >= nightStartHour && hour < nightEndHour;
+        }
+      }
+
       return {
         ...item,
-        timeLabel: label
+        timeLabel: label,
+        isNightOrScreenOff: isNightWindow || item.is_screen_on === false
       };
     });
-  }, [data]);
+  }, [data, nightStartHour, nightEndHour]);
 
-  // Find intervals where is_screen_on is false to shade
-  const screenOffBands = useMemo(() => {
+  // Find intervals to shade when showNightShading is enabled
+  const shadedBands = useMemo(() => {
     const bands: { start: string; end: string }[] = [];
     let currentStart: string | null = null;
 
     formattedData.forEach((pt) => {
-      if (pt.is_screen_on === false && !currentStart) {
+      if (pt.isNightOrScreenOff && !currentStart) {
         currentStart = pt.timeLabel;
-      } else if (pt.is_screen_on !== false && currentStart) {
+      } else if (!pt.isNightOrScreenOff && currentStart) {
         bands.push({ start: currentStart, end: pt.timeLabel });
         currentStart = null;
       }
@@ -88,12 +109,15 @@ export const DischargeChart: React.FC<DischargeChartProps> = ({
             <span className="w-2.5 h-0.5 bg-indigo-400 inline-block rounded" />
             Battery %
           </span>
-          {screenOffBands.length > 0 && (
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 bg-slate-800 border border-slate-700 inline-block rounded" />
-              Screen Off
-            </span>
-          )}
+          <label className="flex items-center gap-1.5 cursor-pointer select-none hover:text-slate-200 transition-colors bg-slate-900/80 border border-slate-800 px-2 py-0.5 rounded-md">
+            <input
+              type="checkbox"
+              checked={showNightShading}
+              onChange={(e) => setShowNightShading(e.target.checked)}
+              className="rounded border-slate-700 bg-slate-950 text-indigo-500 focus:ring-indigo-500 w-3 h-3"
+            />
+            <span>Show 🌙 Night Shading</span>
+          </label>
         </div>
       </div>
 
@@ -126,15 +150,16 @@ export const DischargeChart: React.FC<DischargeChartProps> = ({
               formatter={(val: any) => [`${val}%`, 'Battery Level']}
               labelStyle={{ color: '#94a3b8' }}
             />
-            {screenOffBands.map((band, idx) => (
-              <ReferenceArea
-                key={idx}
-                x1={band.start}
-                x2={band.end}
-                fill="#1e1b4b"
-                fillOpacity={0.4}
-              />
-            ))}
+            {showNightShading &&
+              shadedBands.map((band, idx) => (
+                <ReferenceArea
+                  key={idx}
+                  x1={band.start}
+                  x2={band.end}
+                  fill="#1e1b4b"
+                  fillOpacity={0.45}
+                />
+              ))}
             <Line
               type="monotone"
               dataKey="battery_level"

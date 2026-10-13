@@ -1,34 +1,57 @@
 import React from 'react';
 import { Button } from '../ui/Button';
-import { Badge } from '../ui/Badge';
-import { Zap, Upload, Settings as SettingsIcon, GitCompare, Columns, Rows, ExternalLink } from 'lucide-react';
+import {
+  Zap,
+  Upload,
+  Settings as SettingsIcon,
+  GitCompare,
+  Columns,
+  Rows,
+  ExternalLink,
+  FileText,
+  Smartphone,
+  FlaskConical,
+  Coins,
+  Bot,
+  Globe
+} from 'lucide-react';
 import { Settings } from '../../types/api';
 
 export type ChatLayoutMode = 'split' | 'stacked' | 'floating' | 'hidden';
+export type WorkspaceViewMode = 'single' | 'compare' | 'profile' | 'master' | 'accounting';
 
 interface HeaderProps {
   settings: Settings | null;
   onOpenUpload: () => void;
   onOpenSettings: () => void;
-  isComparativeMode: boolean;
-  onToggleComparativeMode: () => void;
+  workspaceView: WorkspaceViewMode;
+  onSelectWorkspaceView: (view: WorkspaceViewMode) => void;
   selectedCount: number;
   chatLayout: ChatLayoutMode;
   onSelectChatLayout: (mode: ChatLayoutMode) => void;
 }
 
+const WORKSPACE_TABS: { id: WorkspaceViewMode; label: string; shortLabel: string; icon: React.ReactNode }[] = [
+  { id: 'single', label: 'Single Report', shortLabel: 'Single', icon: <FileText className="w-3.5 h-3.5" /> },
+  { id: 'compare', label: 'Merged & Compare', shortLabel: 'Compare', icon: <GitCompare className="w-3.5 h-3.5" /> },
+  { id: 'profile', label: 'Device Profile & Audit', shortLabel: 'Profile & Routers', icon: <Smartphone className="w-3.5 h-3.5" /> },
+  { id: 'master', label: 'Master Synthesis', shortLabel: 'Synthesis', icon: <FlaskConical className="w-3.5 h-3.5" /> },
+  { id: 'accounting', label: 'Token & Cost Accounting', shortLabel: 'Accounting', icon: <Coins className="w-3.5 h-3.5" /> }
+];
+
 export const Header: React.FC<HeaderProps> = ({
   settings,
   onOpenUpload,
   onOpenSettings,
-  isComparativeMode,
-  onToggleComparativeMode,
+  workspaceView,
+  onSelectWorkspaceView,
   selectedCount,
   chatLayout,
   onSelectChatLayout
 }) => {
   return (
-    <header className="h-14 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md px-4 flex items-center justify-between shrink-0 select-none z-20">
+    <header className="min-h-14 py-1.5 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md px-4 flex flex-wrap items-center justify-between gap-2 shrink-0 select-none z-20">
+      {/* Left: Brand Logo */}
       <div className="flex items-center gap-3">
         <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-sm shadow-emerald-950">
           <Zap className="w-4 h-4" />
@@ -39,62 +62,90 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 sm:gap-3">
+      {/* Center: 5-Mode Workspace View Switcher */}
+      <div className="flex items-center bg-slate-950/90 border border-slate-800 rounded-xl p-1 gap-1 overflow-x-auto max-w-full">
+        {WORKSPACE_TABS.map((tab) => {
+          const isActive = workspaceView === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => onSelectWorkspaceView(tab.id)}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                isActive
+                  ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent'
+              }`}
+            >
+              {tab.icon}
+              <span className="hidden 2xl:inline">{tab.label}</span>
+              <span className="2xl:hidden">{tab.shortLabel}</span>
+              {tab.id === 'compare' && selectedCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-500/30 text-emerald-200 font-bold">
+                  {selectedCount}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Right: Engine Status Pill + Chat Layout + Upload + Settings */}
+      <div className="flex items-center gap-2">
         {settings && (
-          <div className="hidden lg:flex items-center gap-2">
-            <Badge variant="scope" className="font-mono text-[11px] px-2 py-0.5">
-              {settings.active_llm_model}
-            </Badge>
-          </div>
+          <button
+            onClick={onOpenSettings}
+            title="Click to configure LLM Provider, Models, Prompts & Timezone"
+            className="hidden lg:flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 hover:border-indigo-500/50 text-xs transition-colors cursor-pointer"
+          >
+            <span className="flex items-center gap-1 text-indigo-300 font-medium">
+              <Bot className="w-3.5 h-3.5 text-indigo-400" />
+              <span>{settings.active_llm_provider}:</span>
+              <code className="font-mono text-[11px] text-emerald-400 bg-slate-900 px-1 py-0.5 rounded">
+                {settings.active_llm_model}
+              </code>
+            </span>
+            <span className="text-slate-600">•</span>
+            <span className="flex items-center gap-1 text-slate-300 font-mono text-[11px]">
+              <Globe className="w-3 h-3 text-sky-400" />
+              {settings.device_timezone}
+            </span>
+          </button>
         )}
 
-        {/* 3-State Chat Layout Switcher (when not in comparative mode) */}
-        {!isComparativeMode && (
+        {/* 3-State Chat Layout Switcher (when in Single Report view) */}
+        {workspaceView === 'single' && (
           <div className="flex items-center bg-slate-950 border border-slate-800 rounded-lg p-0.5 text-xs">
             <button
               onClick={() => onSelectChatLayout('split')}
-              className={`p-1.5 rounded transition-colors flex items-center gap-1 ${
+              className={`p-1.5 rounded transition-colors flex items-center gap-1 cursor-pointer ${
                 chatLayout === 'split' ? 'bg-indigo-600/30 text-indigo-300' : 'text-slate-400 hover:text-slate-200'
               }`}
               title="Side-by-side Layout"
             >
               <Columns className="w-3.5 h-3.5" />
-              <span className="hidden xl:inline text-[11px]">Side</span>
             </button>
 
             <button
               onClick={() => onSelectChatLayout('stacked')}
-              className={`p-1.5 rounded transition-colors flex items-center gap-1 ${
+              className={`p-1.5 rounded transition-colors flex items-center gap-1 cursor-pointer ${
                 chatLayout === 'stacked' ? 'bg-indigo-600/30 text-indigo-300' : 'text-slate-400 hover:text-slate-200'
               }`}
               title="Stacked Layout"
             >
               <Rows className="w-3.5 h-3.5" />
-              <span className="hidden xl:inline text-[11px]">Stack</span>
             </button>
 
             <button
               onClick={() => onSelectChatLayout('floating')}
-              className={`p-1.5 rounded transition-colors flex items-center gap-1 ${
+              className={`p-1.5 rounded transition-colors flex items-center gap-1 cursor-pointer ${
                 chatLayout === 'floating' ? 'bg-indigo-600/30 text-indigo-300' : 'text-slate-400 hover:text-slate-200'
               }`}
               title="Floating Window"
             >
               <ExternalLink className="w-3.5 h-3.5" />
-              <span className="hidden xl:inline text-[11px]">Float</span>
             </button>
           </div>
         )}
-
-        <Button
-          variant={isComparativeMode ? 'primary' : 'secondary'}
-          size="sm"
-          onClick={onToggleComparativeMode}
-          className="text-xs"
-        >
-          <GitCompare className="w-3.5 h-3.5" />
-          <span>Compare {selectedCount > 0 ? `(${selectedCount})` : ''}</span>
-        </Button>
 
         <Button
           variant="primary"
@@ -103,17 +154,18 @@ export const Header: React.FC<HeaderProps> = ({
           className="text-xs bg-emerald-600 hover:bg-emerald-500"
         >
           <Upload className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Upload Bugreport</span>
+          <span className="hidden sm:inline">Upload</span>
         </Button>
 
         <Button
-          variant="ghost"
+          variant="secondary"
           size="sm"
           onClick={onOpenSettings}
-          className="p-2 text-slate-400 hover:text-slate-100"
-          title="Settings"
+          className="text-xs px-2.5"
+          title="Configure LLM & Prompts Studio"
         >
-          <SettingsIcon className="w-4 h-4" />
+          <SettingsIcon className="w-3.5 h-3.5 text-indigo-400" />
+          <span className="hidden xl:inline">LLM & Prompts</span>
         </Button>
       </div>
     </header>

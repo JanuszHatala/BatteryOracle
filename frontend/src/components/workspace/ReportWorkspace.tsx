@@ -12,11 +12,15 @@ import { Smartphone, Calendar, FileText, Cpu } from 'lucide-react';
 interface ReportWorkspaceProps {
   report: ReportDetail;
   onRefreshReport: () => void;
+  nightStartHour?: number;
+  nightEndHour?: number;
 }
 
 export const ReportWorkspace: React.FC<ReportWorkspaceProps> = ({
   report,
-  onRefreshReport
+  onRefreshReport,
+  nightStartHour = 23,
+  nightEndHour = 7
 }) => {
   const [scope, setScope] = useState<AnalysisScope>('night');
   const [telemetry, setTelemetry] = useState<TelemetryResponse | null>(null);
@@ -131,7 +135,11 @@ export const ReportWorkspace: React.FC<ReportWorkspaceProps> = ({
 
       {/* Charts Grid: Discharge curve + Top energy drainers */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <DischargeChart data={dischargeData} />
+        <DischargeChart
+          data={dischargeData}
+          nightStartHour={nightStartHour}
+          nightEndHour={nightEndHour}
+        />
         <TopConsumersChart consumers={telemetry?.components || []} />
       </div>
 

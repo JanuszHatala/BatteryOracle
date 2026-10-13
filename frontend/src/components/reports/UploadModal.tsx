@@ -1,10 +1,10 @@
 import React, { useState, useRef } from 'react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
-import { Input } from '../ui/Input';
+import { Badge } from '../ui/Badge';
 import { api } from '../../api/client';
 import { ReportDetail } from '../../types/api';
-import { UploadCloud, FileArchive, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
+import { UploadCloud, FileArchive, AlertTriangle, Loader2, Globe, Terminal } from 'lucide-react';
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -17,11 +17,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   isOpen,
   onClose,
   onUploadSuccess,
-  defaultTimezone = 'UTC'
+  defaultTimezone = 'Europe/Warsaw'
 }) => {
   const [file, setFile] = useState<File | null>(null);
   const [autoDiagnose, setAutoDiagnose] = useState(false);
-  const [timezone, setTimezone] = useState(defaultTimezone);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -70,7 +69,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     setError(null);
 
     try {
-      const report = await api.uploadReport(file, autoDiagnose, timezone);
+      // Do not pass editable timezone; backend reads device_timezone from DB settings
+      const report = await api.uploadReport(file, autoDiagnose);
       setFile(null);
       onUploadSuccess(report);
       onClose();
@@ -127,23 +127,23 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   <p className="text-sm font-medium text-slate-200">
                     Drag and drop your <code className="text-emerald-400 bg-emerald-950/50 px-1 py-0.5 rounded">bugreport-*.zip</code> here
                   </p>
-                  <p className="text-xs text-slate-500 mt-1">or click to browse files from your computer</p>
+                  <p className="text-xs text-slate-500 mt-1">or click to browse files from your computer (200MB max • ZIP, TXT)</p>
                 </div>
               </>
             )}
           </div>
         </div>
 
-        {/* Options */}
+        {/* Options & Read-Only Timezone Info */}
         <div className="space-y-3 bg-slate-950/40 border border-slate-800/80 rounded-xl p-4">
-          <div className="flex items-center justify-between">
-            <label className="text-xs font-medium text-slate-300">Device Timezone</label>
-            <Input
-              value={timezone}
-              onChange={(e) => setTimezone(e.target.value)}
-              placeholder="e.g. Europe/Warsaw or UTC"
-              className="w-48 text-xs h-8"
-            />
+          <div className="flex items-center justify-between border-b border-slate-800/60 pb-2.5">
+            <span className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+              <Globe className="w-3.5 h-3.5 text-indigo-400" />
+              Configured Device Timezone (from Settings DB)
+            </span>
+            <Badge variant="scope" className="font-mono text-xs">
+              {defaultTimezone}
+            </Badge>
           </div>
 
           <label className="flex items-center gap-2.5 cursor-pointer pt-1">
@@ -157,6 +157,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               Generate AI diagnostic plan immediately upon import
             </span>
           </label>
+        </div>
+
+        {/* ADB Tip */}
+        <div className="p-3 bg-slate-900/70 border border-slate-800 rounded-xl text-xs text-slate-400 flex items-center gap-2">
+          <Terminal className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>
+            Tip: Run <code className="bg-slate-950 px-1.5 py-0.5 rounded text-emerald-300 font-mono">adb bugreport bugreport.zip</code> in your terminal to create bug reports.
+          </span>
         </div>
 
         {error && (

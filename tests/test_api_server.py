@@ -392,4 +392,67 @@ def test_wifi_routers(client):
     assert d_res.json()["deleted"] is True
 
 
+def test_prompts_and_custom_models(client):
+    # 1. Get prompts
+    p_res = client.get("/api/v1/prompts")
+    assert p_res.status_code == 200
+    p_data = p_res.json()
+    assert "prompts" in p_data
+    assert "single_diagnosis" in p_data["prompts"]
+
+    # 2. Update prompt
+    up_p = client.put(
+        "/api/v1/prompts",
+        json={"single_diagnosis": "Custom Diagnosis System Prompt"}
+    )
+    assert up_p.status_code == 200
+    assert up_p.json()["prompts"]["single_diagnosis"] == "Custom Diagnosis System Prompt"
+
+    # 3. Reset prompts
+    rst_p = client.post("/api/v1/prompts/reset")
+    assert rst_p.status_code == 200
+    assert rst_p.json()["prompts"]["single_diagnosis"] != "Custom Diagnosis System Prompt"
+
+    # 4. Add & delete custom model
+    add_m = client.post(
+        "/api/v1/models/custom",
+        json={"provider": "Google Gemini", "model_name": "gemini/gemini-custom-test"}
+    )
+    assert add_m.status_code == 200
+    assert "gemini/gemini-custom-test" in add_m.json()["custom_models"]
+
+    del_m = client.delete("/api/v1/models/custom?provider=Google Gemini&model_name=gemini/gemini-custom-test")
+    assert del_m.status_code == 200
+    assert "gemini/gemini-custom-test" not in del_m.json()["custom_models"]
+
+
+def test_master_synthesis_and_accounting(client, monkeypatch):
+    import llm_manager
+    monkeypatch.setattr(llm_manager, "call_llm_tracked", lambda *args, **kwargs: "Master Synthesis Action Plan")
+
+    # 1. Get master synthesis
+    ms_res = client.get("/api/v1/master-synthesis")
+    assert ms_res.status_code == 200
+    assert "scorecard" in ms_res.json()
+
+    # 2. Master consultation chat thread (report_id = -999999)
+    th_res = client.post("/api/v1/reports/-999999/threads", json={"title": "Master Consultation"})
+    assert th_res.status_code == 200
+    th_id = th_res.json()["id"]
+
+    msg_res = client.post(
+        f"/api/v1/threads/{th_id}/messages",
+        json={"content": "Summarize all my reports"}
+    )
+    assert msg_res.status_code == 200
+    assert "Master Synthesis Action Plan" in msg_res.json()["content"]
+
+    # 3. Accounting endpoint
+    acc_res = client.get("/api/v1/accounting")
+    assert acc_res.status_code == 200
+    acc_data = acc_res.json()
+    assert "totals" in acc_data
+    assert "by_report" in acc_data
+    assert "by_thread" in acc_data
+    assert "over_time" in acc_data
 

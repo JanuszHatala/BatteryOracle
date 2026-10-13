@@ -8,33 +8,42 @@ import {
   Message,
   Settings,
   ModelsResponse,
+  FetchLiveModelsResponse,
+  PromptsResponse,
+  PromptsMap,
   WifiRouter,
-  DeviceProfile
+  DeviceProfile,
+  DeviceProfileDetail,
+  ProfileComparisonResponse,
+  MasterSynthesisResponse,
+  AccountingDashboardResponse
 } from '../types/api';
 
 const BASE_URL = '/api/v1';
 
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const url = `${BASE_URL}${endpoint}`;
-  const headers = new Headers(options.headers || {});
-
-  if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (!(options?.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
   }
 
-  const res = await fetch(url, { ...options, headers });
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      ...headers,
+      ...options?.headers
+    }
+  });
 
   if (!res.ok) {
-    let errorDetail = `HTTP ${res.status}: ${res.statusText}`;
+    let errorMsg = `HTTP ${res.status}: ${res.statusText}`;
     try {
-      const data = await res.json();
-      if (data && data.detail) {
-        errorDetail = data.detail;
-      }
+      const errData = await res.json();
+      if (errData.detail) errorMsg = errData.detail;
     } catch {
-      // Use fallback errorDetail
+      // ignore json parse failure
     }
-    throw new Error(errorDetail);
+    throw new Error(errorMsg);
   }
 
   return res.json();
@@ -43,14 +52,16 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 export const api = {
   // Reports
   getReports: () => request<ReportSummary[]>('/reports'),
-  
+
   getReport: (id: number) => request<ReportDetail>(`/reports/${id}`),
-  
-  uploadReport: async (file: File, autoDiagnose = false, timezone = 'UTC') => {
+
+  uploadReport: (file: File, autoDiagnose = false, timezone?: string) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('auto_diagnose', String(autoDiagnose));
-    formData.append('timezone', timezone);
+    if (timezone) {
+      formData.append('timezone', timezone);
+    }
     return request<ReportDetail>('/reports/upload', {
       method: 'POST',
       body: formData
@@ -145,7 +156,7 @@ export const api = {
 
   getExportThreadUrl: (threadId: number) => `${BASE_URL}/threads/${threadId}/export-md`,
 
-  // Settings
+  // Settings, Models & Prompts
   getSettings: () => request<Settings>('/settings'),
 
   updateSettings: (data: Partial<Settings> & { gemini_api_key?: string; openrouter_api_key?: string }) =>
@@ -156,18 +167,60 @@ export const api = {
 
   getModels: (provider = 'Google Gemini') => request<ModelsResponse>(`/models?provider=${encodeURIComponent(provider)}`),
 
-  testConnection: (model: string, provider?: string, api_key?: string) =>
+  fetchLiveModels: (provider: string, api_key?: string, api_base?: string) =>
+    request<FetchLiveModelsResponse>('/models/fetch-live', {
+      method: 'POST',
+      body: JSON.stringify({ provider, api_key, api_base })
+    }),
+
+  addCustomModel: (provider: string, model_name: string) =>
+    request<ModelsResponse>('/models/custom', {
+      method: 'POST',
+      body: JSON.stringify({ provider, model_name })
+    }),
+
+  deleteCustomModel: (provider: string, model_name: string) =>
+    request<ModelsResponse>(`/models/custom?provider=${encodeURIComponent(provider)}&model_name=${encodeURIComponent(model_name)}`, {
+      method: 'DELETE'
+    }),
+
+  testConnection: (model: string, provider?: string, api_key?: string, api_base?: string) =>
     request<{ success: boolean; message: string }>('/settings/test-connection', {
       method: 'POST',
-      body: JSON.stringify({ model, provider, api_key })
+      body: JSON.stringify({ model, provider, api_key, api_base })
+    }),
+
+  getPrompts: () => request<PromptsResponse>('/prompts'),
+
+  updatePrompts: (prompts: Partial<PromptsMap>) =>
+    request<PromptsResponse>('/prompts', {
+      method: 'PUT',
+      body: JSON.stringify(prompts)
+    }),
+
+  resetPrompts: () =>
+    request<PromptsResponse>('/prompts/reset', {
+      method: 'POST'
     }),
 
   // Wi-Fi Routers
   getRouters: () => request<WifiRouter[]>('/wifi-routers'),
 
+  discoverRouterSpecs: (brand: string, model: string) =>
+    request<{ specs: Record<string, any>; error: string | null }>('/wifi-routers/discover', {
+      method: 'POST',
+      body: JSON.stringify({ brand, model })
+    }),
+
   createRouter: (data: Omit<WifiRouter, 'id'>) =>
     request<WifiRouter>('/wifi-routers', {
       method: 'POST',
+      body: JSON.stringify(data)
+    }),
+
+  updateRouter: (id: number, data: Partial<WifiRouter>) =>
+    request<WifiRouter>(`/wifi-routers/${id}`, {
+      method: 'PUT',
       body: JSON.stringify(data)
     }),
 
@@ -185,18 +238,52 @@ export const api = {
   // Device Profiles
   getProfiles: () => request<DeviceProfile[]>('/device-profiles'),
 
-  uploadProfile: (file: File, profileName?: string) => {
+  getProfile: (id: number) => request<DeviceProfileDetail>(`/device-profiles/${id}`),
+
+  uploadProfile: (file: File, profileName?: string, profileId?: number) => {
     const formData = new FormData();
     formData.append('file', file);
     if (profileName) formData.append('profile_name', profileName);
-    return request<DeviceProfile>('/device-profiles/upload', {
+    if (profileId) formData.append('profile_id', String(profileId));
+    return request<DeviceProfileDetail>('/device-profiles/upload', {
       method: 'POST',
       body: formData
     });
   },
 
+  renameProfile: (id: number, profile_name: string) =>
+    request<DeviceProfileDetail>(`/device-profiles/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ profile_name })
+    }),
+
+  auditProfile: (id: number) =>
+    request<DeviceProfileDetail>(`/device-profiles/${id}/audit`, {
+      method: 'POST'
+    }),
+
+  compareProfiles: (profile_a: number, profile_b: number) =>
+    request<ProfileComparisonResponse>(`/device-profiles/compare?profile_a=${profile_a}&profile_b=${profile_b}`),
+
+  auditProfileComparison: (profile_a_id: number, profile_b_id: number) =>
+    request<{ ai_analysis: string; updated_at: string; diff: Record<string, any> }>('/device-profiles/compare/audit', {
+      method: 'POST',
+      body: JSON.stringify({ profile_a_id, profile_b_id })
+    }),
+
   deleteProfile: (id: number) =>
     request<{ deleted: boolean; id: number }>(`/device-profiles/${id}`, {
       method: 'DELETE'
-    })
+    }),
+
+  // Master Experiment Synthesis
+  getMasterSynthesis: () => request<MasterSynthesisResponse>('/master-synthesis'),
+
+  generateMasterSynthesis: () =>
+    request<MasterSynthesisResponse>('/master-synthesis/generate', {
+      method: 'POST'
+    }),
+
+  // Token & Cost Accounting
+  getAccounting: () => request<AccountingDashboardResponse>('/accounting')
 };

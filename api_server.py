@@ -127,14 +127,15 @@ def list_reports():
 async def upload_report(
     file: UploadFile = File(...),
     auto_diagnose: bool = Form(False),
-    timezone: str = Form("UTC")
+    timezone: Optional[str] = Form(None)
 ):
+    effective_tz = timezone or db.get_setting("device_timezone", "Europe/Warsaw")
     try:
         content = await file.read()
         processed = telemetry_service.process_bugreport_upload(
             filename=file.filename or "unknown_bugreport.zip",
             file_bytes=content,
-            timezone=timezone,
+            timezone=effective_tz,
             auto_diagnose=auto_diagnose
         )
     except ValueError as e:
@@ -397,9 +398,14 @@ def get_report_threads(report_id: int):
 
 @app.post("/api/v1/reports/{report_id}/threads", response_model=schemas.ThreadResponse)
 def create_report_thread(report_id: int, req: schemas.ThreadCreateRequest):
-    rep = db.get_report_by_id(report_id)
-    if not rep:
-        raise HTTPException(status_code=404, detail="Report not found.")
+    if report_id > 0:
+        rep = db.get_report_by_id(report_id)
+        if not rep:
+            raise HTTPException(status_code=404, detail="Report not found.")
+    elif report_id != -999999 and report_id < 0:
+        prof = db.get_device_profile(-report_id)
+        if not prof:
+            raise HTTPException(status_code=404, detail="Device profile not found.")
 
     th_id = db.create_thread(report_id=report_id, title=req.title)
     th = db.get_thread_by_id(th_id)
@@ -453,9 +459,11 @@ def post_thread_message(thread_id: int, req: schemas.MessageCreateRequest):
     if not th:
         raise HTTPException(status_code=404, detail="Thread not found.")
 
+    rep_id = th.get("report_id")
+
     # 1. Save user prompt
     db.save_chat_message(
-        report_id=th.get("report_id"),
+        report_id=rep_id,
         role="user",
         content=req.content,
         thread_id=thread_id,
@@ -463,28 +471,89 @@ def post_thread_message(thread_id: int, req: schemas.MessageCreateRequest):
     )
 
     # 2. Auto-title if it's the first message
-    existing_msgs = db.get_chat_messages(report_id=th.get("report_id"), thread_id=thread_id)
-    if len(existing_msgs) <= 1 and any(tag in th.get("title", "") for tag in ["New", "Main", "Untitled"]):
+    existing_msgs = db.get_chat_messages(report_id=rep_id, thread_id=thread_id)
+    if len(existing_msgs) <= 1 and any(tag in th.get("title", "") for tag in ["New", "Main", "Untitled", "Initial", "General"]):
         auto_title = req.content[:30].strip() + ("..." if len(req.content) > 30 else "")
         db.rename_thread(thread_id, auto_title)
 
     # 3. Build system prompt & history
-    rep = db.get_report_by_id(th["report_id"]) if th.get("report_id") else None
-    sys_prompt = "You are Battery Oracle, an expert Android battery telemetry and drain regression AI consultant."
-    if rep:
-        summary_compact = telemetry_service.build_compact_summary(rep)
-        sys_prompt += f"\n\nActive Report Context:\nDevice: {rep.get('device_info', 'Android')}\n{summary_compact}"
-
-    active_inv = db.get_latest_device_profile()
-    if active_inv:
-        inv_sum = parser.get_inventory_summary_for_llm(active_inv.get("parsed_data", {}))
-        if inv_sum:
-            sys_prompt += f"\n\nInstalled Apps & System Profile:\n{inv_sum}"
-
-    active_routers = db.get_active_wifi_routers()
-    r_sum = parser.format_router_context_for_llm(active_routers)
-    if r_sum:
-        sys_prompt += f"\n\nWi-Fi AP Context:\n{r_sum}"
+    action_type = "chat"
+    if rep_id == -999999:
+        action_type = "master_experiment_chat"
+        current_synth = db.get_master_synthesis()
+        synth_ctx = current_synth["text"] if current_synth else "No master synthesis generated yet."
+        all_rep = db.get_all_reports()
+        chronicle_lines = []
+        active_inv_profile = db.get_latest_device_profile()
+        profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+        if profile_summary:
+            chronicle_lines.append(profile_summary + "\n")
+        active_routers = db.get_active_wifi_routers()
+        router_summary = parser.format_router_context_for_llm(active_routers)
+        if router_summary:
+            chronicle_lines.append(router_summary + "\n")
+        n_s = int(db.get_setting("night_start_hour", "23"))
+        n_e = int(db.get_setting("night_end_hour", "7"))
+        for idx, r in enumerate(all_rep):
+            chronicle_lines.append(f"SESSION {idx+1}: {r['custom_name']} ({r.get('timestamp_str', '')}) - {r.get('description', '')}")
+            chronicle_lines.append(telemetry_service.build_compact_summary(r, filter_mode="night", n_start=n_s, n_end=n_e))
+        sys_prompt = (
+            "You are a Principal Android Battery & Performance Architect.\n"
+            "You are consulting with the user regarding their overarching multi-day battery experiment synthesis and long-term optimization blueprint.\n\n"
+            "=== EXECUTIVE MASTER SYNTHESIS ===\n"
+            f"{synth_ctx}\n\n"
+            "=== COMPLETE MULTI-DAY TEST RUN CHRONICLE ===\n"
+            + "\n".join(chronicle_lines)
+        )
+    elif rep_id is not None and rep_id < 0:
+        action_type = "profile_chat"
+        prof = db.get_device_profile(-rep_id)
+        p_data = prof.get("parsed_data", {}) if prof else {}
+        prof_telemetry_summary = parser.get_inventory_summary_for_llm(p_data)
+        active_routers = db.get_active_wifi_routers()
+        router_summary = parser.format_router_context_for_llm(active_routers)
+        if router_summary:
+            prof_telemetry_summary = f"{router_summary}\n\n{prof_telemetry_summary}"
+        prof_chat_tmpl = llm_manager.get_prompt_template("profile_chat")
+        try:
+            sys_prompt = prof_chat_tmpl.format(
+                device_model=p_data.get("device_model", "Unknown Device"),
+                os_build=p_data.get("os_build", "Unknown Build"),
+                android_version=p_data.get("android_version", "Unknown"),
+                doze_deep=p_data.get("doze_deep_state", "UNKNOWN"),
+                doze_light=p_data.get("doze_light_state", "UNKNOWN"),
+                audit_report=prof.get("ai_analysis", "") if prof else "",
+                profile_telemetry=prof_telemetry_summary
+            )
+        except Exception:
+            sys_prompt = f"Device Profile Context:\n{prof_telemetry_summary}"
+    else:
+        rep = db.get_report_by_id(rep_id) if rep_id else None
+        if rep:
+            summary_compact = telemetry_service.build_compact_summary(rep)
+            active_inv = db.get_latest_device_profile()
+            inv_sum = parser.get_inventory_summary_for_llm(active_inv.get("parsed_data", {})) if active_inv else ""
+            active_routers = db.get_active_wifi_routers()
+            r_sum = parser.format_router_context_for_llm(active_routers)
+            full_tel = summary_compact
+            if inv_sum:
+                full_tel = f"{inv_sum}\n\n{full_tel}"
+            if r_sum:
+                full_tel = f"{r_sum}\n\n{full_tel}"
+            chat_tmpl = llm_manager.get_prompt_template("chat_assistant")
+            try:
+                sys_prompt = chat_tmpl.format(
+                    filter_context=req.filter_context or "night",
+                    report_name=rep.get("custom_name", rep.get("filename", "")),
+                    device_info=rep.get("device_info", "Android Device"),
+                    timestamp_str=rep.get("timestamp_str", ""),
+                    description=rep.get("description", ""),
+                    telemetry_data=full_tel
+                )
+            except Exception:
+                sys_prompt = f"You are Battery Oracle.\nActive Report: {rep.get('custom_name')}\n{full_tel}"
+        else:
+            sys_prompt = "You are Battery Oracle, an expert Android battery telemetry and drain regression AI consultant."
 
     llm_messages = [{"role": "system", "content": sys_prompt}]
     for m in existing_msgs:
@@ -494,9 +563,9 @@ def post_thread_message(thread_id: int, req: schemas.MessageCreateRequest):
     try:
         reply = llm_manager.call_llm_tracked(
             messages=llm_messages,
-            report_id=th.get("report_id"),
+            report_id=rep_id,
             thread_id=thread_id,
-            action_type="chat"
+            action_type=action_type
         )
     except Exception as e:
         reply = f"Oracle AI response temporarily unavailable: {e}"
@@ -604,19 +673,39 @@ def export_thread_markdown(thread_id: int):
     )
 
 
-# --- System Settings & LLM Configuration ---
+# --- System Settings, Providers, Models & Prompts ---
 
 @app.get("/api/v1/settings", response_model=schemas.SettingsResponse)
 def get_settings():
+    cfg = llm_manager.get_active_config()
+    prov = db.get_setting("llm_provider") or db.get_setting("active_llm_provider") or cfg["provider"]
+    mod = db.get_setting("llm_model") or db.get_setting("active_llm_model") or cfg["model"]
+    api_key = db.get_setting("llm_api_key") or cfg["api_key"] or ""
+    api_base = db.get_setting("llm_api_base") or cfg["api_base"] or ""
+
+    providers_list = []
+    for k, v in llm_manager.PROVIDER_PRESETS.items():
+        providers_list.append(
+            schemas.ProviderPresetInfo(
+                name=k,
+                default_model=v.get("default_model", ""),
+                default_base=v.get("default_base"),
+                requires_key=bool(v.get("requires_key", True))
+            )
+        )
+
     return schemas.SettingsResponse(
-        device_timezone=db.get_setting("device_timezone", "UTC"),
+        device_timezone=db.get_setting("device_timezone", "Europe/Warsaw"),
         night_start_hour=int(db.get_setting("night_start_hour", "23")),
         night_end_hour=int(db.get_setting("night_end_hour", "7")),
         chat_enter_mode=db.get_setting("chat_enter_mode", "newline"),
-        active_llm_provider=db.get_setting("active_llm_provider", "Google Gemini"),
-        active_llm_model=db.get_setting("active_llm_model", "gemini-3.8-flash"),
-        gemini_key_set=bool(os.getenv("GEMINI_API_KEY") or db.get_setting("gemini_api_key")),
-        openrouter_key_set=bool(os.getenv("OPENROUTER_API_KEY") or db.get_setting("openrouter_api_key"))
+        active_llm_provider=prov,
+        active_llm_model=mod,
+        llm_api_key=api_key,
+        llm_api_base=api_base,
+        gemini_key_set=bool(os.getenv("GEMINI_API_KEY") or db.get_setting("gemini_api_key") or (prov == "Google Gemini" and api_key)),
+        openrouter_key_set=bool(os.getenv("OPENROUTER_API_KEY") or db.get_setting("openrouter_api_key") or (prov == "OpenRouter" and api_key)),
+        providers=providers_list
     )
 
 
@@ -631,13 +720,25 @@ def update_settings(req: schemas.SettingsUpdateRequest):
     if req.chat_enter_mode is not None:
         db.set_setting("chat_enter_mode", req.chat_enter_mode)
     if req.active_llm_provider is not None:
+        db.set_setting("llm_provider", req.active_llm_provider)
         db.set_setting("active_llm_provider", req.active_llm_provider)
     if req.active_llm_model is not None:
-        db.set_setting("active_llm_model", req.active_llm_model)
+        prov = req.active_llm_provider or db.get_setting("llm_provider", "Google Gemini")
+        norm_mod = llm_manager.save_custom_model(prov, req.active_llm_model) or req.active_llm_model
+        db.set_setting("llm_model", norm_mod)
+        db.set_setting("active_llm_model", norm_mod)
+    if req.llm_api_key is not None:
+        db.set_setting("llm_api_key", req.llm_api_key)
+    if req.llm_api_base is not None:
+        db.set_setting("llm_api_base", req.llm_api_base)
     if req.gemini_api_key is not None:
         db.set_setting("gemini_api_key", req.gemini_api_key)
+        if (req.active_llm_provider or db.get_setting("llm_provider", "Google Gemini")) == "Google Gemini":
+            db.set_setting("llm_api_key", req.gemini_api_key)
     if req.openrouter_api_key is not None:
         db.set_setting("openrouter_api_key", req.openrouter_api_key)
+        if (req.active_llm_provider or db.get_setting("llm_provider")) == "OpenRouter":
+            db.set_setting("llm_api_key", req.openrouter_api_key)
 
     return get_settings()
 
@@ -645,16 +746,70 @@ def update_settings(req: schemas.SettingsUpdateRequest):
 @app.get("/api/v1/models", response_model=schemas.ModelsResponse)
 def get_models(provider: str = "Google Gemini"):
     models = llm_manager.get_all_models_for_provider(provider)
+    custom_models = llm_manager.get_custom_models(provider)
     preset = llm_manager.PROVIDER_PRESETS.get(provider, {})
-    clean_models = [m.replace("gemini/", "").replace("openrouter/", "") for m in models]
     raw_default = preset.get("default_model", models[0] if models else "")
-    clean_default = raw_default.replace("gemini/", "").replace("openrouter/", "")
+
+    # Include both full IDs and short IDs in `models` list for backward compatibility with existing tests
+    combined_list = list(models)
+    for m in models:
+        short = m.replace("gemini/", "").replace("openrouter/", "")
+        if short not in combined_list:
+            combined_list.append(short)
+
+    details = [
+        schemas.ModelItemDetail(
+            id=m,
+            pricing=llm_manager.get_model_pricing(m),
+            is_custom=(m in custom_models)
+        )
+        for m in models
+    ]
+
     return schemas.ModelsResponse(
         provider=provider,
-        models=clean_models,
-        default_model=clean_default
+        models=combined_list,
+        model_details=details,
+        custom_models=custom_models,
+        default_model=raw_default
     )
 
+
+@app.post("/api/v1/models/fetch-live", response_model=schemas.FetchLiveModelsResponse)
+def fetch_live_models_endpoint(req: schemas.FetchLiveModelsRequest):
+    prov_arg = "Ollama" if req.provider == "Ollama / Local" else req.provider
+    discovered, msg = llm_manager.fetch_available_models(
+        provider=prov_arg,
+        api_key=req.api_key,
+        api_base=req.api_base
+    )
+    custom_models = llm_manager.get_custom_models(req.provider)
+    details = [
+        schemas.ModelItemDetail(
+            id=m,
+            pricing=llm_manager.get_model_pricing(m),
+            is_custom=(m in custom_models)
+        )
+        for m in discovered
+    ]
+    return schemas.FetchLiveModelsResponse(
+        provider=req.provider,
+        models=discovered,
+        model_details=details,
+        message=msg
+    )
+
+
+@app.post("/api/v1/models/custom", response_model=schemas.ModelsResponse)
+def add_custom_model_endpoint(req: schemas.CustomModelRequest):
+    llm_manager.save_custom_model(req.provider, req.model_name)
+    return get_models(req.provider)
+
+
+@app.delete("/api/v1/models/custom", response_model=schemas.ModelsResponse)
+def delete_custom_model_endpoint(provider: str, model_name: str):
+    llm_manager.delete_custom_model(provider, model_name)
+    return get_models(provider)
 
 
 @app.post("/api/v1/settings/test-connection")
@@ -662,12 +817,52 @@ def test_connection_endpoint(req: schemas.ConnectionTestRequest):
     ok, msg = llm_manager.test_connection(
         model=req.model,
         api_key=req.api_key,
+        api_base=req.api_base,
         provider=req.provider
     )
     return {"success": ok, "message": msg}
 
 
+@app.get("/api/v1/prompts")
+def get_all_prompts():
+    res = {}
+    for k in llm_manager.DEFAULT_PROMPTS.keys():
+        res[k] = llm_manager.get_prompt_template(k)
+    return {"prompts": res, "defaults": llm_manager.DEFAULT_PROMPTS}
+
+
+@app.put("/api/v1/prompts")
+def update_prompts_endpoint(req: schemas.PromptsUpdateRequest):
+    data = req.model_dump(exclude_none=True)
+    for k, val in data.items():
+        if k in llm_manager.DEFAULT_PROMPTS:
+            llm_manager.set_prompt_template(k, val)
+    return get_all_prompts()
+
+
+@app.post("/api/v1/prompts/reset")
+def reset_prompts_endpoint():
+    llm_manager.reset_prompt_templates()
+    return get_all_prompts()
+
+
 # --- Device Profiles ---
+
+def _format_device_profile_detail(p: dict) -> schemas.DeviceProfileDetail:
+    return schemas.DeviceProfileDetail(
+        id=p["id"],
+        profile_name=p["profile_name"],
+        device_model=p.get("device_model") or p.get("parsed_data", {}).get("device_model", "Unknown Device"),
+        os_build=p.get("os_build") or p.get("parsed_data", {}).get("os_build", "Unknown OS"),
+        raw_content=p["raw_content"],
+        parsed_data=p.get("parsed_data", {}),
+        analysis_text=p.get("ai_analysis") or p.get("analysis_text") or "",
+        reasoning_trace=p.get("ai_analysis_trace") or p.get("reasoning_trace") or "",
+        analysis_updated_at=_to_iso(p.get("ai_analysis_updated_at") or p.get("updated_at")),
+        created_at=_to_iso(p.get("created_at")),
+        updated_at=_to_iso(p.get("updated_at"))
+    )
+
 
 @app.get("/api/v1/device-profiles", response_model=List[schemas.DeviceProfileSummary])
 def list_device_profiles():
@@ -676,7 +871,10 @@ def list_device_profiles():
         schemas.DeviceProfileSummary(
             id=p["id"],
             profile_name=p["profile_name"],
-            created_at=_to_iso(p.get("created_at"))
+            device_model=p.get("device_model") or p.get("parsed_data", {}).get("device_model", "Unknown Device"),
+            os_build=p.get("os_build") or p.get("parsed_data", {}).get("os_build", "Unknown OS"),
+            created_at=_to_iso(p.get("created_at")),
+            updated_at=_to_iso(p.get("updated_at"))
         )
         for p in profiles
     ]
@@ -685,25 +883,84 @@ def list_device_profiles():
 @app.post("/api/v1/device-profiles/upload", response_model=schemas.DeviceProfileDetail)
 async def upload_device_profile(
     file: UploadFile = File(...),
-    profile_name: Optional[str] = Form(None)
+    profile_name: Optional[str] = Form(None),
+    profile_id: Optional[int] = Form(None)
 ):
     content = await file.read()
     raw_text = content.decode("utf-8", errors="replace")
     parsed_data = parser.parse_device_inventory(raw_text)
 
     name = profile_name or (file.filename or "Device Profile").replace(".txt", "")
-    pid = db.save_device_profile(profile_name=name, raw_content=raw_text, parsed_data=parsed_data)
-    created = db.get_device_profile(pid)
-
-    return schemas.DeviceProfileDetail(
-        id=created["id"],
-        profile_name=created["profile_name"],
-        raw_content=created["raw_content"],
-        parsed_data=created.get("parsed_data", {}),
-        analysis_text=created.get("analysis_text", ""),
-        reasoning_trace=created.get("reasoning_trace", ""),
-        created_at=_to_iso(created.get("created_at"))
+    pid = db.save_device_profile(
+        profile_name=name,
+        raw_content=raw_text,
+        parsed_data=parsed_data,
+        profile_id=profile_id
     )
+    created = db.get_device_profile(pid)
+    return _format_device_profile_detail(created)
+
+
+@app.get("/api/v1/device-profiles/compare")
+def compare_device_profiles(profile_a: int, profile_b: int):
+    pa = db.get_device_profile(profile_a)
+    pb = db.get_device_profile(profile_b)
+    if not pa or not pb:
+        raise HTTPException(status_code=404, detail="One or both device profiles not found.")
+
+    diff = parser.compute_profile_diff(pa, pb)
+    cmp_cache_key = f"profile_cmp_ai_{min(profile_a, profile_b)}_{max(profile_a, profile_b)}_{profile_a}"
+    cached_analysis = db.get_setting(cmp_cache_key, "")
+    cached_ts = db.get_setting(f"{cmp_cache_key}_ts", "")
+
+    return {
+        "profile_a": _format_device_profile_detail(pa),
+        "profile_b": _format_device_profile_detail(pb),
+        "diff": diff,
+        "ai_analysis": cached_analysis,
+        "updated_at": cached_ts
+    }
+
+
+@app.post("/api/v1/device-profiles/compare/audit")
+def audit_device_profile_comparison(req: schemas.ProfileCompareRequest):
+    pa = db.get_device_profile(req.profile_a_id)
+    pb = db.get_device_profile(req.profile_b_id)
+    if not pa or not pb:
+        raise HTTPException(status_code=404, detail="One or both device profiles not found.")
+
+    diff = parser.compute_profile_diff(pa, pb)
+    diff_summary_str = parser.format_profile_diff_for_llm(pa, pb, diff)
+    cmp_prompt_tmpl = llm_manager.get_prompt_template("profile_comparison")
+    formatted_cmp_prompt = cmp_prompt_tmpl.format(
+        baseline_name=pa["profile_name"],
+        baseline_model=diff["model_a"],
+        baseline_build=diff["build_a"],
+        target_name=pb["profile_name"],
+        target_model=diff["model_b"],
+        target_build=diff["build_b"],
+        diff_summary=diff_summary_str
+    )
+
+    try:
+        cmp_res = llm_manager.call_llm_tracked(
+            messages=[{"role": "system", "content": formatted_cmp_prompt}],
+            action_type="profile_comparison"
+        )
+        cmp_res = parser.sanitize_ai_output(cmp_res)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Profile delta audit failed: {e}")
+
+    cmp_cache_key = f"profile_cmp_ai_{min(req.profile_a_id, req.profile_b_id)}_{max(req.profile_a_id, req.profile_b_id)}_{req.profile_a_id}"
+    now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db.set_setting(cmp_cache_key, cmp_res)
+    db.set_setting(f"{cmp_cache_key}_ts", now_ts)
+
+    return {
+        "ai_analysis": cmp_res,
+        "updated_at": now_ts,
+        "diff": diff
+    }
 
 
 @app.get("/api/v1/device-profiles/{profile_id}", response_model=schemas.DeviceProfileDetail)
@@ -711,15 +968,53 @@ def get_device_profile(profile_id: int):
     p = db.get_device_profile(profile_id)
     if not p:
         raise HTTPException(status_code=404, detail="Device profile not found.")
-    return schemas.DeviceProfileDetail(
-        id=p["id"],
-        profile_name=p["profile_name"],
-        raw_content=p["raw_content"],
-        parsed_data=p.get("parsed_data", {}),
-        analysis_text=p.get("analysis_text", ""),
-        reasoning_trace=p.get("reasoning_trace", ""),
-        created_at=_to_iso(p.get("created_at"))
+    return _format_device_profile_detail(p)
+
+
+@app.put("/api/v1/device-profiles/{profile_id}", response_model=schemas.DeviceProfileDetail)
+def rename_device_profile(profile_id: int, req: schemas.DeviceProfileUpdate):
+    p = db.get_device_profile(profile_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Device profile not found.")
+    db.update_device_profile_name(profile_id, req.profile_name)
+    updated = db.get_device_profile(profile_id)
+    return _format_device_profile_detail(updated)
+
+
+@app.post("/api/v1/device-profiles/{profile_id}/audit", response_model=schemas.DeviceProfileDetail)
+def audit_device_profile(profile_id: int):
+    profile = db.get_device_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Device profile not found.")
+
+    p_data = profile.get("parsed_data", {})
+    profile_telemetry_str = parser.get_inventory_summary_for_llm(p_data)
+    active_routers = db.get_active_wifi_routers()
+    router_summary = parser.format_router_context_for_llm(active_routers)
+    if router_summary:
+        profile_telemetry_str = f"{router_summary}\n\n{profile_telemetry_str}"
+
+    audit_prompt_tmpl = llm_manager.get_prompt_template("profile_audit")
+    formatted_audit_prompt = audit_prompt_tmpl.format(
+        device_model=p_data.get("device_model", "Unknown"),
+        os_build=p_data.get("os_build", "Unknown"),
+        android_version=p_data.get("android_version", "Unknown"),
+        profile_telemetry=profile_telemetry_str
     )
+
+    try:
+        new_analysis = llm_manager.call_llm_tracked(
+            messages=[{"role": "system", "content": formatted_audit_prompt}],
+            report_id=-profile_id,
+            action_type="profile_audit"
+        )
+        new_analysis = parser.sanitize_ai_output(new_analysis)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI configuration audit failed: {e}")
+
+    db.update_device_profile_analysis(profile_id, new_analysis, "")
+    updated = db.get_device_profile(profile_id)
+    return _format_device_profile_detail(updated)
 
 
 @app.delete("/api/v1/device-profiles/{profile_id}")
@@ -737,6 +1032,12 @@ def delete_device_profile(profile_id: int):
 def list_wifi_routers():
     routers = db.get_all_wifi_routers()
     return [_format_wifi_router(r) for r in routers]
+
+
+@app.post("/api/v1/wifi-routers/discover")
+def discover_wifi_router_specs_endpoint(req: schemas.RouterDiscoverRequest):
+    specs, err = llm_manager.discover_router_specs(req.brand.strip(), req.model.strip())
+    return {"specs": specs, "error": err}
 
 
 @app.post("/api/v1/wifi-routers", response_model=schemas.WifiRouterResponse)
@@ -760,7 +1061,20 @@ def update_wifi_router_status(router_id: int, req: schemas.WifiRouterUpdate):
     if not r:
         raise HTTPException(status_code=404, detail="Router not found.")
 
-    db.update_wifi_router_active(router_id, req.is_active)
+    if req.router_name is not None or req.brand is not None or req.model is not None or req.specs_json is not None or req.location_tag is not None or req.notes is not None:
+        db.save_wifi_router(
+            router_name=req.router_name if req.router_name is not None else r["router_name"],
+            brand=req.brand if req.brand is not None else r["brand"],
+            model=req.model if req.model is not None else r["model"],
+            specs_json=req.specs_json if req.specs_json is not None else r.get("specs", {}),
+            location_tag=req.location_tag if req.location_tag is not None else r.get("location_tag", "Home"),
+            is_active=req.is_active if req.is_active is not None else r.get("is_active", 1),
+            notes=req.notes if req.notes is not None else r.get("notes", ""),
+            router_id=router_id
+        )
+    elif req.is_active is not None:
+        db.update_wifi_router_active(router_id, req.is_active)
+
     updated = db.get_wifi_router(router_id)
     return _format_wifi_router(updated)
 
@@ -775,6 +1089,118 @@ def delete_wifi_router(router_id: int):
     return {"deleted": True, "id": router_id}
 
 
+# --- Master Experiment Synthesis ---
+
+@app.get("/api/v1/master-synthesis", response_model=schemas.MasterSynthesisResponse)
+def get_master_synthesis_endpoint():
+    all_reports = db.get_all_reports()
+    n_start = int(db.get_setting("night_start_hour", "23"))
+    n_end = int(db.get_setting("night_end_hour", "7"))
+
+    scorecard = []
+    dates = []
+    for r in all_reports:
+        if r.get("timestamp_str"):
+            dates.append(str(r["timestamp_str"]))
+        df_h = r.get("history_data")
+        kpi_full = parser.compute_window_kpis(df_h)
+
+        if df_h is not None and not df_h.empty and "Time" in df_h.columns:
+            db_c_s = r.get("custom_night_start")
+            db_c_e = r.get("custom_night_end")
+            if db_c_s and db_c_e:
+                s_dt, e_dt = db_c_s, db_c_e
+            else:
+                s_dt, e_dt = parser.get_latest_night_window(df_h["Time"].min(), df_h["Time"].max(), n_start, n_end)
+            df_night = parser.slice_timeline_range(df_h, s_dt, e_dt)
+            kpi_night = parser.compute_window_kpis(df_night)
+        else:
+            kpi_night = parser.compute_window_kpis(None)
+
+        scorecard.append(
+            schemas.ScorecardItem(
+                report_id=r["id"],
+                session_name=r["custom_name"],
+                recorded_interval=f"{kpi_full['start_time']} -> {kpi_full['end_time']}",
+                full_drop_rate=f"{kpi_full['rate_per_hr']:.2f}% / hr",
+                night_standby_rate=f"{kpi_night['rate_per_hr']:.2f}% / hr",
+                total_loss=f"{kpi_full['drop_pct']}% ({kpi_full['duration_hrs']:.1f} hrs)",
+                night_drop=f"{kpi_night['drop_pct']}% ({kpi_night['duration_hrs']:.1f} hrs)",
+                notes=r.get("description") or "Baseline"
+            )
+        )
+
+    saved = db.get_master_synthesis()
+    date_range = f"{min(dates)} -> {max(dates)}" if len(dates) > 1 else (dates[0] if dates else "")
+
+    return schemas.MasterSynthesisResponse(
+        scorecard=scorecard,
+        synthesis_text=saved["text"] if saved else "",
+        reasoning_trace=saved.get("trace", "") if saved else "",
+        updated_at=saved.get("updated_at") if saved else None,
+        report_count=len(all_reports),
+        date_range=date_range
+    )
+
+
+@app.post("/api/v1/master-synthesis/generate", response_model=schemas.MasterSynthesisResponse)
+def generate_master_synthesis_endpoint():
+    all_reports = db.get_all_reports()
+    if not all_reports:
+        raise HTTPException(status_code=400, detail="No bugreports available to synthesize.")
+
+    n_s = int(db.get_setting("night_start_hour", "23"))
+    n_e = int(db.get_setting("night_end_hour", "7"))
+
+    chronicle = []
+    active_inv_profile = db.get_latest_device_profile()
+    profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
+    if profile_summary:
+        chronicle.append(profile_summary + "\n")
+    active_routers = db.get_active_wifi_routers()
+    router_summary = parser.format_router_context_for_llm(active_routers)
+    if router_summary:
+        chronicle.append(router_summary + "\n")
+
+    for idx, r in enumerate(all_reports):
+        chronicle.append("\n==========================================")
+        chronicle.append(f"SESSION {idx+1}: {r['custom_name']}")
+        chronicle.append(f"File: {r['filename']} | Timestamp: {r.get('timestamp_str', '')}")
+        chronicle.append(f"Device: {r.get('device_info', 'Android Device')}")
+        chronicle.append(f"User State / Notes: {r.get('description', 'None')}")
+        chronicle.append(telemetry_service.build_compact_summary(r, filter_mode="night", n_start=n_s, n_end=n_e))
+        chronicle.append("==========================================\n")
+
+    synth_prompt = llm_manager.get_prompt_template("master_synthesis").format(
+        experiment_chronicle="\n".join(chronicle)
+    )
+
+    try:
+        synthesis_text = llm_manager.call_llm_tracked(
+            messages=[{"role": "system", "content": synth_prompt}],
+            report_id=-999999,
+            action_type="master_experiment_synthesis"
+        )
+        synthesis_text = parser.sanitize_ai_output(synthesis_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Master synthesis generation failed: {e}")
+
+    db.save_master_synthesis(synthesis_text)
+    return get_master_synthesis_endpoint()
+
+
+# --- Token & Cost Accounting ---
+
+@app.get("/api/v1/accounting", response_model=schemas.AccountingDashboardResponse)
+def get_accounting_dashboard():
+    return schemas.AccountingDashboardResponse(
+        totals=db.get_token_totals(),
+        by_report=db.get_token_summary_by_report(),
+        by_thread=db.get_token_summary_by_thread(),
+        over_time=db.get_token_summary_over_time()
+    )
+
+
 # --- Static Files & SPA Catch-All Route ---
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -787,6 +1213,7 @@ if os.path.isdir(static_dir):
         if os.path.isfile(file_path):
             return FileResponse(file_path)
         return FileResponse(os.path.join(static_dir, "index.html"))
+
 
 
 
