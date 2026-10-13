@@ -38,6 +38,7 @@ class ReportUpdateRequest(BaseModel):
     description: Optional[str] = None
     custom_night_start: Optional[str] = None
     custom_night_end: Optional[str] = None
+    reset_night_window: Optional[bool] = False
 
 
 # --- Telemetry & KPI Schemas ---
@@ -70,7 +71,8 @@ class TelemetryResponse(BaseModel):
     kpis: KpiMetrics
     timeline: List[TimelinePoint]
     components: List[PowerComponent]
-    night_bounds: Optional[Dict[str, Optional[str]]] = None
+    night_bounds: Optional[Dict[str, Any]] = None
+    session_bounds: Optional[Dict[str, Optional[str]]] = None
 
 
 # --- Diagnosis & Comparative Schemas ---

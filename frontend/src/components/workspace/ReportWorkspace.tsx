@@ -7,6 +7,7 @@ import { DiagnosisCard } from './DiagnosisCard';
 import { ReportDetail, TelemetryResponse } from '../../types/api';
 import { api } from '../../api/client';
 import { Badge } from '../ui/Badge';
+import { useDialog } from '../ui/DialogContext';
 import { Smartphone, Calendar, FileText, Cpu } from 'lucide-react';
 
 interface ReportWorkspaceProps {
@@ -22,41 +23,94 @@ export const ReportWorkspace: React.FC<ReportWorkspaceProps> = ({
   nightStartHour = 23,
   nightEndHour = 7
 }) => {
+  const { showError } = useDialog();
   const [scope, setScope] = useState<AnalysisScope>('night');
+  const [customStart, setCustomStart] = useState<string | undefined>(undefined);
+  const [customEnd, setCustomEnd] = useState<string | undefined>(undefined);
   const [telemetry, setTelemetry] = useState<TelemetryResponse | null>(null);
   const [isLoadingTelemetry, setIsLoadingTelemetry] = useState(false);
   const [isDiagnosing, setIsDiagnosing] = useState(false);
 
+  // Reset custom window state when switching reports
+  useEffect(() => {
+    setCustomStart(undefined);
+    setCustomEnd(undefined);
+  }, [report.id]);
+
   // Load telemetry when report or scope changes
-  const fetchTelemetry = useCallback(async (selectedScope: AnalysisScope) => {
+  const fetchTelemetry = useCallback(async (selectedScope: AnalysisScope, startIso?: string, endIso?: string) => {
     setIsLoadingTelemetry(true);
     try {
-      const data = await api.getTelemetry(report.id, selectedScope);
+      const data = await api.getTelemetry(report.id, selectedScope, startIso, endIso);
       setTelemetry(data);
     } catch (err) {
       console.error('Failed to load telemetry slice:', err);
+      showError(err, 'Loading Telemetry Slice');
     } finally {
       setIsLoadingTelemetry(false);
     }
-  }, [report.id]);
+  }, [report.id, showError]);
 
   useEffect(() => {
-    fetchTelemetry(scope);
-  }, [fetchTelemetry, scope]);
+    if (scope === 'custom') {
+      fetchTelemetry('custom', customStart, customEnd);
+    } else {
+      fetchTelemetry(scope);
+    }
+  }, [fetchTelemetry, scope, customStart, customEnd, nightStartHour, nightEndHour]);
 
   const handleScopeChange = (newScope: AnalysisScope) => {
+    if (newScope === 'custom' && !customStart && !customEnd && telemetry?.night_bounds) {
+      setCustomStart(telemetry.night_bounds.start || telemetry.session_bounds?.min_time || undefined);
+      setCustomEnd(telemetry.night_bounds.end || telemetry.session_bounds?.max_time || undefined);
+    }
     setScope(newScope);
+  };
+
+  const handleApplyCustomWindow = (startIso: string, endIso: string) => {
+    setCustomStart(startIso);
+    setCustomEnd(endIso);
+  };
+
+  const handleSaveNightWindow = async (startIso: string, endIso: string) => {
+    try {
+      await api.updateReport(report.id, {
+        custom_night_start: startIso,
+        custom_night_end: endIso
+      });
+      onRefreshReport();
+      await fetchTelemetry(scope, customStart, customEnd);
+    } catch (err) {
+      showError(err, 'Saving Custom Night Window');
+    }
+  };
+
+  const handleResetNightWindow = async () => {
+    try {
+      await api.updateReport(report.id, {
+        reset_night_window: true
+      });
+      onRefreshReport();
+      await fetchTelemetry(scope, customStart, customEnd);
+    } catch (err) {
+      showError(err, 'Resetting Night Window to Auto-Detected Bounds');
+    }
   };
 
   const handleDiagnose = async () => {
     setIsDiagnosing(true);
     try {
-      await api.diagnoseReport(report.id, scope);
+      await api.diagnoseReport(
+        report.id,
+        scope,
+        scope === 'custom' ? customStart : undefined,
+        scope === 'custom' ? customEnd : undefined
+      );
       onRefreshReport();
-      await fetchTelemetry(scope);
+      await fetchTelemetry(scope, customStart, customEnd);
     } catch (err) {
       console.error('Diagnosis failed:', err);
-      alert('Diagnosis generation failed. Check your API settings / LLM key.');
+      showError(err, 'Re-Running AI Diagnosis');
     } finally {
       setIsDiagnosing(false);
     }
@@ -122,6 +176,13 @@ export const ReportWorkspace: React.FC<ReportWorkspaceProps> = ({
         currentScope={scope}
         onSelectScope={handleScopeChange}
         isLoading={isLoadingTelemetry}
+        nightBounds={telemetry?.night_bounds}
+        sessionBounds={telemetry?.session_bounds}
+        customStart={customStart}
+        customEnd={customEnd}
+        onApplyCustomWindow={handleApplyCustomWindow}
+        onSaveNightWindow={handleSaveNightWindow}
+        onResetNightWindow={handleResetNightWindow}
       />
 
       {/* KPI Cards Grid */}
@@ -139,6 +200,8 @@ export const ReportWorkspace: React.FC<ReportWorkspaceProps> = ({
           data={dischargeData}
           nightStartHour={nightStartHour}
           nightEndHour={nightEndHour}
+          customNightStart={telemetry?.night_bounds?.is_custom ? telemetry?.night_bounds?.start : null}
+          customNightEnd={telemetry?.night_bounds?.is_custom ? telemetry?.night_bounds?.end : null}
         />
         <TopConsumersChart consumers={telemetry?.components || []} />
       </div>

@@ -12,10 +12,18 @@ import { FloatingWindow } from './components/chat/FloatingWindow';
 import { DeviceProfileView } from './components/profiles/DeviceProfileView';
 import { MasterSynthesisView } from './components/synthesis/MasterSynthesisView';
 import { AccountingView } from './components/accounting/AccountingView';
+import { DialogProvider, useDialog } from './components/ui/DialogContext';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
 import { Zap, Loader2 } from 'lucide-react';
 
-export default function App() {
+function AppContent({
+  isSettingsOpen,
+  setIsSettingsOpen
+}: {
+  isSettingsOpen: boolean;
+  setIsSettingsOpen: (open: boolean) => void;
+}) {
+  const { showError } = useDialog();
   const [reports, setReports] = useState<ReportSummary[]>([]);
   const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
   const [currentReport, setCurrentReport] = useState<ReportDetail | null>(null);
@@ -26,7 +34,6 @@ export default function App() {
   const [chatLayout, setChatLayout] = useState<ChatLayoutMode>('split');
 
   const [isUploadOpen, setIsUploadOpen] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const loadData = async () => {
@@ -87,7 +94,7 @@ export default function App() {
         setSelectedReportId(remaining.length > 0 ? remaining[0].id : null);
       }
     } catch (err: any) {
-      alert(`Failed to delete report: ${err.message}`);
+      showError(err, 'Deleting Bugreport');
     }
   };
 
@@ -96,6 +103,10 @@ export default function App() {
     setSelectedReportId(report.id);
     setCurrentReport(report);
     setWorkspaceView('single');
+  };
+
+  const handleChangeEnterMode = (mode: 'newline' | 'send') => {
+    setSettings((prev) => (prev ? { ...prev, chat_enter_mode: mode } : prev));
   };
 
   const showSidebar = workspaceView === 'single' || workspaceView === 'compare';
@@ -165,39 +176,57 @@ export default function App() {
             </div>
           ) : currentReport ? (
             chatLayout === 'split' ? (
-              // Side-by-side Resizable Panels
+              // Side-by-side Resizable Panels (inner wrapper scrolls independently inside Panel)
               <PanelGroup direction="horizontal" className="flex-1 w-full h-full">
-                <Panel defaultSize={55} minSize={30} className="overflow-y-auto p-6">
-                  <ReportWorkspace
-                    report={currentReport}
-                    nightStartHour={settings?.night_start_hour}
-                    nightEndHour={settings?.night_end_hour}
-                    onRefreshReport={() => {
-                      if (selectedReportId) loadReportDetail(selectedReportId);
-                    }}
-                  />
+                <Panel defaultSize={55} minSize={30}>
+                  <div className="h-full w-full overflow-y-auto p-6">
+                    <ReportWorkspace
+                      report={currentReport}
+                      nightStartHour={settings?.night_start_hour}
+                      nightEndHour={settings?.night_end_hour}
+                      onRefreshReport={() => {
+                        if (selectedReportId) loadReportDetail(selectedReportId);
+                        loadData();
+                      }}
+                    />
+                  </div>
                 </Panel>
                 <PanelResizeHandle className="w-1.5 bg-slate-800 hover:bg-indigo-500 transition-colors cursor-col-resize" />
-                <Panel defaultSize={45} minSize={25} className="p-4 flex flex-col h-full bg-slate-900/30">
-                  <ChatWorkspace reportId={currentReport.id} />
+                <Panel defaultSize={45} minSize={25}>
+                  <div className="p-4 flex flex-col h-full w-full overflow-hidden bg-slate-900/30">
+                    <ChatWorkspace
+                      reportId={currentReport.id}
+                      enterMode={settings?.chat_enter_mode || 'newline'}
+                      onChangeEnterMode={handleChangeEnterMode}
+                    />
+                  </div>
                 </Panel>
               </PanelGroup>
             ) : chatLayout === 'stacked' ? (
               // Stacked Top / Bottom Resizable Panels
               <PanelGroup direction="vertical" className="flex-1 w-full h-full">
-                <Panel defaultSize={60} minSize={30} className="overflow-y-auto p-6">
-                  <ReportWorkspace
-                    report={currentReport}
-                    nightStartHour={settings?.night_start_hour}
-                    nightEndHour={settings?.night_end_hour}
-                    onRefreshReport={() => {
-                      if (selectedReportId) loadReportDetail(selectedReportId);
-                    }}
-                  />
+                <Panel defaultSize={60} minSize={30}>
+                  <div className="h-full w-full overflow-y-auto p-6">
+                    <ReportWorkspace
+                      report={currentReport}
+                      nightStartHour={settings?.night_start_hour}
+                      nightEndHour={settings?.night_end_hour}
+                      onRefreshReport={() => {
+                        if (selectedReportId) loadReportDetail(selectedReportId);
+                        loadData();
+                      }}
+                    />
+                  </div>
                 </Panel>
                 <PanelResizeHandle className="h-1.5 bg-slate-800 hover:bg-indigo-500 transition-colors cursor-row-resize" />
-                <Panel defaultSize={40} minSize={20} className="p-4 flex flex-col h-full bg-slate-900/30">
-                  <ChatWorkspace reportId={currentReport.id} />
+                <Panel defaultSize={40} minSize={20}>
+                  <div className="p-4 flex flex-col h-full w-full overflow-hidden bg-slate-900/30">
+                    <ChatWorkspace
+                      reportId={currentReport.id}
+                      enterMode={settings?.chat_enter_mode || 'newline'}
+                      onChangeEnterMode={handleChangeEnterMode}
+                    />
+                  </div>
                 </Panel>
               </PanelGroup>
             ) : (
@@ -209,6 +238,7 @@ export default function App() {
                   nightEndHour={settings?.night_end_hour}
                   onRefreshReport={() => {
                     if (selectedReportId) loadReportDetail(selectedReportId);
+                    loadData();
                   }}
                 />
                 <FloatingWindow
@@ -217,7 +247,11 @@ export default function App() {
                   onDock={() => setChatLayout('split')}
                   title={`AI Investigation - ${currentReport.custom_name || currentReport.filename}`}
                 >
-                  <ChatWorkspace reportId={currentReport.id} />
+                  <ChatWorkspace
+                    reportId={currentReport.id}
+                    enterMode={settings?.chat_enter_mode || 'newline'}
+                    onChangeEnterMode={handleChangeEnterMode}
+                  />
                 </FloatingWindow>
               </div>
             )
@@ -248,8 +282,18 @@ export default function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         currentSettings={settings}
-        onSettingsUpdated={(newS) => setSettings(newS)}
+        onSettingsUpdated={(newSettings) => setSettings(newSettings)}
       />
     </div>
+  );
+}
+
+export default function App() {
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  return (
+    <DialogProvider onOpenSettings={() => setIsSettingsOpen(true)}>
+      <AppContent isSettingsOpen={isSettingsOpen} setIsSettingsOpen={setIsSettingsOpen} />
+    </DialogProvider>
   );
 }

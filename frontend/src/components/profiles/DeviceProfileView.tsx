@@ -10,6 +10,7 @@ import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
+import { useDialog } from '../ui/DialogContext';
 import { ChatWorkspace } from '../chat/ChatWorkspace';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -49,6 +50,7 @@ echo "=== WIFI_STATUS ==="; cmd wifi status;
 ' > device_profile.txt`;
 
 export const DeviceProfileView: React.FC = () => {
+  const { showError, confirm } = useDialog();
   const [profiles, setProfiles] = useState<DeviceProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<number | null>(null);
   const [activeProfile, setActiveProfile] = useState<DeviceProfileDetail | null>(null);
@@ -179,7 +181,7 @@ export const DeviceProfileView: React.FC = () => {
       await loadProfilesAndRouters(saved.id);
       setActiveProfile(saved);
     } catch (err: any) {
-      alert(`Upload failed: ${err.message}`);
+      showError(err, 'Uploading Device Profile');
     } finally {
       setUploading(false);
     }
@@ -193,18 +195,25 @@ export const DeviceProfileView: React.FC = () => {
       setIsRenaming(false);
       loadProfilesAndRouters(updated.id);
     } catch (err: any) {
-      alert(`Rename failed: ${err.message}`);
+      showError(err, 'Renaming Device Profile');
     }
   };
 
   const handleDeleteProfile = async () => {
     if (!activeProfile) return;
-    if (!window.confirm(`Delete profile "${activeProfile.profile_name}"?`)) return;
+    const ok = await confirm({
+      title: 'Delete Device Profile',
+      message: `Are you sure you want to permanently delete device profile "${activeProfile.profile_name}"?`,
+      confirmLabel: 'Delete Profile',
+      variant: 'danger'
+    });
+    if (!ok) return;
+
     try {
       await api.deleteProfile(activeProfile.id);
       await loadProfilesAndRouters();
     } catch (err: any) {
-      alert(`Delete failed: ${err.message}`);
+      showError(err, 'Deleting Device Profile');
     }
   };
 
@@ -215,7 +224,7 @@ export const DeviceProfileView: React.FC = () => {
       const updated = await api.auditProfile(activeProfile.id);
       setActiveProfile(updated);
     } catch (err: any) {
-      alert(`AI Audit failed: ${err.message}`);
+      showError(err, 'Running AI Device Profile Audit');
     } finally {
       setAuditing(false);
     }
@@ -239,7 +248,7 @@ export const DeviceProfileView: React.FC = () => {
       const res = await api.auditProfileComparison(compareBaselineId, compareTargetId);
       setCompareAuditMarkdown(res.ai_analysis);
     } catch (err: any) {
-      alert(`Comparison AI audit failed: ${err.message}`);
+      showError(err, 'Running Profile Comparison AI Audit');
     } finally {
       setCompareAuditing(false);
     }
@@ -273,7 +282,7 @@ export const DeviceProfileView: React.FC = () => {
       setSelectedRouterId(created.id);
       setEditingRouter(created);
     } catch (err: any) {
-      alert(`Router creation failed: ${err.message}`);
+      showError(err, 'Creating Wi-Fi Router Profile');
     } finally {
       setDiscoveringRouter(false);
     }
@@ -288,7 +297,7 @@ export const DeviceProfileView: React.FC = () => {
       setRouters(updatedList);
       setEditingRouter(updated);
     } catch (err: any) {
-      alert(`Failed to update router: ${err.message}`);
+      showError(err, 'Updating Wi-Fi Router Profile');
     } finally {
       setSavingRouter(false);
     }
@@ -296,7 +305,14 @@ export const DeviceProfileView: React.FC = () => {
 
   const handleDeleteRouter = async () => {
     if (!selectedRouterId) return;
-    if (!window.confirm('Delete this WiFi router profile?')) return;
+    const ok = await confirm({
+      title: 'Delete Wi-Fi Router Profile',
+      message: 'Are you sure you want to delete this Wi-Fi router profile?',
+      confirmLabel: 'Delete Router',
+      variant: 'danger'
+    });
+    if (!ok) return;
+
     try {
       await api.deleteRouter(selectedRouterId);
       const updatedList = await api.getRouters();
@@ -309,7 +325,7 @@ export const DeviceProfileView: React.FC = () => {
         setEditingRouter({});
       }
     } catch (err: any) {
-      alert(`Delete failed: ${err.message}`);
+      showError(err, 'Deleting Wi-Fi Router Profile');
     }
   };
 

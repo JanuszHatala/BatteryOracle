@@ -3,6 +3,7 @@ import { ReportSummary, ComparativeResponse } from '../../types/api';
 import { Button } from '../ui/Button';
 import { Card, CardHeader, CardContent } from '../ui/Card';
 import { Badge } from '../ui/Badge';
+import { useDialog } from '../ui/DialogContext';
 import { api } from '../../api/client';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -17,6 +18,7 @@ export const ComparativeView: React.FC<ComparativeViewProps> = ({
   selectedReportIds,
   reports
 }) => {
+  const { showError } = useDialog();
   const [scope, setScope] = useState<'night' | 'full' | 'screen_off'>('night');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ComparativeResponse | null>(null);
@@ -33,6 +35,7 @@ export const ComparativeView: React.FC<ComparativeViewProps> = ({
       setResult(res);
     } catch (err: any) {
       setError(err.message || 'Failed to generate comparative synthesis.');
+      showError(err, 'Generating Cross-Session Comparative Synthesis');
     } finally {
       setLoading(false);
     }

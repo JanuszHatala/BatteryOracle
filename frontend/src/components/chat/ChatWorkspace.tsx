@@ -4,22 +4,60 @@ import { api } from '../../api/client';
 import { ThreadManager } from './ThreadManager';
 import { ChatMessageCard } from './ChatMessageCard';
 import { ChatInput } from './ChatInput';
+import { useDialog } from '../ui/DialogContext';
 import { Loader2 } from 'lucide-react';
 
 interface ChatWorkspaceProps {
   reportId: number;
+  enterMode?: 'newline' | 'send';
+  onChangeEnterMode?: (mode: 'newline' | 'send') => void;
 }
 
-export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ reportId }) => {
+export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
+  reportId,
+  enterMode: propEnterMode,
+  onChangeEnterMode
+}) => {
+  const { showError, confirm } = useDialog();
   const [threads, setThreads] = useState<Thread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [enterMode, setEnterMode] = useState<'newline' | 'send'>('send');
+  const [localEnterMode, setLocalEnterMode] = useState<'newline' | 'send'>(propEnterMode || 'newline');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Sync enterMode when prop changes or fetch from settings if not provided
+  useEffect(() => {
+    if (propEnterMode) {
+      setLocalEnterMode(propEnterMode);
+    } else {
+      api.getSettings()
+        .then((s) => {
+          if (s.chat_enter_mode === 'newline' || s.chat_enter_mode === 'send') {
+            setLocalEnterMode(s.chat_enter_mode);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [propEnterMode]);
+
+  const effectiveEnterMode = propEnterMode || localEnterMode;
+
+  const handleToggleEnterMode = async () => {
+    const nextMode: 'newline' | 'send' = effectiveEnterMode === 'send' ? 'newline' : 'send';
+    setLocalEnterMode(nextMode);
+    if (onChangeEnterMode) {
+      onChangeEnterMode(nextMode);
+    }
+    try {
+      await api.updateSettings({ chat_enter_mode: nextMode });
+    } catch (err) {
+      console.error('Failed to persist chat_enter_mode:', err);
+    }
+  };
 
   // Load threads for report
   const loadThreads = useCallback(async () => {
@@ -83,7 +121,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ reportId }) => {
       await loadThreads();
     } catch (err) {
       console.error('Failed to send message:', err);
-      alert('Failed to send message to AI.');
+      // Restore user input so they don't lose their message on error
+      setInputValue(prompt);
+      showError(err, 'Sending Chat Message to Oracle AI');
     } finally {
       setIsSending(false);
     }
@@ -96,6 +136,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ reportId }) => {
       setActiveThreadId(newThread.id);
     } catch (err) {
       console.error('Failed to create thread:', err);
+      showError(err, 'Creating Investigation Thread');
     }
   };
 
@@ -105,11 +146,20 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ reportId }) => {
       setThreads((prev) => prev.map((t) => (t.id === threadId ? updated : t)));
     } catch (err) {
       console.error('Failed to rename thread:', err);
+      showError(err, 'Renaming Investigation Thread');
     }
   };
 
   const handleDeleteThread = async (threadId: number) => {
-    if (!confirm('Are you sure you want to delete this conversation thread?')) return;
+    const target = threads.find((t) => t.id === threadId);
+    const ok = await confirm({
+      title: 'Delete Conversation Thread',
+      message: `Are you sure you want to permanently delete "${target?.title || 'this thread'}" and all its messages?`,
+      confirmLabel: 'Delete Thread',
+      variant: 'danger'
+    });
+    if (!ok) return;
+
     try {
       await api.deleteThread(threadId);
       const remaining = threads.filter((t) => t.id !== threadId);
@@ -117,17 +167,26 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ reportId }) => {
       setActiveThreadId(remaining.length > 0 ? remaining[0].id : null);
     } catch (err) {
       console.error('Failed to delete thread:', err);
+      showError(err, 'Deleting Thread');
     }
   };
 
   const handleClearThread = async (threadId: number) => {
-    if (!confirm('Clear all messages in this thread?')) return;
+    const ok = await confirm({
+      title: 'Clear Thread History',
+      message: 'Clear all messages in this investigation thread? This action cannot be undone.',
+      confirmLabel: 'Clear Messages',
+      variant: 'warning'
+    });
+    if (!ok) return;
+
     try {
       await api.clearThread(threadId);
       setMessages([]);
       await loadThreads();
     } catch (err) {
       console.error('Failed to clear thread:', err);
+      showError(err, 'Clearing Thread Messages');
     }
   };
 
@@ -144,16 +203,26 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ reportId }) => {
       setActiveThreadId(forkedThread.id);
     } catch (err) {
       console.error('Failed to fork thread:', err);
+      showError(err, 'Forking Conversation Thread');
     }
   };
 
   const handleDeleteMessage = async (messageId: number) => {
+    const ok = await confirm({
+      title: 'Delete Message',
+      message: 'Are you sure you want to delete this message from the thread?',
+      confirmLabel: 'Delete Message',
+      variant: 'danger'
+    });
+    if (!ok) return;
+
     try {
       await api.deleteMessage(messageId);
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
       if (activeThreadId) loadThreads();
     } catch (err) {
       console.error('Failed to delete message:', err);
+      showError(err, 'Deleting Chat Message');
     }
   };
 
@@ -221,8 +290,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ reportId }) => {
         onChange={setInputValue}
         onSend={handleSendMessage}
         isLoading={isSending}
-        enterMode={enterMode}
-        onToggleEnterMode={() => setEnterMode(enterMode === 'send' ? 'newline' : 'send')}
+        enterMode={effectiveEnterMode}
+        onToggleEnterMode={handleToggleEnterMode}
       />
     </div>
   );

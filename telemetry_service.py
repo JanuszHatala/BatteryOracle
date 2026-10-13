@@ -176,8 +176,8 @@ def get_effective_telemetry_bounds(
         def_e = auto_e
         if db_c_s and db_c_e:
             try:
-                def_s = datetime.fromisoformat(db_c_s)
-                def_e = datetime.fromisoformat(db_c_e)
+                def_s = db_c_s.to_pydatetime() if hasattr(db_c_s, "to_pydatetime") else (db_c_s if isinstance(db_c_s, datetime) else datetime.fromisoformat(str(db_c_s)))
+                def_e = db_c_e.to_pydatetime() if hasattr(db_c_e, "to_pydatetime") else (db_c_e if isinstance(db_c_e, datetime) else datetime.fromisoformat(str(db_c_e)))
             except Exception:
                 pass
 
@@ -226,6 +226,27 @@ def build_telemetry_payload(
         custom_end_str=custom_end
     )
 
+    df_h = report.get("history_data")
+    r_min, r_max = None, None
+    auto_s, auto_e = None, None
+    if df_h is not None and not df_h.empty and "Time" in df_h.columns:
+        r_min = df_h["Time"].min()
+        r_max = df_h["Time"].max()
+        if hasattr(r_min, "to_pydatetime"):
+            r_min = r_min.to_pydatetime()
+        if hasattr(r_max, "to_pydatetime"):
+            r_max = r_max.to_pydatetime()
+        try:
+            n_start = int(db.get_setting("night_start_hour", "23"))
+            n_end = int(db.get_setting("night_end_hour", "7"))
+            auto_s, auto_e = parser.get_latest_night_window(r_min, r_max, n_start, n_end)
+            if hasattr(auto_s, "to_pydatetime"):
+                auto_s = auto_s.to_pydatetime()
+            if hasattr(auto_e, "to_pydatetime"):
+                auto_e = auto_e.to_pydatetime()
+        except Exception:
+            pass
+
     kpis = parser.compute_window_kpis(sliced_df)
 
     # Format timeline points
@@ -255,6 +276,9 @@ def build_telemetry_payload(
                 "percentage": pct
             })
 
+    db_c_s = report.get("custom_night_start")
+    db_c_e = report.get("custom_night_end")
+
     return {
         "scope": scope,
         "kpis": kpis,
@@ -262,7 +286,14 @@ def build_telemetry_payload(
         "components": components,
         "night_bounds": {
             "start": s_dt.isoformat() if s_dt else None,
-            "end": e_dt.isoformat() if e_dt else None
+            "end": e_dt.isoformat() if e_dt else None,
+            "auto_start": auto_s.isoformat() if auto_s else None,
+            "auto_end": auto_e.isoformat() if auto_e else None,
+            "is_custom": bool(db_c_s and db_c_e)
+        },
+        "session_bounds": {
+            "min_time": r_min.isoformat() if r_min else None,
+            "max_time": r_max.isoformat() if r_max else None
         }
     }
 

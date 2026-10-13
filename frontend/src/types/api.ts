@@ -58,6 +58,29 @@ export interface TelemetryResponse {
   night_bounds?: {
     start: string | null;
     end: string | null;
+    auto_start?: string | null;
+    auto_end?: string | null;
+    is_custom?: boolean;
+  };
+  session_bounds?: {
+    min_time: string | null;
+    max_time: string | null;
+  };
+}
+
+export interface AiErrorDetail {
+  category: 'rate_limit' | 'quota_exceeded' | 'auth' | 'connection' | 'model_not_found' | 'context_length' | 'unknown';
+  title: string;
+  icon: string;
+  raw_error: string;
+  suggestions: string[];
+  retry_delay_sec: number | null;
+  rate_limit_meta: {
+    quota_metric?: string;
+    quota_limit?: string;
+    model?: string;
+    is_free_tier?: boolean;
+    is_daily_quota?: boolean;
   };
 }
 

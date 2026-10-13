@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ReportSummary } from '../../types/api';
 import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
+import { useDialog } from '../ui/DialogContext';
 import { Search, Trash2, Smartphone, Calendar, CheckSquare, Square } from 'lucide-react';
 
 interface SidebarProps {
@@ -23,6 +24,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   selectedReportIds,
   onToggleReportSelection
 }) => {
+  const { confirm } = useDialog();
   const [query, setQuery] = useState('');
 
   const filtered = reports.filter((r) => {
@@ -116,9 +118,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
 
                   <button
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation();
-                      if (confirm(`Delete report "${r.custom_name}"?`)) {
+                      const ok = await confirm({
+                        title: 'Delete Bugreport',
+                        message: `Are you sure you want to permanently delete report "${r.custom_name}" and all its associated chat threads?`,
+                        confirmLabel: 'Delete Report',
+                        variant: 'danger'
+                      });
+                      if (ok) {
                         onDeleteReport(r.id);
                       }
                     }}

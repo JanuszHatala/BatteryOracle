@@ -186,7 +186,9 @@ def update_report(report_id: int, req: schemas.ReportUpdateRequest):
         new_desc = req.description if req.description is not None else rep.get("description", "")
         db.update_report_metadata(report_id, new_name, new_desc)
 
-    if req.custom_night_start is not None and req.custom_night_end is not None:
+    if req.reset_night_window or (req.custom_night_start == "" and req.custom_night_end == ""):
+        db.update_report_night_window(report_id, None, None)
+    elif req.custom_night_start is not None and req.custom_night_end is not None:
         try:
             s_dt = datetime.fromisoformat(req.custom_night_start)
             e_dt = datetime.fromisoformat(req.custom_night_end)
@@ -254,7 +256,8 @@ def get_report_telemetry(
         kpis=schemas.KpiMetrics(**payload["kpis"]),
         timeline=[schemas.TimelinePoint(**p) for p in payload["timeline"]],
         components=[schemas.PowerComponent(**c) for c in payload["components"]],
-        night_bounds=payload.get("night_bounds")
+        night_bounds=payload.get("night_bounds"),
+        session_bounds=payload.get("session_bounds")
     )
 
 
@@ -274,7 +277,7 @@ def diagnose_report(report_id: int, req: schemas.DiagnosisRequest):
             custom_end=req.custom_end
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI diagnosis generation failed: {e}")
+        raise HTTPException(status_code=502, detail=llm_manager.parse_llm_error(e))
 
     now_iso = datetime.now().isoformat()
     db.update_report_analysis(report_id, analysis, trace, now_iso)
@@ -317,7 +320,7 @@ def analyze_comparative(req: schemas.ComparativeRequest):
             scope=req.scope
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Comparative analysis failed: {e}")
+        raise HTTPException(status_code=502, detail=llm_manager.parse_llm_error(e))
 
     db.save_combined_analysis(comp_key, combined_text, reasoning_trace=trace, scope_key=req.scope)
 
@@ -462,7 +465,7 @@ def post_thread_message(thread_id: int, req: schemas.MessageCreateRequest):
     rep_id = th.get("report_id")
 
     # 1. Save user prompt
-    db.save_chat_message(
+    user_msg_id = db.save_chat_message(
         report_id=rep_id,
         role="user",
         content=req.content,
@@ -568,7 +571,9 @@ def post_thread_message(thread_id: int, req: schemas.MessageCreateRequest):
             action_type=action_type
         )
     except Exception as e:
-        reply = f"Oracle AI response temporarily unavailable: {e}"
+        if user_msg_id:
+            db.delete_chat_message(user_msg_id)
+        raise HTTPException(status_code=502, detail=llm_manager.parse_llm_error(e))
 
     # 5. Persist assistant reply
     asst_id = db.save_chat_message(
@@ -949,7 +954,7 @@ def audit_device_profile_comparison(req: schemas.ProfileCompareRequest):
         )
         cmp_res = parser.sanitize_ai_output(cmp_res)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Profile delta audit failed: {e}")
+        raise HTTPException(status_code=502, detail=llm_manager.parse_llm_error(e))
 
     cmp_cache_key = f"profile_cmp_ai_{min(req.profile_a_id, req.profile_b_id)}_{max(req.profile_a_id, req.profile_b_id)}_{req.profile_a_id}"
     now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1010,7 +1015,7 @@ def audit_device_profile(profile_id: int):
         )
         new_analysis = parser.sanitize_ai_output(new_analysis)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI configuration audit failed: {e}")
+        raise HTTPException(status_code=502, detail=llm_manager.parse_llm_error(e))
 
     db.update_device_profile_analysis(profile_id, new_analysis, "")
     updated = db.get_device_profile(profile_id)
@@ -1183,7 +1188,7 @@ def generate_master_synthesis_endpoint():
         )
         synthesis_text = parser.sanitize_ai_output(synthesis_text)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Master synthesis generation failed: {e}")
+        raise HTTPException(status_code=502, detail=llm_manager.parse_llm_error(e))
 
     db.save_master_synthesis(synthesis_text)
     return get_master_synthesis_endpoint()

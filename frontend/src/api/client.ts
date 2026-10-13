@@ -16,10 +16,23 @@ import {
   DeviceProfileDetail,
   ProfileComparisonResponse,
   MasterSynthesisResponse,
-  AccountingDashboardResponse
+  AccountingDashboardResponse,
+  AiErrorDetail
 } from '../types/api';
 
 const BASE_URL = '/api/v1';
+
+export class ApiClientError extends Error {
+  status: number;
+  aiError?: AiErrorDetail;
+
+  constructor(message: string, status: number, aiError?: AiErrorDetail) {
+    super(message);
+    this.name = 'ApiClientError';
+    this.status = status;
+    this.aiError = aiError;
+  }
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {};
@@ -37,13 +50,23 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     let errorMsg = `HTTP ${res.status}: ${res.statusText}`;
+    let aiError: AiErrorDetail | undefined;
     try {
       const errData = await res.json();
-      if (errData.detail) errorMsg = errData.detail;
+      if (errData.detail) {
+        if (typeof errData.detail === 'object' && errData.detail.title) {
+          aiError = errData.detail as AiErrorDetail;
+          errorMsg = `${aiError.title}: ${aiError.raw_error || ''}`;
+        } else if (typeof errData.detail === 'string') {
+          errorMsg = errData.detail;
+        } else {
+          errorMsg = JSON.stringify(errData.detail);
+        }
+      }
     } catch {
       // ignore json parse failure
     }
-    throw new Error(errorMsg);
+    throw new ApiClientError(errorMsg, res.status, aiError);
   }
 
   return res.json();
@@ -68,7 +91,7 @@ export const api = {
     });
   },
 
-  updateReport: (id: number, data: { custom_name?: string; description?: string; custom_night_start?: string; custom_night_end?: string }) =>
+  updateReport: (id: number, data: { custom_name?: string; description?: string; custom_night_start?: string | null; custom_night_end?: string | null; reset_night_window?: boolean }) =>
     request<ReportDetail>(`/reports/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data)

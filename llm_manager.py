@@ -644,7 +644,20 @@ def get_model_pricing(model_id):
     return "Pricing not listed"
 
 
-@retry(wait=wait_exponential(multiplier=2, min=2, max=15), stop=stop_after_attempt(5), reraise=True)
+def _should_retry_llm_error(exc: BaseException) -> bool:
+    """Only retry transient 503 / connection errors once; never retry 429 quota, 401/403 auth, or 404 not found."""
+    msg = str(exc).lower()
+    if any(k in msg for k in ("429", "ratelimit", "resource_exhausted", "quota", "401", "403", "404", "notfound", "auth")):
+        return False
+    return True
+
+
+@retry(
+    wait=wait_exponential(multiplier=1, min=1, max=3),
+    stop=stop_after_attempt(2),
+    retry=lambda retry_state: _should_retry_llm_error(retry_state.outcome.exception()) if retry_state.outcome and retry_state.outcome.failed else False,
+    reraise=True
+)
 def call_llm_tracked(messages, report_id=None, thread_id=None, action_type="chat"):
     """Execute LLM completion with automatic token and cost accounting saved to SQLite."""
     cfg = get_active_config()
@@ -707,6 +720,172 @@ def call_llm_tracked(messages, report_id=None, thread_id=None, action_type="chat
     )
     
     return response.choices[0].message.content
+
+
+def parse_llm_error(error: Exception) -> dict:
+    """Inspect LLM exception and return structured diagnostic details with actionable recovery suggestions."""
+    import re
+    err_str = str(error)
+    err_lower = err_str.lower()
+
+    category = "API Error"
+    title = "AI Service Request Failed"
+    icon = "⚠️"
+    suggestions = []
+    retry_delay_sec = None
+    rate_limit_meta = None
+
+    if "ratelimit" in err_lower or "429" in err_lower or "resource_exhausted" in err_lower or "quota" in err_lower:
+        category = "Rate Limit & Quota Exhausted (429)"
+        title = "AI Model Quota / Rate Limit Exceeded"
+        icon = "⏳"
+
+        rl = {
+            "retry_delay_sec": None,
+            "model": None,
+            "is_daily": False,
+            "is_minute": False,
+            "is_tokens": False,
+            "is_requests": False,
+            "zero_limit": False,
+            "violations": []
+        }
+
+        json_match = re.search(r"\{.*\}", err_str, re.DOTALL)
+        parsed_json = None
+        if json_match:
+            try:
+                parsed_json = json.loads(json_match.group(0))
+            except Exception:
+                parsed_json = None
+
+        if parsed_json and isinstance(parsed_json, dict) and "error" in parsed_json:
+            err_obj = parsed_json["error"]
+            msg = err_obj.get("message", "")
+            if "limit: 0" in msg:
+                rl["zero_limit"] = True
+
+            details = err_obj.get("details", [])
+            for item in details:
+                if item.get("@type") == "type.googleapis.com/google.rpc.RetryInfo":
+                    delay_str = item.get("retryDelay", "")
+                    m = re.search(r"([0-9]+(?:\.[0-9]+)?)", delay_str)
+                    if m:
+                        rl["retry_delay_sec"] = int(float(m.group(1)))
+                elif item.get("@type") == "type.googleapis.com/google.rpc.QuotaFailure":
+                    for v in item.get("violations", []):
+                        qid = v.get("quotaId", "")
+                        qmetric = v.get("quotaMetric", "")
+                        model = v.get("quotaDimensions", {}).get("model")
+                        if model and not rl["model"]:
+                            rl["model"] = model
+                        if "PerDay" in qid or "Day" in qid:
+                            rl["is_daily"] = True
+                        if "PerMinute" in qid or "Minute" in qid:
+                            rl["is_minute"] = True
+                        if "Token" in qid or "token" in qmetric:
+                            rl["is_tokens"] = True
+                        if "Request" in qid or "request" in qmetric:
+                            rl["is_requests"] = True
+                        rl["violations"].append(qid or qmetric)
+
+        if not rl["retry_delay_sec"]:
+            m_delay = re.search(r"retry\s+(?:in\s+)?([0-9]+(?:\.[0-9]+)?)\s*s", err_str, re.IGNORECASE)
+            if not m_delay:
+                m_delay = re.search(r"retryDelay['\"]?\s*:\s*['\"]?([0-9]+)s?", err_str, re.IGNORECASE)
+            if m_delay:
+                try:
+                    rl["retry_delay_sec"] = int(float(m_delay.group(1)))
+                except Exception:
+                    pass
+
+        if not rl["model"]:
+            m_model = re.search(r"model:\s*([a-zA-Z0-9_\-\.]+)", err_str, re.IGNORECASE)
+            if m_model:
+                rl["model"] = m_model.group(1)
+
+        if not rl["is_daily"] and re.search(r"perday|daily", err_str, re.IGNORECASE):
+            rl["is_daily"] = True
+        if not rl["is_minute"] and re.search(r"perminute|minute", err_str, re.IGNORECASE):
+            rl["is_minute"] = True
+        if not rl["is_tokens"] and re.search(r"token", err_str, re.IGNORECASE):
+            rl["is_tokens"] = True
+        if not rl["is_requests"] and re.search(r"request", err_str, re.IGNORECASE):
+            rl["is_requests"] = True
+
+        retry_delay_sec = rl["retry_delay_sec"]
+        rate_limit_meta = rl
+        model_display = rl["model"] or "your selected model"
+
+        if rl["is_daily"]:
+            icon = "🛑"
+            title = f"Daily Quota Exhausted for {model_display} (Free Tier)"
+            suggestions.append(
+                f"Daily Free Quota Exhausted: Google Gemini API has depleted its daily requests or tokens for {model_display}. Daily free quotas reset at Midnight Pacific Time (09:00 CEST / 07:00 UTC)."
+            )
+            suggestions.append(
+                "Immediate Fix - Switch Model: Open AI & LLM Settings (top header) and click 'Fetch Live Models' or switch to a model with available quota (e.g. gemini/gemini-3-flash-preview or gemini/gemini-3.1-flash-lite-preview)."
+            )
+            suggestions.append(
+                "Switch to Alternative Provider: Select OpenRouter, OpenAI, or Groq in Settings if you have an alternative API key."
+            )
+            suggestions.append(
+                "Add Billing to Google AI Studio: Attaching billing to your Google AI Studio project upgrades your key to Pay-As-You-Go, removing the 20-50 requests/day free limit."
+            )
+        else:
+            if retry_delay_sec:
+                suggestions.append(f"Wait {retry_delay_sec} seconds for the provider's per-minute rate-limiting window to roll over, then retry.")
+            else:
+                suggestions.append("Wait 30-60 seconds for your API provider's rate-limit window to reset, then retry.")
+            suggestions.append("Switch Model in AI & LLM Settings (e.g. gemini/gemini-3-flash-preview or gemini/gemini-3.1-flash-lite-preview).")
+
+    elif "auth" in err_lower or "401" in err_lower or "unauthorized" in err_lower or "api_key" in err_lower or "forbidden" in err_lower:
+        category = "Authentication / Invalid API Key (401/403)"
+        title = "AI Provider Authentication Failed"
+        icon = "🔑"
+        suggestions.append("Check API Key: Open AI & LLM Settings in the top header and verify your API key is correctly pasted.")
+        suggestions.append("Verify Provider Account: Confirm your API key is active in your provider's developer dashboard.")
+
+    elif "context_length_exceeded" in err_lower or "maximum context length" in err_lower or "context window" in err_lower or "too large" in err_lower:
+        category = "Context Length Exceeded"
+        title = "Telemetry Exceeds Model Context Window"
+        icon = "📜"
+        suggestions.append("Narrow Filter Scope: Select Night Drain or Screen-Off interval rather than Full Timeline.")
+        suggestions.append("Switch to a high-context model (up to 1M tokens) in AI & LLM Settings.")
+
+    elif "serviceunavailable" in err_lower or "503" in err_lower or "high demand" in err_lower or "unavailable" in err_lower:
+        category = "Model High Demand / Service Unavailable (503)"
+        title = "Model Temporarily Overloaded (503 High Demand)"
+        icon = "🔥"
+        suggestions.append("Wait a Moment & Retry: Spikes in demand on Google's servers for this model are temporary. Wait 10-30 seconds and retry.")
+        suggestions.append("Switch Model: Open AI & LLM Settings and switch to another model (e.g. gemini/gemini-3.1-flash-lite-preview or gemini/gemini-3-flash-preview).")
+        suggestions.append("Try Another Provider: If Google Gemini is congested, switch provider to OpenRouter or OpenAI in Settings.")
+
+    elif "notfound" in err_lower or "404" in err_lower:
+        category = "Model Not Found (404)"
+        title = "Selected Model ID Not Found on Provider"
+        icon = "🔍"
+        suggestions.append("Fetch Live Models: Open AI & LLM Settings, click 'Fetch Live Models', and select an active model ID.")
+
+    elif "timeout" in err_lower or "connection" in err_lower or "connecterror" in err_lower:
+        category = "Network / Connection Timeout"
+        title = "Cannot Connect to AI Provider"
+        icon = "🌐"
+        suggestions.append("Check Internet Connection: Verify your machine has outbound internet connectivity.")
+        suggestions.append("Local LLM (Ollama): If using Ollama, ensure 'ollama serve' is running on http://localhost:11434.")
+    else:
+        suggestions.append("Retry the operation or check your provider and model configuration in AI & LLM Settings.")
+
+    return {
+        "category": category,
+        "title": title,
+        "icon": icon,
+        "raw_error": err_str,
+        "suggestions": suggestions,
+        "retry_delay_sec": retry_delay_sec,
+        "rate_limit_meta": rate_limit_meta
+    }
+
 
 def get_prompt_template(name):
     """Retrieve customized prompt template or default."""

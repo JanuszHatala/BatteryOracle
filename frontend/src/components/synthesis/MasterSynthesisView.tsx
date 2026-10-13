@@ -4,6 +4,7 @@ import { MasterSynthesisResponse } from '../../types/api';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
+import { useDialog } from '../ui/DialogContext';
 import { ChatWorkspace } from '../chat/ChatWorkspace';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react';
 
 export const MasterSynthesisView: React.FC = () => {
+  const { showError } = useDialog();
   const [data, setData] = useState<MasterSynthesisResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -47,7 +49,7 @@ export const MasterSynthesisView: React.FC = () => {
       const res = await api.generateMasterSynthesis();
       setData(res);
     } catch (err: any) {
-      alert(`Master Synthesis generation failed: ${err.message}`);
+      showError(err, 'Generating Master Experiment Synthesis');
     } finally {
       setGenerating(false);
     }

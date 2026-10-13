@@ -3,6 +3,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
+import { useDialog } from '../ui/DialogContext';
 import { api } from '../../api/client';
 import {
   Settings,
@@ -80,6 +81,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   currentSettings,
   onSettingsUpdated
 }) => {
+  const { showError, confirm } = useDialog();
   const [activeTab, setActiveTab] = useState<'llm' | 'prompts' | 'preferences'>('llm');
 
   // Tab 1: LLM Provider & Credentials state
@@ -237,7 +239,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setModelDetails(res.model_details || []);
       setSelectedModelOption(addedId);
     } catch (err: any) {
-      alert(`Failed to add custom model: ${err.message}`);
+      showError(err, 'Adding Custom Model');
     } finally {
       setCustomSaving(false);
     }
@@ -248,7 +250,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const res = await api.deleteCustomModel(provider, modelId);
       setModelDetails(res.model_details || []);
     } catch (err: any) {
-      alert(`Failed to delete custom model: ${err.message}`);
+      showError(err, 'Deleting Custom Model');
     }
   };
 
@@ -290,13 +292,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleResetPrompts = async () => {
-    if (
-      !window.confirm(
-        'Reset all 7 system prompts to factory defaults? Custom prompt edits will be overwritten.'
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Reset System Prompts to Factory Defaults',
+      message: 'Reset all 7 system prompts to factory defaults? Custom prompt edits will be overwritten.',
+      confirmLabel: 'Reset Prompts',
+      variant: 'warning'
+    });
+    if (!ok) return;
+
     setSavingPrompts(true);
     setPromptsMsg(null);
     try {
@@ -313,7 +316,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeFinalModel) {
-      alert('Please specify a valid Model ID.');
+      showError(new Error('Please specify a valid Model ID.'), 'Saving Settings');
       return;
     }
     setSaving(true);
@@ -340,7 +343,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         onClose();
       }, 800);
     } catch (err: any) {
-      alert(`Failed to save settings: ${err.message}`);
+      showError(err, 'Saving Settings');
     } finally {
       setSaving(false);
     }
