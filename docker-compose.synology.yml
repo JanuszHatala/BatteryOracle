@@ -12,7 +12,7 @@
 
 services:
   battery-oracle:
-    image: ghcr.io/janush-tech/battery-oracle:latest
+    image: ghcr.io/januszhatala/batteryoracle:latest
     container_name: battery-oracle
     restart: unless-stopped
     ports:
