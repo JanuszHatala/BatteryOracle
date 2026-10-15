@@ -271,6 +271,7 @@ export const DischargeChart: React.FC<DischargeChartProps> = ({
                 fontSize: '12px',
                 color: '#f8fafc'
               }}
+              itemStyle={{ color: '#f1f5f9' }}
               labelFormatter={(idx: any) => {
                 const pt = formattedData[Number(idx)];
                 if (!pt) return '';

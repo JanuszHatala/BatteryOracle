@@ -205,6 +205,8 @@ export const AccountingView: React.FC = () => {
                         borderRadius: '0.5rem',
                         fontSize: '12px'
                       }}
+                      itemStyle={{ color: '#f1f5f9' }}
+                      labelStyle={{ color: '#94a3b8' }}
                       formatter={(val: any) => [`$${Number(val).toFixed(4)}`, 'Cost USD']}
                     />
                     <Bar dataKey="total_cost" fill="#6366f1" radius={[4, 4, 0, 0]} />
@@ -318,6 +320,8 @@ export const AccountingView: React.FC = () => {
                         borderRadius: '0.5rem',
                         fontSize: '12px'
                       }}
+                      itemStyle={{ color: '#f1f5f9' }}
+                      labelStyle={{ color: '#94a3b8' }}
                     />
                     <Bar dataKey="total_tokens" fill="#10b981" radius={[4, 4, 0, 0]} />
                   </BarChart>

@@ -111,8 +111,9 @@ export const TopConsumersChart: React.FC<TopConsumersChartProps> = ({ consumers 
                   fontSize: '12px',
                   color: '#f8fafc'
                 }}
-                formatter={(val: any) => [`${val} mAh`, 'Drain']}
+                itemStyle={{ color: '#f1f5f9' }}
                 labelStyle={{ color: '#94a3b8' }}
+                formatter={(val: any) => [`${val} mAh`, 'Drain']}
               />
               <Bar dataKey="mahRounded" radius={[0, 4, 4, 0]}>
                 {topItems.map((_entry, index) => (
@@ -144,6 +145,8 @@ export const TopConsumersChart: React.FC<TopConsumersChartProps> = ({ consumers 
                   fontSize: '12px',
                   color: '#f8fafc'
                 }}
+                itemStyle={{ color: '#f1f5f9' }}
+                labelStyle={{ color: '#94a3b8' }}
                 formatter={(val: any) => [`${val} mAh`, 'Drain']}
               />
               <Legend
