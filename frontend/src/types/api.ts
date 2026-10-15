@@ -10,6 +10,12 @@ export interface ReportSummary {
   created_at?: string;
 }
 
+export interface ScopeAnalysisDetail {
+  text: string;
+  trace?: string;
+  updated_at?: string;
+}
+
 export interface ReportDetail {
   id: number;
   file_hash: string;
@@ -25,6 +31,7 @@ export interface ReportDetail {
   custom_night_end: string | null;
   analysis_updated_at: string | null;
   created_at: string | null;
+  analyses?: Record<string, ScopeAnalysisDetail>;
 }
 
 export interface TimelinePoint {
@@ -90,6 +97,7 @@ export interface DiagnosisResponse {
   diagnosis: string;
   reasoning_trace: string;
   updated_at: string;
+  analyses?: Record<string, ScopeAnalysisDetail>;
 }
 
 export interface ComparativeResponse {
@@ -195,6 +203,7 @@ export interface DeviceProfile {
   profile_name: string;
   device_model?: string;
   os_build?: string;
+  is_active_context?: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -204,6 +213,7 @@ export interface DeviceProfileDetail {
   profile_name: string;
   device_model?: string;
   os_build?: string;
+  is_active_context?: boolean;
   raw_content: string;
   parsed_data: Record<string, any>;
   analysis_text: string;

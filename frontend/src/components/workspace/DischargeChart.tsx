@@ -24,6 +24,8 @@ interface DischargeChartProps {
   nightEndHour?: number;
   customNightStart?: string | null;
   customNightEnd?: string | null;
+  activeScope?: string;
+  hideNightShadingToggle?: boolean;
 }
 
 export const DischargeChart: React.FC<DischargeChartProps> = ({
@@ -32,16 +34,28 @@ export const DischargeChart: React.FC<DischargeChartProps> = ({
   nightStartHour = 23,
   nightEndHour = 7,
   customNightStart,
-  customNightEnd
+  customNightEnd,
+  activeScope = 'all',
+  hideNightShadingToggle = false
 }) => {
   const [showNightShading, setShowNightShading] = useState(true);
+  const [showScreenOffShading, setShowScreenOffShading] = useState(true);
 
   const customBoundsMs = useMemo(() => {
     if (!customNightStart || !customNightEnd) return null;
     const s = new Date(customNightStart).getTime();
     const e = new Date(customNightEnd).getTime();
-    if (isNaN(s) || isNaN(e)) return null;
-    return { startMs: s, endMs: e };
+    if (isNaN(s) || isNaN(e) || e <= s) return null;
+    const d1 = new Date(customNightStart);
+    const d2 = new Date(customNightEnd);
+    return {
+      startMs: s,
+      endMs: e,
+      startHour: d1.getHours(),
+      endHour: d2.getHours(),
+      startHhmm: d1.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+      endHhmm: d2.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+    };
   }, [customNightStart, customNightEnd]);
 
   // Determine whether timeline spans multiple calendar days
@@ -58,6 +72,9 @@ export const DischargeChart: React.FC<DischargeChartProps> = ({
 
   // Format timestamps with unique point index so ReferenceArea works across multi-day timelines
   const formattedData = useMemo(() => {
+    const effStartHour = customBoundsMs ? customBoundsMs.startHour : nightStartHour;
+    const effEndHour = customBoundsMs ? customBoundsMs.endHour : nightEndHour;
+
     return data.map((item, idx) => {
       let displayLabel = `${idx}`;
       let fullLabel = `${item.timestamp}`;
@@ -94,25 +111,28 @@ export const DischargeChart: React.FC<DischargeChartProps> = ({
       if (customBoundsMs && pointMs !== null && pointMs >= customBoundsMs.startMs && pointMs <= customBoundsMs.endMs) {
         isNightWindow = true;
       } else if (hour !== null) {
-        if (nightStartHour > nightEndHour) {
-          isNightWindow = hour >= nightStartHour || hour < nightEndHour;
-        } else if (nightStartHour < nightEndHour) {
-          isNightWindow = hour >= nightStartHour && hour < nightEndHour;
+        if (effStartHour > effEndHour) {
+          isNightWindow = hour >= effStartHour || hour < effEndHour;
+        } else if (effStartHour < effEndHour) {
+          isNightWindow = hour >= effStartHour && hour < effEndHour;
         }
       }
+
+      const isScreenOff = item.is_screen_on === false;
 
       return {
         ...item,
         idx,
         displayLabel,
         fullLabel,
-        isNightWindow
+        isNightWindow,
+        isScreenOff
       };
     });
   }, [data, nightStartHour, nightEndHour, customBoundsMs, spansMultipleDays]);
 
   // Find contiguous night intervals by unique point index
-  const shadedBands = useMemo(() => {
+  const nightBands = useMemo(() => {
     const bands: { startIdx: number; endIdx: number }[] = [];
     let currentStartIdx: number | null = null;
 
@@ -132,6 +152,28 @@ export const DischargeChart: React.FC<DischargeChartProps> = ({
     return bands;
   }, [formattedData]);
 
+  // Find contiguous screen-off intervals by unique point index (used in screen_off scope)
+  const screenOffBands = useMemo(() => {
+    if (activeScope !== 'screen_off') return [];
+    const bands: { startIdx: number; endIdx: number }[] = [];
+    let currentStartIdx: number | null = null;
+
+    formattedData.forEach((pt, i) => {
+      if (pt.isScreenOff && currentStartIdx === null) {
+        currentStartIdx = i;
+      } else if (!pt.isScreenOff && currentStartIdx !== null) {
+        bands.push({ startIdx: currentStartIdx, endIdx: i });
+        currentStartIdx = null;
+      }
+    });
+
+    if (currentStartIdx !== null && formattedData.length > 0) {
+      bands.push({ startIdx: currentStartIdx, endIdx: formattedData.length - 1 });
+    }
+
+    return bands;
+  }, [formattedData, activeScope]);
+
   if (!data || data.length === 0) {
     return (
       <Card className="p-6 text-center text-slate-400 text-sm">
@@ -140,32 +182,63 @@ export const DischargeChart: React.FC<DischargeChartProps> = ({
     );
   }
 
-  const nightHoursText = `${String(nightStartHour).padStart(2, '0')}:00–${String(nightEndHour).padStart(2, '0')}:00`;
+  const nightHoursText = customBoundsMs
+    ? `${customBoundsMs.startHhmm}–${customBoundsMs.endHhmm}`
+    : `${String(nightStartHour).padStart(2, '0')}:00–${String(nightEndHour).padStart(2, '0')}:00`;
+
+  const isScreenOffMode = activeScope === 'screen_off';
 
   return (
     <Card className="p-4 flex flex-col h-[340px]">
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-        <h3 className="text-sm font-semibold text-slate-200">{title}</h3>
-        <div className="flex items-center gap-3 text-xs text-slate-400">
-          <span className="flex items-center gap-1.5">
+      <div className="flex items-center justify-between gap-2 mb-2 min-h-7">
+        <h3 className="text-sm font-semibold text-slate-200 truncate">{title}</h3>
+        <div className="flex items-center gap-2.5 text-xs text-slate-400 shrink-0">
+          <span className="flex items-center gap-1.5 text-[11px] text-slate-300">
             <span className="w-2.5 h-0.5 bg-indigo-400 inline-block rounded" />
-            Battery %
+            <span>Battery %</span>
           </span>
-          {showNightShading && (
-            <span className="flex items-center gap-1.5 text-indigo-300/90">
-              <span className="w-3 h-2.5 rounded-sm bg-indigo-500/35 border border-indigo-400/50 inline-block" />
-              Night ({nightHoursText})
-            </span>
-          )}
-          <label className="flex items-center gap-1.5 cursor-pointer select-none hover:text-slate-200 transition-colors bg-slate-900/80 border border-slate-800 px-2 py-0.5 rounded-md">
-            <input
-              type="checkbox"
-              checked={showNightShading}
-              onChange={(e) => setShowNightShading(e.target.checked)}
-              className="rounded border-slate-700 bg-slate-950 text-indigo-500 focus:ring-indigo-500 w-3 h-3"
-            />
-            <span>Show 🌙 Night Shading</span>
-          </label>
+
+          {/* Screen Off mode controls */}
+          {isScreenOffMode ? (
+            <label className={`flex items-center gap-1.5 cursor-pointer select-none transition-colors border px-2 py-0.5 rounded-md text-[11px] ${
+              showScreenOffShading
+                ? 'bg-sky-950/40 border-sky-500/50 text-sky-200 font-medium'
+                : 'bg-slate-900/80 border-slate-800 text-slate-400 hover:text-slate-300'
+            }`}>
+              <input
+                type="checkbox"
+                checked={showScreenOffShading}
+                onChange={(e) => setShowScreenOffShading(e.target.checked)}
+                className="rounded border-slate-700 bg-slate-950 text-sky-500 focus:ring-sky-500 w-3 h-3"
+              />
+              <span className={`w-2.5 h-2 rounded-xs border inline-block transition-opacity ${
+                showScreenOffShading
+                  ? 'bg-sky-500/40 border-sky-400/60 opacity-100'
+                  : 'bg-slate-700/40 border-slate-600/40 opacity-40'
+              }`} />
+              <span>Screen-Off Shading</span>
+            </label>
+          ) : !hideNightShadingToggle ? (
+            /* Night shading toggle for Full Timeline and Custom Window */
+            <label className={`flex items-center gap-1.5 cursor-pointer select-none transition-colors border px-2 py-0.5 rounded-md text-[11px] ${
+              showNightShading
+                ? 'bg-indigo-950/40 border-indigo-500/50 text-indigo-200 font-medium'
+                : 'bg-slate-900/80 border-slate-800 text-slate-400 hover:text-slate-300'
+            }`}>
+              <input
+                type="checkbox"
+                checked={showNightShading}
+                onChange={(e) => setShowNightShading(e.target.checked)}
+                className="rounded border-slate-700 bg-slate-950 text-indigo-500 focus:ring-indigo-500 w-3 h-3"
+              />
+              <span className={`w-2.5 h-2 rounded-xs border inline-block transition-opacity ${
+                showNightShading
+                  ? 'bg-indigo-500/40 border-indigo-400/60 opacity-100'
+                  : 'bg-slate-700/40 border-slate-600/40 opacity-40'
+              }`} />
+              <span>Night ({nightHoursText})</span>
+            </label>
+          ) : null}
         </div>
       </div>
 
@@ -201,15 +274,34 @@ export const DischargeChart: React.FC<DischargeChartProps> = ({
               labelFormatter={(idx: any) => {
                 const pt = formattedData[Number(idx)];
                 if (!pt) return '';
-                return `${pt.fullLabel}${pt.isNightWindow ? ' (🌙 Night Window)' : ' (☀️ Daytime)'}`;
+                const screenTag = pt.isScreenOff ? ' • 📴 Screen Off' : ' • 📱 Screen On';
+                const nightTag = pt.isNightWindow ? ' • 🌙 Night Window' : '';
+                return `${pt.fullLabel}${screenTag}${nightTag}`;
               }}
               formatter={(val: any) => [`${val}%`, 'Battery Level']}
               labelStyle={{ color: '#94a3b8', marginBottom: '4px' }}
             />
-            {showNightShading &&
-              shadedBands.map((band, idx) => (
+
+            {/* Screen-Off Shading Bands */}
+            {isScreenOffMode && showScreenOffShading &&
+              screenOffBands.map((band, idx) => (
                 <ReferenceArea
-                  key={idx}
+                  key={`so-${idx}`}
+                  x1={band.startIdx}
+                  x2={band.endIdx}
+                  fill="#0284c7"
+                  fillOpacity={0.18}
+                  stroke="#38bdf8"
+                  strokeOpacity={0.4}
+                  strokeDasharray="3 3"
+                />
+              ))}
+
+            {/* Night Shading Bands (hidden in Night Drain scope or when toggle unchecked) */}
+            {!isScreenOffMode && !hideNightShadingToggle && showNightShading &&
+              nightBands.map((band, idx) => (
+                <ReferenceArea
+                  key={`nb-${idx}`}
                   x1={band.startIdx}
                   x2={band.endIdx}
                   fill="#6366f1"
@@ -219,13 +311,14 @@ export const DischargeChart: React.FC<DischargeChartProps> = ({
                   strokeDasharray="3 3"
                 />
               ))}
+
             <Line
               type="monotone"
               dataKey="battery_level"
-              stroke="#6366f1"
+              stroke={isScreenOffMode ? '#38bdf8' : '#6366f1'}
               strokeWidth={2}
               dot={false}
-              activeDot={{ r: 4, fill: '#818cf8' }}
+              activeDot={{ r: 4, fill: isScreenOffMode ? '#7dd3fc' : '#818cf8' }}
             />
           </LineChart>
         </ResponsiveContainer>

@@ -11,7 +11,4 @@ services:
       - OPENROUTER_API_KEY=
       - OPENAI_API_KEY=
     volumes:
-      - battery_oracle_data:/app/data
-
-volumes:
-  battery_oracle_data:
+      - ./data:/app/data

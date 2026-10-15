@@ -8,28 +8,37 @@ import { ReportDetail, TelemetryResponse } from '../../types/api';
 import { api } from '../../api/client';
 import { Badge } from '../ui/Badge';
 import { useDialog } from '../ui/DialogContext';
-import { Smartphone, Calendar, FileText, Cpu } from 'lucide-react';
+import { Smartphone, Calendar, FileText, Cpu, Edit3, AlignLeft } from 'lucide-react';
+import { EditReportModal } from './EditReportModal';
 
 interface ReportWorkspaceProps {
   report: ReportDetail;
   onRefreshReport: () => void;
   nightStartHour?: number;
   nightEndHour?: number;
+  activeScope?: AnalysisScope;
+  onScopeChange?: (scope: AnalysisScope) => void;
 }
 
 export const ReportWorkspace: React.FC<ReportWorkspaceProps> = ({
   report,
   onRefreshReport,
   nightStartHour = 23,
-  nightEndHour = 7
+  nightEndHour = 7,
+  activeScope,
+  onScopeChange
 }) => {
   const { showError } = useDialog();
-  const [scope, setScope] = useState<AnalysisScope>('night');
+  const [internalScope, setInternalScope] = useState<AnalysisScope>('all');
+  const scope = activeScope ?? internalScope;
+  const setScope = onScopeChange ?? setInternalScope;
+
   const [customStart, setCustomStart] = useState<string | undefined>(undefined);
   const [customEnd, setCustomEnd] = useState<string | undefined>(undefined);
   const [telemetry, setTelemetry] = useState<TelemetryResponse | null>(null);
   const [isLoadingTelemetry, setIsLoadingTelemetry] = useState(false);
   const [isDiagnosing, setIsDiagnosing] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   // Reset custom window state when switching reports
   useEffect(() => {
@@ -60,9 +69,9 @@ export const ReportWorkspace: React.FC<ReportWorkspaceProps> = ({
   }, [fetchTelemetry, scope, customStart, customEnd, nightStartHour, nightEndHour]);
 
   const handleScopeChange = (newScope: AnalysisScope) => {
-    if (newScope === 'custom' && !customStart && !customEnd && telemetry?.night_bounds) {
-      setCustomStart(telemetry.night_bounds.start || telemetry.session_bounds?.min_time || undefined);
-      setCustomEnd(telemetry.night_bounds.end || telemetry.session_bounds?.max_time || undefined);
+    if (newScope === 'custom' && !customStart && !customEnd) {
+      setCustomStart(telemetry?.session_bounds?.min_time || undefined);
+      setCustomEnd(telemetry?.session_bounds?.max_time || undefined);
     }
     setScope(newScope);
   };
@@ -70,6 +79,7 @@ export const ReportWorkspace: React.FC<ReportWorkspaceProps> = ({
   const handleApplyCustomWindow = (startIso: string, endIso: string) => {
     setCustomStart(startIso);
     setCustomEnd(endIso);
+    fetchTelemetry('custom', startIso, endIso);
   };
 
   const handleSaveNightWindow = async (startIso: string, endIso: string) => {
@@ -125,7 +135,7 @@ export const ReportWorkspace: React.FC<ReportWorkspaceProps> = ({
   const dischargeData = (telemetry?.timeline || []).map((t) => ({
     timestamp: t.timestamp,
     battery_level: t.battery_level,
-    is_screen_on: t.screen_state === 'on'
+    is_screen_on: t.screen_state === 'on' ? true : (t.screen_state === 'off' ? false : undefined)
   }));
 
   const topDrainer = telemetry?.components && telemetry.components.length > 0 ? telemetry.components[0] : null;
@@ -136,7 +146,7 @@ export const ReportWorkspace: React.FC<ReportWorkspaceProps> = ({
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+            <div className="w-12 h-12 rounded-xl bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
               <Smartphone className="w-6 h-6" />
             </div>
             <div>
@@ -168,7 +178,49 @@ export const ReportWorkspace: React.FC<ReportWorkspaceProps> = ({
               </div>
             </div>
           </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIsEditModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors shadow-sm"
+              title="Edit report name and description notes"
+            >
+              <Edit3 className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Edit Details</span>
+            </button>
+          </div>
         </div>
+
+        {/* Notes / Description Section */}
+        {report.description ? (
+          <div className="mt-4 pt-3.5 border-t border-slate-800/80 flex items-start gap-2.5 text-xs text-slate-300 bg-slate-950/50 px-3.5 py-2.5 rounded-lg border border-slate-800/60">
+            <AlignLeft className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <span className="font-semibold text-slate-400 mr-2 uppercase text-[10px] tracking-wider">Experiment Notes:</span>
+              <span className="text-slate-200 leading-relaxed italic">{report.description}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsEditModalOpen(true)}
+              className="text-slate-500 hover:text-indigo-400 p-0.5 transition-colors shrink-0"
+              title="Edit notes"
+            >
+              <Edit3 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : (
+          <div className="mt-3.5 pt-2.5 border-t border-slate-800/40 flex items-center justify-between text-xs text-slate-500">
+            <span className="italic">No description notes added for this report.</span>
+            <button
+              type="button"
+              onClick={() => setIsEditModalOpen(true)}
+              className="text-indigo-400 hover:text-indigo-300 hover:underline text-[11px] font-medium"
+            >
+              + Add Notes
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Scope Selector */}
@@ -200,18 +252,32 @@ export const ReportWorkspace: React.FC<ReportWorkspaceProps> = ({
           data={dischargeData}
           nightStartHour={nightStartHour}
           nightEndHour={nightEndHour}
-          customNightStart={telemetry?.night_bounds?.is_custom ? telemetry?.night_bounds?.start : null}
-          customNightEnd={telemetry?.night_bounds?.is_custom ? telemetry?.night_bounds?.end : null}
+          customNightStart={telemetry?.night_bounds?.is_custom ? (telemetry?.night_bounds?.start || report.custom_night_start) : null}
+          customNightEnd={telemetry?.night_bounds?.is_custom ? (telemetry?.night_bounds?.end || report.custom_night_end) : null}
+          activeScope={scope}
+          hideNightShadingToggle={scope === 'night'}
         />
         <TopConsumersChart consumers={telemetry?.components || []} />
       </div>
 
       {/* AI Diagnostic Summary Card */}
       <DiagnosisCard
-        diagnosisMarkdown={report.initial_analysis || undefined}
+        diagnosisMarkdown={
+          report.analyses?.[scope]?.text ||
+          (scope === 'all' ? report.initial_analysis : undefined)
+        }
         isDiagnosing={isDiagnosing}
         onDiagnose={handleDiagnose}
         onExportMarkdown={handleExportMarkdown}
+        scope={scope}
+      />
+
+      {/* Edit Report Name & Description Modal */}
+      <EditReportModal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        report={report}
+        onSaved={onRefreshReport}
       />
     </div>
   );

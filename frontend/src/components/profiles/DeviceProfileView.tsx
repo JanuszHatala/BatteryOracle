@@ -28,10 +28,16 @@ import {
   Search,
   Loader2,
   Download,
-  Copy
+  Copy,
+  Star,
+  Info,
+  X
 } from 'lucide-react';
 
-const ADB_CAPTURE_SCRIPT = `adb shell '
+const ADB_CAPTURE_SCRIPT = `adb get-state 1>/dev/null 2>&1 && {
+  FILENAME="device_profile_$(date +%Y%m%d_%H%M%S).txt"
+  echo "Connected. Capturing configuration to $FILENAME..."
+  adb shell '
 echo "=== DEVICE_HEADER ===";
 echo "model=$(getprop ro.product.model)";
 echo "manufacturer=$(getprop ro.product.manufacturer)";
@@ -47,7 +53,9 @@ echo "=== APPOPS_RUN_ANY_IN_BG ==="; cmd appops query-op RUN_ANY_IN_BACKGROUND a
 echo "=== APPOPS_WAKE_LOCK ==="; cmd appops query-op WAKE_LOCK allow; cmd appops query-op WAKE_LOCK ignore;
 echo "=== POWER_MANAGER ==="; dumpsys power;
 echo "=== WIFI_STATUS ==="; cmd wifi status;
-' > device_profile.txt`;
+' > "$FILENAME"
+  echo "Done! Snapshot saved to $FILENAME"
+} || echo "Error: No Android device detected via ADB. Ensure USB debugging is enabled."`;
 
 export const DeviceProfileView: React.FC = () => {
   const { showError, confirm } = useDialog();
@@ -60,14 +68,19 @@ export const DeviceProfileView: React.FC = () => {
   const [viewMode, setViewMode] = useState<'single' | 'compare'>('single');
   const [activeSubTab, setActiveSubTab] = useState<'audit' | 'wifi' | 'chat'>('audit');
 
-  // Panels: ADB instructions & Upload
+  // ADB instructions & Upload modal
   const [showAdbScript, setShowAdbScript] = useState(false);
   const [copiedAdb, setCopiedAdb] = useState(false);
-  const [showUploadPanel, setShowUploadPanel] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadMode, setUploadMode] = useState<'new' | 'overwrite'>('new');
   const [uploadLabel, setUploadLabel] = useState('');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadFileError, setUploadFileError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+
+  // Prompt banner to run audit after uploading
+  const [justUploadedProfileId, setJustUploadedProfileId] = useState<number | null>(null);
+  const [settingActiveProfileId, setSettingActiveProfileId] = useState<number | null>(null);
 
   // Rename state
   const [isRenaming, setIsRenaming] = useState(false);
@@ -163,9 +176,25 @@ export const DeviceProfileView: React.FC = () => {
     }
   }, [viewMode, compareBaselineId, compareTargetId]);
 
+  const handleFileChange = (file: File | null) => {
+    setUploadFile(file);
+    setUploadFileError(null);
+    if (file) {
+      if (file.size < 50) {
+        setUploadFileError('The selected file is too small (< 50 bytes) and appears empty or corrupted.');
+      } else if (!file.name.toLowerCase().endsWith('.txt') && !file.name.toLowerCase().endsWith('.log')) {
+        setUploadFileError('Device profile snapshot should be a .txt or .log file.');
+      }
+    }
+  };
+
   const handleUploadProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!uploadFile) return;
+    if (uploadFile.size < 50) {
+      setUploadFileError('File size is under 50 bytes. Please provide a valid device profile dump.');
+      return;
+    }
     setUploading(true);
     try {
       const targetOverwriteId =
@@ -175,15 +204,33 @@ export const DeviceProfileView: React.FC = () => {
         uploadLabel.trim() || undefined,
         targetOverwriteId
       );
-      setShowUploadPanel(false);
+      setShowUploadModal(false);
       setUploadFile(null);
       setUploadLabel('');
+      setUploadFileError(null);
       await loadProfilesAndRouters(saved.id);
       setActiveProfile(saved);
+      setSelectedProfileId(saved.id);
+      setJustUploadedProfileId(saved.id);
     } catch (err: any) {
       showError(err, 'Uploading Device Profile');
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleSetActiveContext = async (profileId: number) => {
+    setSettingActiveProfileId(profileId);
+    try {
+      await api.setActiveProfile(profileId);
+      await loadProfilesAndRouters(profileId);
+      if (selectedProfileId === profileId && activeProfile) {
+        setActiveProfile({ ...activeProfile, is_active_context: true });
+      }
+    } catch (err: any) {
+      showError(err, 'Setting Default Context Profile');
+    } finally {
+      setSettingActiveProfileId(null);
     }
   };
 
@@ -422,7 +469,7 @@ export const DeviceProfileView: React.FC = () => {
           <Button
             variant="primary"
             size="sm"
-            onClick={() => setShowUploadPanel(!showUploadPanel)}
+            onClick={() => setShowUploadModal(true)}
             className="text-xs"
           >
             <Upload className="w-3.5 h-3.5" />
@@ -452,22 +499,37 @@ export const DeviceProfileView: React.FC = () => {
               <span>{copiedAdb ? 'Copied!' : 'Copy Command'}</span>
             </Button>
           </div>
-          <pre className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-300 overflow-x-auto">
+          <pre className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-300 overflow-x-auto whitespace-pre">
             {ADB_CAPTURE_SCRIPT}
           </pre>
         </Card>
       )}
 
-      {/* Collapsible Upload Panel */}
-      {showUploadPanel && (
-        <Card className="p-5 border-emerald-500/30 bg-slate-900/90">
-          <form onSubmit={handleUploadProfile} className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-slate-200">
-                📤 Upload Device Profile Snapshot (`device_profile.txt`)
-              </h3>
-              <div className="flex items-center gap-4 text-xs">
-                <label className="flex items-center gap-1.5 cursor-pointer">
+      {/* Upload Profile Modal Dialog */}
+      {showUploadModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+          <Card className="w-full max-w-lg p-6 border-indigo-500/40 bg-slate-900 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-slate-100 font-semibold text-sm">
+                <Upload className="w-4 h-4 text-indigo-400" />
+                <span>Upload Device Profile Snapshot</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowUploadModal(false);
+                  setUploadFile(null);
+                  setUploadFileError(null);
+                }}
+                className="text-slate-400 hover:text-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUploadProfile} className="space-y-4">
+              <div className="flex items-center gap-4 text-xs bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+                <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
                   <input
                     type="radio"
                     checked={uploadMode === 'new'}
@@ -476,19 +538,17 @@ export const DeviceProfileView: React.FC = () => {
                   <span>➕ Create New Profile</span>
                 </label>
                 {selectedProfileId && (
-                  <label className="flex items-center gap-1.5 cursor-pointer">
+                  <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
                     <input
                       type="radio"
                       checked={uploadMode === 'overwrite'}
                       onChange={() => setUploadMode('overwrite')}
                     />
-                    <span>🔄 Overwrite Current Profile (#{selectedProfileId})</span>
+                    <span>🔄 Overwrite Selected (#{selectedProfileId})</span>
                   </label>
                 )}
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
               <div>
                 <label className="text-xs text-slate-400 block mb-1">
                   Profile Label (Optional)
@@ -500,40 +560,96 @@ export const DeviceProfileView: React.FC = () => {
                   className="text-xs"
                 />
               </div>
+
               <div>
                 <label className="text-xs text-slate-400 block mb-1">
-                  Select `device_profile.txt`
+                  Select Snapshot File (`device_profile_*.txt` or `.log`)
                 </label>
                 <input
                   type="file"
                   accept=".txt,.log"
-                  onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-                  className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700"
+                  onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 cursor-pointer"
                 />
+                {uploadFile && (
+                  <div className="mt-1.5 text-[11px] text-slate-400">
+                    Selected: <strong className="text-slate-200">{uploadFile.name}</strong> ({(uploadFile.size / 1024).toFixed(1)} KB)
+                  </div>
+                )}
+                {uploadFileError && (
+                  <div className="mt-2 text-xs text-rose-400 bg-rose-950/40 border border-rose-800/60 rounded p-2">
+                    {uploadFileError}
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="sm"
-                  disabled={!uploadFile || uploading}
-                  className="text-xs"
-                >
-                  {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                  <span>{uploading ? 'Parsing...' : 'Parse & Save Snapshot'}</span>
-                </Button>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => setShowUploadPanel(false)}
+                  onClick={() => {
+                    setShowUploadModal(false);
+                    setUploadFile(null);
+                    setUploadFileError(null);
+                  }}
                   className="text-xs"
                 >
                   Cancel
                 </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  disabled={!uploadFile || !!uploadFileError || uploading}
+                  className="text-xs"
+                >
+                  {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                  <span>{uploading ? 'Validating & Parsing...' : 'Parse & Save Profile'}</span>
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* Just Uploaded Profile: Prompt to Run AI Audit */}
+      {justUploadedProfileId && activeProfile && activeProfile.id === justUploadedProfileId && !activeProfile.analysis_text && (
+        <Card className="p-4 bg-indigo-950/40 border-indigo-500/50 flex flex-wrap items-center justify-between gap-3 animate-in fade-in duration-200">
+          <div className="flex items-center gap-2.5">
+            <Sparkles className="w-5 h-5 text-indigo-400 shrink-0" />
+            <div>
+              <div className="text-xs font-bold text-indigo-200">
+                Device profile uploaded successfully: #{activeProfile.id} ({activeProfile.profile_name})
+              </div>
+              <div className="text-[11px] text-indigo-300/80">
+                Would you like to run the automated AI Configuration & Doze Audit now?
               </div>
             </div>
-          </form>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={async () => {
+                setJustUploadedProfileId(null);
+                await handleGenerateAudit();
+              }}
+              disabled={auditing}
+              className="text-xs"
+            >
+              {auditing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              <span>Run AI Audit Now</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setJustUploadedProfileId(null)}
+              className="text-xs text-slate-400"
+            >
+              Dismiss
+            </Button>
+          </div>
         </Card>
       )}
 
@@ -647,9 +763,35 @@ export const DeviceProfileView: React.FC = () => {
 
               {/* Settings Diff Table */}
               <Card className="p-5 space-y-3">
-                <h3 className="text-sm font-semibold text-slate-200">
-                  Modified System Settings (`global` / `secure` / `system`)
-                </h3>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-200">
+                      Modified System Settings (`global` / `secure` / `system`)
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Highlights Android system key differences between the Baseline and Target snapshots.
+                    </p>
+                  </div>
+                  <div className="text-[11px] text-slate-400 bg-slate-950 border border-slate-800 rounded px-2.5 py-1">
+                    <span className="text-rose-400 font-semibold">Before</span> vs <span className="text-emerald-400 font-semibold">After</span>
+                  </div>
+                </div>
+
+                {/* Explanation Callout for Modified System Settings */}
+                <div className="bg-slate-950/80 border border-slate-800/80 rounded-lg p-3 text-xs text-slate-300 space-y-1">
+                  <div className="flex items-center gap-1.5 font-semibold text-indigo-300">
+                    <Info className="w-3.5 h-3.5" />
+                    <span>What is this section and how is it used?</span>
+                  </div>
+                  <p className="text-slate-400 leading-relaxed text-[11px]">
+                    Android maintains three system databases accessed via `settings list [namespace]`:
+                    <strong className="text-slate-300"> global</strong> (device-wide flags like Wi-Fi scan throttling, 5G mode, BLE scan),
+                    <strong className="text-slate-300"> secure</strong> (security and privacy flags like location mode, wake gestures, AOD), and
+                    <strong className="text-slate-300"> system</strong> (per-user display timeout, screen brightness, haptics).
+                    This table reveals exact config changes between snapshots, explaining why battery drain rates shifted after an OS update or tweak.
+                  </p>
+                </div>
+
                 <div className="overflow-x-auto max-h-96">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
@@ -695,7 +837,7 @@ export const DeviceProfileView: React.FC = () => {
             </Card>
           ) : (
             <div className="space-y-6">
-              {/* Profile Selector & Rename/Delete Bar */}
+              {/* Profile Selector & Context Indicator Bar */}
               <Card className="p-4 flex flex-wrap items-center justify-between gap-4">
                 <div className="flex flex-wrap items-center gap-3 flex-1">
                   <select
@@ -705,10 +847,34 @@ export const DeviceProfileView: React.FC = () => {
                   >
                     {profiles.map((p) => (
                       <option key={p.id} value={p.id}>
-                        #{p.id} • {p.profile_name} ({p.device_model} / {p.os_build}) — {p.created_at}
+                        {p.is_active_context ? '⭐ ' : ''}#{p.id} • {p.profile_name} ({p.device_model} / {p.os_build}) {p.is_active_context ? '[Default Context]' : ''}
                       </option>
                     ))}
                   </select>
+
+                  {/* Active Context Profile Badge & Switcher */}
+                  {activeProfile?.is_active_context ? (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                      <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                      <span>Default Global Context Profile</span>
+                    </span>
+                  ) : activeProfile ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleSetActiveContext(activeProfile.id)}
+                      disabled={settingActiveProfileId === activeProfile.id}
+                      className="text-xs"
+                      title="Set this profile as background device context for bugreport AI diagnostics and chat sessions"
+                    >
+                      {settingActiveProfileId === activeProfile.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Star className="w-3.5 h-3.5" />
+                      )}
+                      <span>Set as Default Context</span>
+                    </Button>
+                  ) : null}
 
                   {isRenaming ? (
                     <div className="flex items-center gap-1.5">
@@ -1023,9 +1189,14 @@ export const DeviceProfileView: React.FC = () => {
                   {/* Searchable System Settings Explorer */}
                   <Card className="p-5 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <h3 className="text-sm font-semibold text-slate-200">
-                        🔎 Full System Settings Explorer (`global` / `secure` / `system`)
-                      </h3>
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-200">
+                          🔎 Full System Settings Explorer (`global` / `secure` / `system`)
+                        </h3>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          Inspect all key-value entries captured across Android configuration namespaces.
+                        </p>
+                      </div>
                       <div className="flex items-center gap-2">
                         <select
                           value={settingsNamespace}
@@ -1048,6 +1219,17 @@ export const DeviceProfileView: React.FC = () => {
                           />
                         </div>
                       </div>
+                    </div>
+
+                    <div className="bg-slate-950/80 border border-slate-800/80 rounded-lg p-3 text-xs text-slate-300 space-y-1">
+                      <div className="flex items-center gap-1.5 font-semibold text-indigo-300 text-[11px]">
+                        <Info className="w-3.5 h-3.5" />
+                        <span>System Settings Reference:</span>
+                      </div>
+                      <p className="text-slate-400 leading-relaxed text-[11px]">
+                        Dumps from `settings list` define OS telemetry, power management states, radio policies, and peripheral polling intervals.
+                        AI diagnostics cross-reference these keys (e.g. `wifi_scan_always_enabled`, `deviceidle_constants`, `location_mode`) to flag rogue power drainers.
+                      </p>
                     </div>
 
                     <div className="max-h-80 overflow-y-auto border border-slate-800 rounded-lg">

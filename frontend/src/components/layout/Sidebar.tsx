@@ -150,6 +150,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   )}
                 </div>
 
+                {r.description && (
+                  <p className="text-[11px] text-slate-400/90 line-clamp-1 italic mb-1.5" title={r.description}>
+                    {r.description}
+                  </p>
+                )}
+
                 <div className="flex items-center gap-1.5">
                   {r.rate_per_hr !== null && r.rate_per_hr !== undefined && (
                     <Badge variant={getStatusVariant(r.status)} className="text-[10px] px-2 py-0">

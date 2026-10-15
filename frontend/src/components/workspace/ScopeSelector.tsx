@@ -27,13 +27,6 @@ interface ScopeSelectorProps {
 
 const SCOPES: { id: AnalysisScope; label: string; icon: string; desc: string; detail: string }[] = [
   {
-    id: 'night',
-    label: 'Night Drain',
-    icon: '🌙',
-    desc: 'Deep sleep & overnight drain',
-    detail: 'Isolates configured night window (default 23:00 - 07:00). Exposes standby battery drain, ambient leaks, and rogue alarms.'
-  },
-  {
     id: 'all',
     label: 'Full Timeline',
     icon: '📊',
@@ -41,11 +34,18 @@ const SCOPES: { id: AnalysisScope; label: string; icon: string; desc: string; de
     detail: 'Evaluates entire captured dataset without any time filtering or clamp boundaries. Best for global trends.'
   },
   {
+    id: 'night',
+    label: 'Night Drain',
+    icon: '🌙',
+    desc: 'Deep sleep & overnight drain',
+    detail: 'Isolates configured night window (default 23:00 - 07:00). Exposes standby battery drain, ambient leaks, and rogue alarms.'
+  },
+  {
     id: 'screen_off',
     label: 'Screen Off',
     icon: '📱',
     desc: 'Display inactive periods',
-    detail: 'Filters timeline to only intervals where the display was powered off. Exposes background wakelocks and chatter.'
+    detail: 'Isolates idle standby consumption when screen was off. Shows drop occurring while display was dark and ranks standby drainers.'
   },
   {
     id: 'custom',
@@ -104,15 +104,15 @@ export const ScopeSelector: React.FC<ScopeSelectorProps> = ({
 
   // Sync custom window inputs when sessionBounds or customStart/customEnd change
   useEffect(() => {
-    const defaultStart = customStart || nightBounds?.start || sessionBounds?.min_time;
-    const defaultEnd = customEnd || nightBounds?.end || sessionBounds?.max_time;
-    if (defaultStart && !customStartInput) {
+    const defaultStart = customStart || sessionBounds?.min_time;
+    const defaultEnd = customEnd || sessionBounds?.max_time;
+    if (defaultStart) {
       setCustomStartInput(toDatetimeLocalValue(defaultStart));
     }
-    if (defaultEnd && !customEndInput) {
+    if (defaultEnd) {
       setCustomEndInput(toDatetimeLocalValue(defaultEnd));
     }
-  }, [customStart, customEnd, nightBounds?.start, nightBounds?.end, sessionBounds?.min_time, sessionBounds?.max_time]);
+  }, [customStart, customEnd, sessionBounds?.min_time, sessionBounds?.max_time]);
 
   // Slider bounds inepoch minutes for quick 15-min scrubbing
   const sliderBounds = useMemo(() => {
@@ -169,7 +169,9 @@ export const ScopeSelector: React.FC<ScopeSelectorProps> = ({
 
   const handleApplyCustom = () => {
     if (!onApplyCustomWindow || !customStartInput || !customEndInput) return;
-    onApplyCustomWindow(`${customStartInput}:00`, `${customEndInput}:00`);
+    const startIso = customStartInput.length === 16 ? `${customStartInput}:00` : customStartInput;
+    const endIso = customEndInput.length === 16 ? `${customEndInput}:00` : customEndInput;
+    onApplyCustomWindow(startIso, endIso);
   };
 
   return (

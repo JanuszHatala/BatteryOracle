@@ -3,6 +3,7 @@ import { Message } from '../../types/api';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ChevronDown, ChevronRight, GitFork, Trash2, User, Bot, Copy, Check } from 'lucide-react';
+import { MarkdownPre, MarkdownCode } from '../ui/CodeBlock';
 
 interface ChatMessageCardProps {
   message: Message;
@@ -111,12 +112,8 @@ export const ChatMessageCard: React.FC<ChatMessageCardProps> = ({
               ol: ({ ...props }) => <ol className="list-decimal pl-4 space-y-1 my-1" {...props} />,
               li: ({ ...props }) => <li className="text-slate-300" {...props} />,
               p: ({ ...props }) => <p className="mb-2 last:mb-0" {...props} />,
-              code: ({ ...props }) => (
-                <code className="bg-slate-900 border border-slate-800 px-1 py-0.5 rounded text-indigo-300 font-mono text-[11px]" {...props} />
-              ),
-              pre: ({ ...props }) => (
-                <pre className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 overflow-x-auto text-[11px] my-1.5 font-mono" {...props} />
-              )
+              code: MarkdownCode,
+              pre: MarkdownPre
             }}
           >
             {message.content}

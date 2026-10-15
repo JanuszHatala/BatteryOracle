@@ -1,4 +1,12 @@
+# ==============================================================================
+# DEPRECATED: Streamlit UI (Battery Oracle 1.0)
+# This version is retired and preserved for reference only.
+# Please use Battery Oracle 2.0 (FastAPI + React SPA) via `./run.sh`.
+# ==============================================================================
+import sys
 import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import re
 import zipfile
 import tempfile

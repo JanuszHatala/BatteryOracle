@@ -15,7 +15,8 @@ __pycache__/
 *.db-wal
 *.sqlite
 *.sqlite3
-data/
+data/*
+!data/.gitkeep
 
 # Android bugreports and archives
 *.zip

@@ -7,6 +7,7 @@ import { UploadModal } from './components/reports/UploadModal';
 import { ComparativeView } from './components/reports/ComparativeView';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { ReportWorkspace } from './components/workspace/ReportWorkspace';
+import { AnalysisScope } from './components/workspace/ScopeSelector';
 import { ChatWorkspace } from './components/chat/ChatWorkspace';
 import { FloatingWindow } from './components/chat/FloatingWindow';
 import { DeviceProfileView } from './components/profiles/DeviceProfileView';
@@ -32,6 +33,7 @@ function AppContent({
   const [workspaceView, setWorkspaceView] = useState<WorkspaceViewMode>('single');
   const [settings, setSettings] = useState<Settings | null>(null);
   const [chatLayout, setChatLayout] = useState<ChatLayoutMode>('split');
+  const [reportScope, setReportScope] = useState<AnalysisScope>('all');
 
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -58,15 +60,15 @@ function AppContent({
     loadData();
   }, []);
 
-  const loadReportDetail = async (id: number) => {
-    setLoadingReport(true);
+  const loadReportDetail = async (id: number, silent = false) => {
+    if (!silent) setLoadingReport(true);
     try {
       const rep = await api.getReport(id);
       setCurrentReport(rep);
     } catch (err) {
       console.error('Failed to load report detail', err);
     } finally {
-      setLoadingReport(false);
+      if (!silent) setLoadingReport(false);
     }
   };
 
@@ -134,7 +136,9 @@ function AppContent({
             selectedReportId={selectedReportId}
             onSelectReport={(id) => {
               setSelectedReportId(id);
-              setWorkspaceView('single');
+              if (workspaceView !== 'single' && workspaceView !== 'compare') {
+                setWorkspaceView('single');
+              }
             }}
             onDeleteReport={handleDeleteReport}
             isComparativeMode={workspaceView === 'compare'}
@@ -184,8 +188,10 @@ function AppContent({
                       report={currentReport}
                       nightStartHour={settings?.night_start_hour}
                       nightEndHour={settings?.night_end_hour}
+                      activeScope={reportScope}
+                      onScopeChange={setReportScope}
                       onRefreshReport={() => {
-                        if (selectedReportId) loadReportDetail(selectedReportId);
+                        if (selectedReportId) loadReportDetail(selectedReportId, true);
                         loadData();
                       }}
                     />
@@ -198,6 +204,7 @@ function AppContent({
                       reportId={currentReport.id}
                       enterMode={settings?.chat_enter_mode || 'newline'}
                       onChangeEnterMode={handleChangeEnterMode}
+                      activeScope={reportScope}
                     />
                   </div>
                 </Panel>
@@ -211,8 +218,10 @@ function AppContent({
                       report={currentReport}
                       nightStartHour={settings?.night_start_hour}
                       nightEndHour={settings?.night_end_hour}
+                      activeScope={reportScope}
+                      onScopeChange={setReportScope}
                       onRefreshReport={() => {
-                        if (selectedReportId) loadReportDetail(selectedReportId);
+                        if (selectedReportId) loadReportDetail(selectedReportId, true);
                         loadData();
                       }}
                     />
@@ -225,6 +234,7 @@ function AppContent({
                       reportId={currentReport.id}
                       enterMode={settings?.chat_enter_mode || 'newline'}
                       onChangeEnterMode={handleChangeEnterMode}
+                      activeScope={reportScope}
                     />
                   </div>
                 </Panel>
@@ -236,8 +246,10 @@ function AppContent({
                   report={currentReport}
                   nightStartHour={settings?.night_start_hour}
                   nightEndHour={settings?.night_end_hour}
+                  activeScope={reportScope}
+                  onScopeChange={setReportScope}
                   onRefreshReport={() => {
-                    if (selectedReportId) loadReportDetail(selectedReportId);
+                    if (selectedReportId) loadReportDetail(selectedReportId, true);
                     loadData();
                   }}
                 />
@@ -251,6 +263,7 @@ function AppContent({
                     reportId={currentReport.id}
                     enterMode={settings?.chat_enter_mode || 'newline'}
                     onChangeEnterMode={handleChangeEnterMode}
+                    activeScope={reportScope}
                   />
                 </FloatingWindow>
               </div>

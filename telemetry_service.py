@@ -159,8 +159,7 @@ def get_effective_telemetry_bounds(
         r_max = r_max.to_pydatetime()
 
     if scope == "screen_off":
-        off_df = df_h[df_h["Screen"] == "off"] if "Screen" in df_h.columns else df_h
-        return r_min, r_max, off_df
+        return r_min, r_max, df_h
 
     if scope == "night":
         auto_s, auto_e = parser.get_latest_night_window(r_min, r_max, night_start, night_end)
@@ -247,7 +246,11 @@ def build_telemetry_payload(
         except Exception:
             pass
 
-    kpis = parser.compute_window_kpis(sliced_df)
+    # In screen_off scope, calculate specific idle loss metrics
+    if scope == "screen_off":
+        kpis = parser.compute_screen_off_kpis(df_h)
+    else:
+        kpis = parser.compute_window_kpis(sliced_df)
 
     # Format timeline points
     timeline = []
@@ -255,15 +258,22 @@ def build_telemetry_payload(
         for _, row in sliced_df.iterrows():
             t = row["Time"]
             t_str = t.isoformat() if hasattr(t, "isoformat") else str(t)
+            scr = row.get("Screen")
+            screen_state = str(scr) if scr in ["on", "off"] else "unknown"
             timeline.append({
                 "timestamp": t_str,
                 "battery_level": int(row.get("Level", 0)),
-                "screen_state": str(row.get("Screen", "off"))
+                "screen_state": screen_state
             })
 
-    # Format components
+    # Format components: for screen_off and night scopes, prioritize standby energy drain
     components = []
     df_c = report.get("chart_data")
+    if scope in ["screen_off", "night"]:
+        standby_df = parser.extract_screen_off_chart_data(report.get("summary_text", ""))
+        if standby_df is not None and not standby_df.empty:
+            df_c = standby_df
+
     if df_c is not None and not df_c.empty:
         clean_df = parser.clean_chart_dataframe(df_c, report.get("summary_text", ""))
         total_mah = clean_df["mAh"].sum() if "mAh" in clean_df.columns else 0.0
@@ -279,14 +289,24 @@ def build_telemetry_payload(
     db_c_s = report.get("custom_night_start")
     db_c_e = report.get("custom_night_end")
 
+    # True effective night window for this report (custom saved or auto-detected)
+    if db_c_s and db_c_e:
+        try:
+            eff_night_s = db_c_s.to_pydatetime() if hasattr(db_c_s, "to_pydatetime") else (db_c_s if isinstance(db_c_s, datetime) else datetime.fromisoformat(str(db_c_s)))
+            eff_night_e = db_c_e.to_pydatetime() if hasattr(db_c_e, "to_pydatetime") else (db_c_e if isinstance(db_c_e, datetime) else datetime.fromisoformat(str(db_c_e)))
+        except Exception:
+            eff_night_s, eff_night_e = auto_s, auto_e
+    else:
+        eff_night_s, eff_night_e = auto_s, auto_e
+
     return {
         "scope": scope,
         "kpis": kpis,
         "timeline": timeline,
         "components": components,
         "night_bounds": {
-            "start": s_dt.isoformat() if s_dt else None,
-            "end": e_dt.isoformat() if e_dt else None,
+            "start": eff_night_s.isoformat() if eff_night_s else None,
+            "end": eff_night_e.isoformat() if eff_night_e else None,
             "auto_start": auto_s.isoformat() if auto_s else None,
             "auto_end": auto_e.isoformat() if auto_e else None,
             "is_custom": bool(db_c_s and db_c_e)

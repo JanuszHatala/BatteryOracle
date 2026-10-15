@@ -26,3 +26,20 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #475569;
 }
+
+/* High-contrast calendar/clock icon for dark theme date-time pickers */
+input[type="datetime-local"] {
+  color-scheme: dark;
+}
+
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  filter: invert(0.9) sepia(0.8) hue-rotate(185deg) saturate(3) brightness(1.4);
+  opacity: 0.95;
+  transition: opacity 0.15s ease, filter 0.15s ease;
+}
+
+input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+  filter: invert(1) brightness(1.8);
+}

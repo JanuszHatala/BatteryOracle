@@ -116,6 +116,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const testAbortControllerRef = React.useRef<AbortController | null>(null);
 
   const providersList =
     currentSettings?.providers && currentSettings.providers.length > 0
@@ -261,18 +262,37 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
     setTesting(true);
     setTestResult(null);
+
+    const controller = new AbortController();
+    testAbortControllerRef.current = controller;
+
     try {
       const res = await api.testConnection(
         activeFinalModel,
         provider,
         apiKey.trim() || undefined,
-        apiBase.trim() || undefined
+        apiBase.trim() || undefined,
+        controller.signal
       );
       setTestResult(res);
     } catch (err: any) {
+      if (err.name === 'AbortError' || err.message?.includes('aborted')) {
+        setTestResult({ success: false, message: 'Connection test cancelled by user.' });
+        return;
+      }
       setTestResult({ success: false, message: err.message || 'Connection test failed.' });
     } finally {
       setTesting(false);
+      testAbortControllerRef.current = null;
+    }
+  };
+
+  const handleCancelTestConnection = () => {
+    if (testAbortControllerRef.current) {
+      testAbortControllerRef.current.abort();
+      testAbortControllerRef.current = null;
+      setTesting(false);
+      setTestResult({ success: false, message: 'Connection test cancelled by user.' });
     }
   };
 
@@ -616,21 +636,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             {/* Test Connection Row */}
             <div className="pt-1 flex flex-wrap items-center justify-between gap-3">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={handleTestConnection}
-                disabled={testing}
-                className="text-xs"
-              >
-                {testing ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Key className="w-3.5 h-3.5" />
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleTestConnection}
+                  disabled={testing}
+                  className="text-xs"
+                >
+                  {testing ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Key className="w-3.5 h-3.5" />
+                  )}
+                  <span>🧪 Test API Connection</span>
+                </Button>
+
+                {testing && (
+                  <button
+                    type="button"
+                    onClick={handleCancelTestConnection}
+                    className="px-2.5 py-1 rounded-md text-xs font-medium bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 transition-colors"
+                  >
+                    Cancel
+                  </button>
                 )}
-                <span>🧪 Test API Connection</span>
-              </Button>
+              </div>
 
               {testResult && (
                 <div

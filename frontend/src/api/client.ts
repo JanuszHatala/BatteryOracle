@@ -155,10 +155,11 @@ export const api = {
 
   getThreadMessages: (threadId: number) => request<Message[]>(`/threads/${threadId}/messages`),
 
-  sendMessage: (threadId: number, content: string, filter_context = '') =>
+  sendMessage: (threadId: number, content: string, filter_context = '', signal?: AbortSignal) =>
     request<Message>(`/threads/${threadId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ content, filter_context })
+      body: JSON.stringify({ content, filter_context }),
+      signal
     }),
 
   toggleMessageCollapse: (messageId: number) =>
@@ -207,10 +208,11 @@ export const api = {
       method: 'DELETE'
     }),
 
-  testConnection: (model: string, provider?: string, api_key?: string, api_base?: string) =>
+  testConnection: (model: string, provider?: string, api_key?: string, api_base?: string, signal?: AbortSignal) =>
     request<{ success: boolean; message: string }>('/settings/test-connection', {
       method: 'POST',
-      body: JSON.stringify({ model, provider, api_key, api_base })
+      body: JSON.stringify({ model, provider, api_key, api_base }),
+      signal
     }),
 
   getPrompts: () => request<PromptsResponse>('/prompts'),
@@ -273,6 +275,11 @@ export const api = {
       body: formData
     });
   },
+
+  setActiveProfile: (id: number) =>
+    request<DeviceProfileDetail>(`/device-profiles/${id}/set-active`, {
+      method: 'PUT'
+    }),
 
   renameProfile: (id: number, profile_name: string) =>
     request<DeviceProfileDetail>(`/device-profiles/${id}`, {

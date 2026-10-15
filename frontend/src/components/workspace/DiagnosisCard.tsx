@@ -4,26 +4,41 @@ import { Button } from '../ui/Button';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Sparkles, RefreshCw, FileText, Download } from 'lucide-react';
+import { MarkdownPre, MarkdownCode } from '../ui/CodeBlock';
 
 interface DiagnosisCardProps {
   diagnosisMarkdown?: string;
   isDiagnosing: boolean;
   onDiagnose: () => void;
   onExportMarkdown: () => void;
+  scope?: string;
 }
+
+const SCOPE_LABELS: Record<string, string> = {
+  all: 'Full Timeline',
+  night: '🌙 Night Drain',
+  screen_off: '📱 Screen Off',
+  custom: '⏱️ Custom Window'
+};
 
 export const DiagnosisCard: React.FC<DiagnosisCardProps> = ({
   diagnosisMarkdown,
   isDiagnosing,
   onDiagnose,
-  onExportMarkdown
+  onExportMarkdown,
+  scope = 'all'
 }) => {
+  const scopeLabel = SCOPE_LABELS[scope] || scope;
+
   return (
     <Card className="p-5 flex flex-col space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
         <div className="flex items-center gap-2">
           <Sparkles className="w-5 h-5 text-indigo-400" />
           <h3 className="text-base font-semibold text-slate-100">AI Diagnostic Summary</h3>
+          <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-medium">
+            {scopeLabel}
+          </span>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -51,7 +66,7 @@ export const DiagnosisCard: React.FC<DiagnosisCardProps> = ({
           <div className="py-12 flex flex-col items-center justify-center space-y-3">
             <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin" />
             <p className="text-sm text-slate-400">
-              Generating deep battery telemetry diagnosis with LLM...
+              Generating deep battery telemetry diagnosis for {scopeLabel} with LLM...
             </p>
           </div>
         ) : diagnosisMarkdown ? (
@@ -65,12 +80,8 @@ export const DiagnosisCard: React.FC<DiagnosisCardProps> = ({
               ol: ({ ...props }) => <ol className="list-decimal pl-5 space-y-1 text-slate-300" {...props} />,
               li: ({ ...props }) => <li className="text-slate-300 leading-relaxed" {...props} />,
               p: ({ ...props }) => <p className="mb-2.5 leading-relaxed text-slate-300" {...props} />,
-              code: ({ ...props }) => (
-                <code className="bg-slate-800 px-1 py-0.5 rounded text-indigo-300 text-xs font-mono" {...props} />
-              ),
-              pre: ({ ...props }) => (
-                <pre className="bg-slate-950 p-3 rounded-lg border border-slate-800 overflow-x-auto text-xs my-2" {...props} />
-              )
+              code: MarkdownCode,
+              pre: MarkdownPre
             }}
           >
             {diagnosisMarkdown}
@@ -79,7 +90,7 @@ export const DiagnosisCard: React.FC<DiagnosisCardProps> = ({
           <div className="py-8 flex flex-col items-center justify-center text-center space-y-2">
             <FileText className="w-8 h-8 text-slate-600" />
             <p className="text-sm text-slate-400">
-              No diagnosis generated for this report yet. Click "Generate Diagnosis" above.
+              No diagnosis generated for {scopeLabel} yet. Click "Generate Diagnosis" above.
             </p>
           </div>
         )}

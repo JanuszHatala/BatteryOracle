@@ -83,6 +83,15 @@ def _format_wifi_router(r: dict) -> schemas.WifiRouterResponse:
 
 
 def _format_report_detail(rep: dict) -> schemas.ReportDetail:
+    raw_analyses = rep.get("analyses") or {}
+    formatted_analyses = {}
+    for scope_key, data in raw_analyses.items():
+        if isinstance(data, dict):
+            formatted_analyses[scope_key] = schemas.ScopeAnalysisDetail(
+                text=data.get("text", ""),
+                trace=data.get("trace", ""),
+                updated_at=_to_iso(data.get("updated_at"))
+            )
     return schemas.ReportDetail(
         id=rep["id"],
         file_hash=rep["file_hash"],
@@ -97,7 +106,8 @@ def _format_report_detail(rep: dict) -> schemas.ReportDetail:
         custom_night_start=_to_iso(rep.get("custom_night_start")),
         custom_night_end=_to_iso(rep.get("custom_night_end")),
         analysis_updated_at=_to_iso(rep.get("analysis_updated_at")),
-        created_at=_to_iso(rep.get("created_at"))
+        created_at=_to_iso(rep.get("created_at")),
+        analyses=formatted_analyses
     )
 
 
@@ -280,14 +290,26 @@ def diagnose_report(report_id: int, req: schemas.DiagnosisRequest):
         raise HTTPException(status_code=502, detail=llm_manager.parse_llm_error(e))
 
     now_iso = datetime.now().isoformat()
-    db.update_report_analysis(report_id, analysis, trace, now_iso)
+    db.update_report_analysis(report_id, analysis, trace, now_iso, scope=req.scope)
+
+    updated_rep = db.get_report_by_id(report_id)
+    raw_analyses = updated_rep.get("analyses") or {} if updated_rep else {}
+    formatted_analyses = {
+        k: schemas.ScopeAnalysisDetail(
+            text=v.get("text", ""),
+            trace=v.get("trace", ""),
+            updated_at=_to_iso(v.get("updated_at"))
+        )
+        for k, v in raw_analyses.items() if isinstance(v, dict)
+    }
 
     return schemas.DiagnosisResponse(
         report_id=report_id,
         scope=req.scope,
         diagnosis=analysis,
         reasoning_trace=trace,
-        updated_at=now_iso
+        updated_at=now_iso,
+        analyses=formatted_analyses
     )
 
 
@@ -533,7 +555,16 @@ def post_thread_message(thread_id: int, req: schemas.MessageCreateRequest):
     else:
         rep = db.get_report_by_id(rep_id) if rep_id else None
         if rep:
-            summary_compact = telemetry_service.build_compact_summary(rep)
+            scope_filter = (req.filter_context or "all").lower().strip()
+            valid_scope = scope_filter if scope_filter in ["night", "screen_off", "custom", "all"] else "all"
+            n_s = int(db.get_setting("night_start_hour", "23"))
+            n_e = int(db.get_setting("night_end_hour", "7"))
+            summary_compact = telemetry_service.build_compact_summary(
+                rep,
+                filter_mode=valid_scope,
+                n_start=n_s,
+                n_end=n_e
+            )
             active_inv = db.get_latest_device_profile()
             inv_sum = parser.get_inventory_summary_for_llm(active_inv.get("parsed_data", {})) if active_inv else ""
             active_routers = db.get_active_wifi_routers()
@@ -543,10 +574,17 @@ def post_thread_message(thread_id: int, req: schemas.MessageCreateRequest):
                 full_tel = f"{inv_sum}\n\n{full_tel}"
             if r_sum:
                 full_tel = f"{r_sum}\n\n{full_tel}"
+
+            rep_analyses = rep.get("analyses") or {}
+            active_diag = rep_analyses.get(valid_scope) or rep_analyses.get("all")
+            if active_diag and isinstance(active_diag, dict) and active_diag.get("text"):
+                diag_block = f"\n\n=== PRIOR AI DIAGNOSTIC FOR ACTIVE SCOPE ({valid_scope.upper()}) ===\n{active_diag['text']}"
+                full_tel = f"{full_tel}{diag_block}"
+
             chat_tmpl = llm_manager.get_prompt_template("chat_assistant")
             try:
                 sys_prompt = chat_tmpl.format(
-                    filter_context=req.filter_context or "night",
+                    filter_context=valid_scope,
                     report_name=rep.get("custom_name", rep.get("filename", "")),
                     device_info=rep.get("device_info", "Android Device"),
                     timestamp_str=rep.get("timestamp_str", ""),
@@ -554,7 +592,7 @@ def post_thread_message(thread_id: int, req: schemas.MessageCreateRequest):
                     telemetry_data=full_tel
                 )
             except Exception:
-                sys_prompt = f"You are Battery Oracle.\nActive Report: {rep.get('custom_name')}\n{full_tel}"
+                sys_prompt = f"You are Battery Oracle.\nActive Report: {rep.get('custom_name')}\nFilter Context: {valid_scope}\n{full_tel}"
         else:
             sys_prompt = "You are Battery Oracle, an expert Android battery telemetry and drain regression AI consultant."
 
@@ -854,11 +892,13 @@ def reset_prompts_endpoint():
 # --- Device Profiles ---
 
 def _format_device_profile_detail(p: dict) -> schemas.DeviceProfileDetail:
+    active_id = db.get_active_device_profile_id()
     return schemas.DeviceProfileDetail(
         id=p["id"],
         profile_name=p["profile_name"],
         device_model=p.get("device_model") or p.get("parsed_data", {}).get("device_model", "Unknown Device"),
         os_build=p.get("os_build") or p.get("parsed_data", {}).get("os_build", "Unknown OS"),
+        is_active_context=(p["id"] == active_id),
         raw_content=p["raw_content"],
         parsed_data=p.get("parsed_data", {}),
         analysis_text=p.get("ai_analysis") or p.get("analysis_text") or "",
@@ -872,12 +912,14 @@ def _format_device_profile_detail(p: dict) -> schemas.DeviceProfileDetail:
 @app.get("/api/v1/device-profiles", response_model=List[schemas.DeviceProfileSummary])
 def list_device_profiles():
     profiles = db.get_all_device_profiles()
+    active_id = db.get_active_device_profile_id()
     return [
         schemas.DeviceProfileSummary(
             id=p["id"],
             profile_name=p["profile_name"],
             device_model=p.get("device_model") or p.get("parsed_data", {}).get("device_model", "Unknown Device"),
             os_build=p.get("os_build") or p.get("parsed_data", {}).get("os_build", "Unknown OS"),
+            is_active_context=(p["id"] == active_id),
             created_at=_to_iso(p.get("created_at")),
             updated_at=_to_iso(p.get("updated_at"))
         )
@@ -893,6 +935,12 @@ async def upload_device_profile(
 ):
     content = await file.read()
     raw_text = content.decode("utf-8", errors="replace")
+
+    # Upfront validation of device profile content
+    is_valid, err_msg = parser.validate_device_inventory(raw_text)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=err_msg)
+
     parsed_data = parser.parse_device_inventory(raw_text)
 
     name = profile_name or (file.filename or "Device Profile").replace(".txt", "")
@@ -904,6 +952,15 @@ async def upload_device_profile(
     )
     created = db.get_device_profile(pid)
     return _format_device_profile_detail(created)
+
+
+@app.put("/api/v1/device-profiles/{profile_id}/set-active", response_model=schemas.DeviceProfileDetail)
+def set_active_device_profile_endpoint(profile_id: int):
+    p = db.get_device_profile(profile_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Device profile not found.")
+    db.set_active_device_profile(profile_id)
+    return _format_device_profile_detail(p)
 
 
 @app.get("/api/v1/device-profiles/compare")

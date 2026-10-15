@@ -159,9 +159,11 @@ Estimated power use (mAh):
     diag_data = diag_res.json()
     assert "Mocked AI Diagnosis" in diag_data["diagnosis"]
 
-    # Verify report in DB was updated with new diagnosis
+    # Verify report in DB was updated with new diagnosis and scoped analyses
     get_rep = client.get(f"/api/v1/reports/{rep_id}").json()
     assert "Mocked AI Diagnosis" in get_rep["initial_analysis"]
+    assert "night" in get_rep["analyses"]
+    assert "Mocked AI Diagnosis" in get_rep["analyses"]["night"]["text"]
 
 
 def test_comparative_endpoints(client, monkeypatch):

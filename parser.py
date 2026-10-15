@@ -589,10 +589,12 @@ def extract_batterystats(filepath):
     return power_use_lines, wakelock_lines, device_info_str
 
 def extract_battery_history(filepath, base_year="2026"):
-    """Extract battery level over time from Battery History with change-point sampling."""
-    timeline = {"Time": [], "Level": []}
+    """Extract battery level over time and screen state from Battery History with change-point sampling."""
+    timeline = {"Time": [], "Level": [], "Screen": []}
     in_history = False
     last_level = None
+    last_screen = None
+    current_screen = "off"
     last_point = None
     
     history_regex = re.compile(r'^\s+(\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d{3})\s+[a-f0-9]{8}')
@@ -609,25 +611,34 @@ def extract_battery_history(filepath, base_year="2026"):
                 if len(line) > 25 and line[2:4].isdigit() and line[4] == '-':
                     match = history_regex.search(line)
                     if match:
+                        tokens = line.split()
+                        if "+screen" in tokens:
+                            current_screen = "on"
+                        elif "-screen" in tokens:
+                            current_screen = "off"
+
                         lvl = int(match.group(2))
                         time_str = f"{base_year}-" + match.group(1)
                         try:
                             t = pd.to_datetime(time_str)
-                            last_point = (t, lvl)
-                            # Only record when level changes or first/last to keep chart lightweight & ultra fast
-                            if 0 <= lvl <= 100 and lvl != last_level:
+                            last_point = (t, lvl, current_screen)
+                            # Record when level changes or screen state changes to maintain accurate timeline
+                            if 0 <= lvl <= 100 and (lvl != last_level or current_screen != last_screen):
                                 timeline["Time"].append(t)
                                 timeline["Level"].append(lvl)
+                                timeline["Screen"].append(current_screen)
                                 last_level = lvl
+                                last_screen = current_screen
                         except Exception:
                             pass
                         
     # Ensure the true final entry of the timeline is always retained
     if last_point is not None:
-        final_t, final_lvl = last_point
+        final_t, final_lvl, final_scr = last_point
         if not timeline["Time"] or timeline["Time"][-1] != final_t:
             timeline["Time"].append(final_t)
             timeline["Level"].append(final_lvl)
+            timeline["Screen"].append(final_scr)
 
     df = pd.DataFrame(timeline)
     if not df.empty:
@@ -779,6 +790,75 @@ def compute_window_kpis(sliced_df):
         "badge_color": badge_color
     }
 
+def compute_screen_off_kpis(history_df):
+    """Calculate battery drop and rate occurring strictly when the screen was off."""
+    if history_df is None or history_df.empty or "Time" not in history_df.columns or "Level" not in history_df.columns:
+        return compute_window_kpis(history_df)
+
+    df_sorted = history_df.sort_values(by="Time").reset_index(drop=True)
+    if "Screen" not in df_sorted.columns:
+        return compute_window_kpis(df_sorted)
+
+    total_off_seconds = 0.0
+    total_off_drop = 0
+
+    for i in range(len(df_sorted) - 1):
+        row_curr = df_sorted.iloc[i]
+        row_next = df_sorted.iloc[i + 1]
+
+        # If current interval was screen-off
+        if str(row_curr.get("Screen", "")).lower() == "off":
+            t1 = row_curr["Time"]
+            t2 = row_next["Time"]
+            l1 = int(row_curr.get("Level", 0))
+            l2 = int(row_next.get("Level", 0))
+
+            dt_secs = max(0.0, (t2 - t1).total_seconds())
+            total_off_seconds += dt_secs
+            if l1 > l2:
+                total_off_drop += (l1 - l2)
+
+    total_off_hrs = max(0.1, total_off_seconds / 3600.0)
+    rate_per_hr = total_off_drop / total_off_hrs
+
+    if rate_per_hr <= 0.6:
+        status = "🟢 Optimal Idle Standby (< 0.6%/hr)"
+        badge_color = "green"
+    elif rate_per_hr <= 1.5:
+        status = "🟡 Moderate Background Drain (0.6 - 1.5%/hr)"
+        badge_color = "orange"
+    else:
+        status = "🔴 Elevated Standby Drain (> 1.5%/hr)"
+        badge_color = "red"
+
+    start_time = df_sorted["Time"].min()
+    end_time = df_sorted["Time"].max()
+
+    return {
+        "start_time": start_time.strftime("%Y-%m-%d %H:%M"),
+        "end_time": end_time.strftime("%Y-%m-%d %H:%M"),
+        "duration_hrs": round(total_off_hrs, 1),
+        "start_level": int(df_sorted.iloc[0]["Level"]),
+        "end_level": int(df_sorted.iloc[-1]["Level"]),
+        "drop_pct": int(total_off_drop),
+        "rate_per_hr": round(rate_per_hr, 2),
+        "status": status,
+        "badge_color": badge_color
+    }
+
+def validate_device_inventory(text: str) -> tuple[bool, str]:
+    """Validate that text content is a non-empty, genuine Android device inventory capture."""
+    if not text or len(text.strip()) < 50:
+        return False, "Device profile file is empty or too short (must be at least 50 bytes)."
+
+    upper = text.upper()
+    valid_markers = ["DEVICE_HEADER", "BUILD", "GETPROP", "RO.PRODUCT", "SETTINGS", "DEVICEIDLE", "APPOPS", "POWER", "PACKAGE", "DUMPSYS"]
+    found = [m for m in valid_markers if m in upper]
+    if not found:
+        return False, "File is invalid or incomplete: Missing Android profile sections (DEVICE_HEADER, settings, or deviceidle). Check your ADB capture command output."
+
+    return True, ""
+
 def get_filtered_telemetry_for_llm(summary_text, filter_mode, kpis):
     """Inject filter context and isolate screen-off / idle telemetry for the LLM prompt."""
     if filter_mode == "full":
@@ -825,7 +905,7 @@ The user is specifically investigating battery drain during this {filter_label}.
     return header + "\n".join(clean_lines[:150])
 
 def parse_device_inventory(text):
-    """Parse full_device_inventory.txt generated by adb shell into structured sections and risk factors."""
+    """Parse full_device_inventory.txt or device_profile.txt into structured sections, risks, and highlights."""
     if not text:
         return {}
 
@@ -843,50 +923,117 @@ def parse_device_inventory(text):
         else:
             sections[current_sec].append(line)
 
-    # 1. Build & OS
-    build_lines = [l.strip() for l in sections.get("BUILD & OS PROPERTIES", []) if l.strip()]
-    os_build = build_lines[0] if len(build_lines) > 0 else "Unknown Build"
-    android_version = build_lines[1] if len(build_lines) > 1 else "Unknown"
-
-    # Helper to parse key=value lines
-    def parse_kv(sec_name):
+    # Helper to parse key=value lines from multiple possible section aliases
+    def parse_kv(sec_names):
         kv = {}
-        for l in sections.get(sec_name, []):
-            if "=" in l:
-                k, v = l.split("=", 1)
-                kv[k.strip()] = v.strip()
+        for name in sec_names:
+            for l in sections.get(name, []):
+                if "=" in l:
+                    k, v = l.split("=", 1)
+                    kv[k.strip()] = v.strip()
         return kv
 
-    global_settings = parse_kv("SETTINGS: GLOBAL")
-    secure_settings = parse_kv("SETTINGS: SECURE")
-    system_settings = parse_kv("SETTINGS: SYSTEM")
+    global_settings = parse_kv(["SETTINGS_GLOBAL", "SETTINGS: GLOBAL"])
+    secure_settings = parse_kv(["SETTINGS_SECURE", "SETTINGS: SECURE"])
+    system_settings = parse_kv(["SETTINGS_SYSTEM", "SETTINGS: SYSTEM"])
 
-    device_model = global_settings.get("device_name") or secure_settings.get("bluetooth_name") or "Pixel 10 Pro"
+    # 1. Build & OS Header
+    header_kv = parse_kv(["DEVICE_HEADER", "HEADER"])
+    build_lines = [l.strip() for l in sections.get("BUILD & OS PROPERTIES", []) if l.strip()]
+
+    device_model = (
+        header_kv.get("model") or
+        header_kv.get("ro.product.model") or
+        global_settings.get("device_name") or
+        secure_settings.get("bluetooth_name") or
+        (build_lines[2] if len(build_lines) > 2 else "Pixel 10 Pro")
+    )
+    os_build = (
+        header_kv.get("build_id") or
+        header_kv.get("ro.build.display.id") or
+        (build_lines[0] if len(build_lines) > 0 else "Unknown Build")
+    )
+    android_version = (
+        header_kv.get("android_version") or
+        header_kv.get("ro.build.version.release") or
+        (build_lines[1] if len(build_lines) > 1 else "Unknown")
+    )
 
     # 2. Doze & Idle Whitelist
-    doze_lines = sections.get("DEVICE IDLE / DOZE STATE", [])
-    deep_state = doze_lines[0].strip() if len(doze_lines) > 0 else "UNKNOWN"
-    light_state = doze_lines[1].strip() if len(doze_lines) > 1 else "UNKNOWN"
-    
+    doze_lines = sections.get("DEVICEIDLE", []) or sections.get("DEVICE IDLE / DOZE STATE", [])
+    deep_state = "UNKNOWN"
+    light_state = "UNKNOWN"
+    for l in doze_lines:
+        ll = l.lower()
+        if "mdeepenabled=true" in ll or "deep-idle" in ll:
+            deep_state = "ACTIVE"
+        if "mlightenabled=true" in ll or "light-idle" in ll:
+            light_state = "ACTIVE"
+
+    doze_settings_kv = {}
+    for l in doze_lines:
+        s = l.strip()
+        if "=" in s and not s.startswith("m") and not s.startswith("com."):
+            k, v = s.split("=", 1)
+            doze_settings_kv[k.strip()] = v.strip()
+
     user_whitelisted = []
     system_whitelisted = []
-    for l in doze_lines[2:]:
-        l = l.strip()
-        if not l:
+    user_whitelisted_pkgs = []
+    system_whitelisted_pkgs = []
+
+    in_user_wl = False
+    in_sys_wl = False
+
+    for l in doze_lines:
+        s = l.strip()
+        if not s:
             continue
-        parts = l.split(",")
-        if len(parts) >= 2:
+        ll = s.lower()
+        if "whitelist user apps:" in ll:
+            in_user_wl = True
+            in_sys_wl = False
+            continue
+        elif "whitelist system apps:" in ll or "whitelist (except idle) system apps:" in ll:
+            in_sys_wl = True
+            in_user_wl = False
+            continue
+        elif "whitelist" in ll and ("app ids:" in ll or "temp" in ll):
+            in_user_wl = False
+            in_sys_wl = False
+            continue
+        elif s.startswith("m") and "=" in s:
+            in_user_wl = False
+            in_sys_wl = False
+            continue
+
+        if in_user_wl:
+            pkg = s.split()[0]
+            if "." in pkg and pkg not in user_whitelisted_pkgs:
+                user_whitelisted_pkgs.append(pkg)
+                user_whitelisted.append({"package": pkg, "friendly": get_friendly_label(pkg), "type": "user"})
+        elif in_sys_wl:
+            pkg = s.split()[0]
+            if "." in pkg and pkg not in system_whitelisted_pkgs:
+                system_whitelisted_pkgs.append(pkg)
+                system_whitelisted.append({"package": pkg, "friendly": get_friendly_label(pkg), "type": "system"})
+
+    # Handle comma-separated legacy format: kind,pkg,uid
+    for l in doze_lines:
+        parts = l.strip().split(",")
+        if len(parts) >= 2 and parts[0].strip() in ["user", "system"]:
             kind = parts[0].strip()
             pkg = parts[1].strip()
-            uid = parts[2].strip() if len(parts) > 2 else ""
             friendly = get_friendly_label(pkg)
-            item = {"package": pkg, "friendly": friendly, "uid": uid, "type": kind}
-            if kind == "user":
+            item = {"package": pkg, "friendly": friendly, "type": kind}
+            if kind == "user" and pkg not in user_whitelisted_pkgs:
+                user_whitelisted_pkgs.append(pkg)
                 user_whitelisted.append(item)
-            else:
+            elif kind == "system" and pkg not in system_whitelisted_pkgs:
+                system_whitelisted_pkgs.append(pkg)
                 system_whitelisted.append(item)
 
-    # 3. Background Power Restrictions, AppOps & Disabled Packages
+    # 3. Disabled packages
     disabled_lines = sections.get("DISABLED PACKAGES", [])
     disabled_packages = set()
     for l in disabled_lines:
@@ -896,37 +1043,47 @@ def parse_device_inventory(text):
         elif l_str and not l_str.startswith("="):
             disabled_packages.add(l_str)
 
-    # Mark disabled flag on whitelists
     for item in user_whitelisted:
         item["is_disabled"] = item["package"] in disabled_packages
     for item in system_whitelisted:
         item["is_disabled"] = item["package"] in disabled_packages
 
-    power_lines = sections.get("BATTERY SAVER / POWER RESTRICTIONS", [])
-    appops_allowed = []
-    for l in power_lines:
-        l_str = l.strip()
-        if l_str.startswith("com.") or l_str.startswith("io.") or l_str.startswith("org.") or l_str.startswith("pl."):
-            friendly = get_friendly_label(l_str)
-            appops_allowed.append({
-                "package": l_str,
-                "friendly": friendly,
-                "is_disabled": l_str in disabled_packages
-            })
+    # 4. AppOps parsing
+    appops_allow = []
+    for l in sections.get("APPOPS_RUN_IN_BG", []) + sections.get("BATTERY SAVER / POWER RESTRICTIONS", []):
+        pkg = l.strip().split()[0] if l.strip() else ""
+        if "." in pkg and pkg not in appops_allow:
+            appops_allow.append(pkg)
 
-    wakelock_lines = sections.get("APPOPS WAKELOCK EXEMPTIONS", [])
+    appops_unrestricted = []
+    for l in sections.get("APPOPS_RUN_ANY_IN_BG", []):
+        pkg = l.strip().split()[0] if l.strip() else ""
+        if "." in pkg and pkg not in appops_unrestricted:
+            appops_unrestricted.append(pkg)
+
     appops_wakelock_allowed = []
-    for l in wakelock_lines:
-        l_str = l.strip()
-        if l_str.startswith("com.") or l_str.startswith("io.") or l_str.startswith("org.") or l_str.startswith("pl."):
-            friendly = get_friendly_label(l_str)
-            appops_wakelock_allowed.append({
-                "package": l_str,
-                "friendly": friendly,
-                "is_disabled": l_str in disabled_packages
-            })
+    for l in sections.get("APPOPS_WAKE_LOCK", []) + sections.get("APPOPS WAKELOCK EXEMPTIONS", []):
+        pkg = l.strip().split()[0] if l.strip() else ""
+        if pkg and pkg not in appops_wakelock_allowed:
+            appops_wakelock_allowed.append(pkg)
 
-    # Netpolicy data saver
+    appops_location_allowed = []
+    for l in sections.get("APPOPS LOCATION PERMISSIONS", []):
+        pkg = l.strip().split()[0] if l.strip() else ""
+        if "." in pkg and pkg not in appops_location_allowed:
+            appops_location_allowed.append(pkg)
+
+    appops_ignore = []
+    for l in sections.get("APPOPS RESTRICTED APPS", []):
+        pkg = l.strip().split()[0] if l.strip() else ""
+        if "." in pkg and pkg not in appops_ignore:
+            appops_ignore.append(pkg)
+
+    appops_allowed_items = [
+        {"package": p, "friendly": get_friendly_label(p), "is_disabled": p in disabled_packages}
+        for p in appops_allow
+    ]
+
     netpolicy_lines = sections.get("NETWORK POLICY & DATA SAVER", [])
     restrict_background_data = False
     for l in netpolicy_lines:
@@ -934,101 +1091,140 @@ def parse_device_inventory(text):
             restrict_background_data = True
             break
 
-    # 3b. AppOps Location & Explicitly Restricted Apps (from modern/enhanced inventory scripts)
-    location_lines = sections.get("APPOPS LOCATION PERMISSIONS", [])
-    appops_location_allowed = []
-    for l in location_lines:
-        l_str = l.strip()
-        if any(l_str.startswith(pfx) for pfx in ["com.", "io.", "org.", "pl.", "net.", "de.", "nl.", "cz.", "wit.", "ai.", "co."]):
-            friendly = get_friendly_label(l_str)
-            if not any(x["package"] == l_str for x in appops_location_allowed):
-                appops_location_allowed.append({
-                    "package": l_str,
-                    "friendly": friendly,
-                    "is_disabled": l_str in disabled_packages
-                })
+    # 5. Highlights for DeviceProfileView cards
+    highlights = {
+        "network_radio": {
+            "mobile_data_always_on": global_settings.get("mobile_data_always_on", "0"),
+            "cell_on": global_settings.get("cell_on", "1"),
+            "airplane_mode_radios": global_settings.get("airplane_mode_radios", "cell,bluetooth,uwb,wifi,wimax"),
+            "airplane_mode_toggleable_radios": global_settings.get("airplane_mode_toggleable_radios", "bluetooth,wifi"),
+            "apn_db_carrier_id": global_settings.get("apn_db_carrier_id", "N/A"),
+            "data_roaming": global_settings.get("data_roaming", "0")
+        },
+        "wifi_scanning": {
+            "wifi_scan_always_enabled": global_settings.get("wifi_scan_always_enabled", "0"),
+            "ble_scan_always_enabled": global_settings.get("ble_scan_always_enabled", "0"),
+            "auto_wifi": global_settings.get("auto_wifi", "1"),
+            "adaptive_connectivity_wifi_enabled": secure_settings.get("adaptive_connectivity_wifi_enabled", "1"),
+            "wifi_wakeup_available": global_settings.get("wifi_wakeup_available", "0"),
+            "wifi_watchdog_poor_network_test_enabled": global_settings.get("wifi_watchdog_poor_network_test_enabled", "0")
+        },
+        "display_aod": {
+            "ambient_tilt_to_wake": secure_settings.get("doze_tilt_gesture") or global_settings.get("ambient_tilt_to_wake", "0"),
+            "ambient_touch_to_wake": secure_settings.get("doze_tap_screen_gesture") or global_settings.get("ambient_touch_to_wake", "0"),
+            "doze_always_on": secure_settings.get("doze_always_on", "0"),
+            "peak_refresh_rate": system_settings.get("peak_refresh_rate", "60.0"),
+            "screen_off_timeout": system_settings.get("screen_off_timeout", "15000"),
+            "double_tap_to_wake": secure_settings.get("double_tap_to_wake", "0")
+        },
+        "location_ble": {
+            "location_mode": secure_settings.get("location_mode", "3"),
+            "location_background_throttle_interval_ms": global_settings.get("location_background_throttle_interval_ms", "600000"),
+            "bluetooth_on": global_settings.get("bluetooth_on", "1"),
+            "ble_scan_low_power_interval_ms": global_settings.get("ble_scan_low_power_interval_ms", "1400"),
+            "assisted_gps_enabled": global_settings.get("assisted_gps_enabled", "1")
+        },
+        "doze_power": {
+            "app_standby_enabled": global_settings.get("app_standby_enabled", "1"),
+            "low_power_trigger_level": global_settings.get("low_power_trigger_level", "20"),
+            "adaptive_charging_active_state": global_settings.get("adaptive_charging_active_state", "0"),
+            "light_idle_to": doze_settings_kv.get("light_idle_to", "+5m0s0ms"),
+            "idle_to": doze_settings_kv.get("idle_to", "+1h0m0s0ms"),
+            "quick_doze_delay_to": doze_settings_kv.get("quick_doze_delay_to", "+1m0s0ms")
+        }
+    }
 
-    restricted_lines = sections.get("APPOPS RESTRICTED APPS", [])
-    appops_restricted = []
-    for l in restricted_lines:
-        l_str = l.strip()
-        if any(l_str.startswith(pfx) for pfx in ["com.", "io.", "org.", "pl.", "net.", "de.", "nl.", "cz.", "wit.", "ai.", "co."]):
-            friendly = get_friendly_label(l_str)
-            if not any(x["package"] == l_str for x in appops_restricted):
-                appops_restricted.append({
-                    "package": l_str,
-                    "friendly": friendly,
-                    "is_disabled": l_str in disabled_packages
-                })
-
-    # 4. Critical Radio & Standby Settings
-    wifi_scan = global_settings.get("wifi_scan_always_enabled", "0")
-    ble_scan = global_settings.get("ble_scan_always_enabled", "0")
-    mobile_data_always = global_settings.get("mobile_data_always_on", "0")
-    adaptive_connectivity = secure_settings.get("adaptive_connectivity_wifi_enabled", "1")
-    # Display wake gestures (on modern Pixel/AOSP, secure settings doze_* take precedence)
-    tilt_to_wake = secure_settings.get("doze_tilt_gesture") or secure_settings.get("doze_pulse_on_pick_up") or global_settings.get("ambient_tilt_to_wake", "0")
-    touch_to_wake = secure_settings.get("doze_tap_screen_gesture") or secure_settings.get("doze_pulse_on_tap") or global_settings.get("ambient_touch_to_wake", "0")
-    double_tap_wake = secure_settings.get("double_tap_to_wake", "0")
-    refresh_rate = system_settings.get("peak_refresh_rate", "60.0")
-    screen_timeout = system_settings.get("screen_off_timeout", "15000")
-    battery_saver_trigger = global_settings.get("low_power_trigger_level", "20")
-
-    # 5. Standby Risk Audit Flags
+    # 6. Standby risks
+    risks = []
     standby_risks = []
-    # Check active (enabled) user whitelisted apps
-    active_user_wl = [u for u in user_whitelisted if not u.get("is_disabled")]
-    disabled_user_wl = [u for u in user_whitelisted if u.get("is_disabled")]
 
+    active_user_wl = [u for u in user_whitelisted if not u.get("is_disabled")]
     if active_user_wl:
         names = ", ".join([u["friendly"] for u in active_user_wl])
-        standby_risks.append({
+        first_pkg = active_user_wl[0]["package"]
+        risks.append({
             "severity": "HIGH",
+            "key": f"{len(active_user_wl)} Doze User Whitelist Exemptions",
+            "current_value": f"{len(active_user_wl)} apps",
+            "recommended_value": "0 user apps",
+            "impact": f"User apps exempt from Doze ({names}) wake CPU and network periodically in deep sleep.",
+            "fix_cmd": f"adb shell dumpsys deviceidle whitelist -{first_pkg}",
             "title": f"{len(active_user_wl)} Active User Apps Exempt from Doze",
-            "detail": f"The following user apps have full exemption from Android Doze deep sleep: {names}. They can wake CPU and network freely.",
+            "detail": f"The following user apps have full exemption from Android Doze deep sleep: {names}.",
             "setting": "Settings > Apps > Special App Access > Energy/Battery Optimization"
         })
+        standby_risks.append(risks[-1])
 
-    if disabled_user_wl:
-        d_names = ", ".join([u["friendly"] for u in disabled_user_wl])
-        standby_risks.append({
-            "severity": "LOW",
-            "title": f"{len(disabled_user_wl)} Disabled Packages on Doze Whitelist",
-            "detail": f"The following packages ({d_names}) are listed on Doze whitelist but are currently DISABLED via package manager, so they cannot execute code unless re-enabled. To fully clean up, run: `adb shell dumpsys deviceidle whitelist -<package>`.",
-            "setting": "ADB CLI: `adb shell dumpsys deviceidle whitelist -<package>`"
-        })
-
-    active_appops = [a for a in appops_allowed if not a.get("is_disabled")]
-    if active_appops:
-        names = ", ".join([a["friendly"] for a in active_appops])
-        standby_risks.append({
-            "severity": "MEDIUM",
-            "title": f"{len(active_appops)} Apps with RUN_IN_BACKGROUND Allowed",
-            "detail": f"AppOps explicitly permits unrestricted background execution for: {names}.",
-            "setting": "Settings > Apps > [App] > App Battery Usage"
-        })
-
+    wifi_scan = global_settings.get("wifi_scan_always_enabled", "0")
     if wifi_scan == "1":
-        standby_risks.append({
+        risks.append({
             "severity": "MEDIUM",
+            "key": "wifi_scan_always_enabled",
+            "current_value": "1 (Enabled)",
+            "recommended_value": "0 (Disabled)",
+            "impact": "Location services continuously scan for Wi-Fi networks in background even when Wi-Fi is toggled off.",
+            "fix_cmd": "adb shell settings put global wifi_scan_always_enabled 0",
             "title": "Wi-Fi Scanning Always Enabled",
             "detail": "Location services continuously scan for Wi-Fi networks even when Wi-Fi is turned off.",
             "setting": "Settings > Location > Location Services > Wi-Fi scanning"
         })
+        standby_risks.append(risks[-1])
+
+    ble_scan = global_settings.get("ble_scan_always_enabled", "0")
     if ble_scan == "1":
-        standby_risks.append({
+        risks.append({
             "severity": "LOW",
+            "key": "ble_scan_always_enabled",
+            "current_value": "1 (Enabled)",
+            "recommended_value": "0 (Disabled)",
+            "impact": "Continuous BLE scanning enabled in background for indoor location enhancement.",
+            "fix_cmd": "adb shell settings put global ble_scan_always_enabled 0",
             "title": "Bluetooth Scanning Always Enabled",
             "detail": "Continuous BLE scanning enabled for location enhancement.",
             "setting": "Settings > Location > Location Services > Bluetooth scanning"
         })
+        standby_risks.append(risks[-1])
+
+    mobile_data_always = global_settings.get("mobile_data_always_on", "0")
+    if mobile_data_always == "1":
+        risks.append({
+            "severity": "MEDIUM",
+            "key": "mobile_data_always_on",
+            "current_value": "1 (Always Active)",
+            "recommended_value": "0 (Idle off on WiFi)",
+            "impact": "Cellular modem keeps active data connection open even when connected to Wi-Fi.",
+            "fix_cmd": "adb shell settings put global mobile_data_always_on 0",
+            "title": "Mobile Data Always Active",
+            "detail": "Cellular data remains active while connected to Wi-Fi, increasing modem idle power drain.",
+            "setting": "Developer Options > Mobile data always active"
+        })
+        standby_risks.append(risks[-1])
+
+    tilt_to_wake = secure_settings.get("doze_tilt_gesture") or global_settings.get("ambient_tilt_to_wake", "0")
+    touch_to_wake = secure_settings.get("doze_tap_screen_gesture") or global_settings.get("ambient_touch_to_wake", "0")
+    double_tap_wake = secure_settings.get("double_tap_to_wake", "0")
     if tilt_to_wake == "1" or touch_to_wake == "1" or double_tap_wake == "1":
-        standby_risks.append({
+        risks.append({
             "severity": "LOW",
+            "key": "ambient_wake_gestures",
+            "current_value": f"Tilt={tilt_to_wake}, Tap={touch_to_wake}",
+            "recommended_value": "Disabled on high drain",
+            "impact": "Hardware motion sensor and touch digitizer polling active during standby.",
+            "fix_cmd": "adb shell settings put secure doze_tap_screen_gesture 0 && adb shell settings put secure doze_tilt_gesture 0",
             "title": "Ambient / Touch Wake Gestures Active",
-            "detail": f"Hardware sensor polling active during standby (Tilt: {tilt_to_wake}, Touch: {touch_to_wake}, Double-tap: {double_tap_wake}).",
+            "detail": f"Hardware sensor polling active during standby (Tilt: {tilt_to_wake}, Touch: {touch_to_wake}).",
             "setting": "Settings > Display > Lock screen > Lift / Tap to check phone"
         })
+        standby_risks.append(risks[-1])
+
+    # 7. KPIs
+    kpis = {
+        "risk_count": len(risks),
+        "whitelisted_user_apps": len(user_whitelisted_pkgs),
+        "restricted_apps_count": len(appops_ignore),
+        "unrestricted_apps_count": len(appops_unrestricted),
+        "total_settings_keys": len(global_settings) + len(secure_settings) + len(system_settings)
+    }
 
     return {
         "device_model": device_model,
@@ -1036,32 +1232,50 @@ def parse_device_inventory(text):
         "android_version": android_version,
         "doze_deep_state": deep_state,
         "doze_light_state": light_state,
+        "settings": {
+            "global": global_settings,
+            "secure": secure_settings,
+            "system": system_settings
+        },
+        "highlights": highlights,
+        "kpis": kpis,
+        "risks": risks,
+        "standby_risks": standby_risks,
+        "doze_whitelist": {
+            "user_apps": user_whitelisted_pkgs,
+            "system_apps": system_whitelisted_pkgs
+        },
+        "appops_summary": {
+            "ignore": appops_ignore,
+            "unrestricted": appops_unrestricted,
+            "foreground": [],
+            "allow": appops_allow
+        },
         "user_whitelisted": user_whitelisted,
-        "system_whitelisted_count": len(system_whitelisted),
         "system_whitelisted": system_whitelisted,
+        "system_whitelisted_count": len(system_whitelisted),
         "disabled_packages": list(disabled_packages),
-        "appops_allowed": appops_allowed,
+        "appops_allowed": appops_allowed_items,
         "appops_wakelock_allowed": appops_wakelock_allowed,
         "appops_location_allowed": appops_location_allowed,
-        "appops_restricted": appops_restricted,
+        "appops_restricted": appops_ignore,
         "restrict_background_data": restrict_background_data,
         "key_settings": {
             "wifi_scan_always_enabled": wifi_scan,
             "ble_scan_always_enabled": ble_scan,
             "mobile_data_always_on": mobile_data_always,
-            "adaptive_connectivity_wifi_enabled": adaptive_connectivity,
+            "adaptive_connectivity_wifi_enabled": secure_settings.get("adaptive_connectivity_wifi_enabled", "1"),
             "ambient_tilt_to_wake": tilt_to_wake,
             "ambient_touch_to_wake": touch_to_wake,
             "double_tap_to_wake": double_tap_wake,
-            "peak_refresh_rate": refresh_rate,
-            "screen_off_timeout_ms": screen_timeout,
-            "low_power_trigger_level": battery_saver_trigger
+            "peak_refresh_rate": system_settings.get("peak_refresh_rate", "60.0"),
+            "screen_off_timeout_ms": system_settings.get("screen_off_timeout", "15000"),
+            "low_power_trigger_level": global_settings.get("low_power_trigger_level", "20")
         },
-        "standby_risks": standby_risks,
         "raw_counts": {
             "global_count": len(global_settings),
             "secure_count": len(secure_settings),
-            "system_count": len(system_settings),
+            "system_count": len(system_settings)
         },
         "global_settings": global_settings,
         "secure_settings": secure_settings,

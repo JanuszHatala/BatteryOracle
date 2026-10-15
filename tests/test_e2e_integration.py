@@ -43,7 +43,14 @@ def test_e2e_spa_fallback_and_static_assets(client):
     assert "<!doctype html>" in res_fallback.text.lower() or "<html" in res_fallback.text.lower()
 
 
-def test_e2e_full_lifecycle(client):
+def test_e2e_full_lifecycle(client, monkeypatch):
+    import llm_manager
+    monkeypatch.setattr(
+        llm_manager,
+        "call_llm_tracked",
+        lambda *args, **kwargs: "E2E AI Diagnosis: Standby loss driven by cellular search."
+    )
+
     # 1. Create a report directly
     report_id = db.save_report(
         file_hash="e2e_hash_123",

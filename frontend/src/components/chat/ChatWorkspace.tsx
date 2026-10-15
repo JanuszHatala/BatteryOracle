@@ -11,12 +11,14 @@ interface ChatWorkspaceProps {
   reportId: number;
   enterMode?: 'newline' | 'send';
   onChangeEnterMode?: (mode: 'newline' | 'send') => void;
+  activeScope?: string;
 }
 
 export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   reportId,
   enterMode: propEnterMode,
-  onChangeEnterMode
+  onChangeEnterMode,
+  activeScope
 }) => {
   const { showError, confirm } = useDialog();
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -28,6 +30,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   const [localEnterMode, setLocalEnterMode] = useState<'newline' | 'send'>(propEnterMode || 'newline');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Sync enterMode when prop changes or fetch from settings if not provided
   useEffect(() => {
@@ -115,16 +118,32 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
     setInputValue('');
     setIsSending(true);
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
-      await api.sendMessage(activeThreadId, prompt);
+      await api.sendMessage(activeThreadId, prompt, activeScope || undefined, controller.signal);
       await loadMessages(activeThreadId);
       await loadThreads();
-    } catch (err) {
+    } catch (err: any) {
+      if (err.name === 'AbortError' || err.message?.includes('aborted')) {
+        console.log('Chat message generation cancelled by user.');
+        return;
+      }
       console.error('Failed to send message:', err);
       // Restore user input so they don't lose their message on error
       setInputValue(prompt);
       showError(err, 'Sending Chat Message to Oracle AI');
     } finally {
+      setIsSending(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleCancelSending = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
       setIsSending(false);
     }
   };
@@ -251,6 +270,20 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         onExportThread={handleExportThread}
       />
 
+      {/* Scope Context Lens Indicator */}
+      {reportId > 0 && activeScope && (
+        <div className="px-4 py-1.5 bg-slate-900/60 border-b border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+          <div className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span>Context Lens:</span>
+            <span className="font-semibold text-slate-200 capitalize">
+              {activeScope === 'screen_off' ? 'Screen-Off' : activeScope === 'all' ? 'Full Timeline' : activeScope}
+            </span>
+          </div>
+          <span className="text-slate-500 text-[10px]">Telemetry & prior diagnosis synced</span>
+        </div>
+      )}
+
       {/* Message List */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {isLoadingMessages ? (
@@ -275,9 +308,18 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         )}
 
         {isSending && (
-          <div className="flex items-center gap-2 p-3 bg-indigo-950/20 border border-indigo-800/30 rounded-xl text-xs text-indigo-300 animate-pulse mr-4">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            <span>AI is analyzing battery dump and composing response...</span>
+          <div className="flex items-center justify-between gap-3 p-3 bg-indigo-950/30 border border-indigo-800/40 rounded-xl text-xs text-indigo-300 mr-4">
+            <div className="flex items-center gap-2 animate-pulse min-w-0">
+              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-indigo-400" />
+              <span className="truncate">AI is analyzing battery dump and composing response...</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleCancelSending}
+              className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 transition-colors shrink-0"
+            >
+              🛑 Stop Generation
+            </button>
           </div>
         )}
 

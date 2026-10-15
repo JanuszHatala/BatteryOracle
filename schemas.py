@@ -16,6 +16,12 @@ class ReportSummary(BaseModel):
     created_at: Optional[str] = None
 
 
+class ScopeAnalysisDetail(BaseModel):
+    text: str = ""
+    trace: Optional[str] = ""
+    updated_at: Optional[str] = ""
+
+
 class ReportDetail(BaseModel):
     id: int
     file_hash: str
@@ -31,6 +37,7 @@ class ReportDetail(BaseModel):
     custom_night_end: Optional[str] = None
     analysis_updated_at: Optional[str] = None
     created_at: Optional[str] = None
+    analyses: Dict[str, ScopeAnalysisDetail] = Field(default_factory=dict)
 
 
 class ReportUpdateRequest(BaseModel):
@@ -89,6 +96,7 @@ class DiagnosisResponse(BaseModel):
     diagnosis: str
     reasoning_trace: Optional[str] = ""
     updated_at: str
+    analyses: Optional[Dict[str, ScopeAnalysisDetail]] = None
 
 
 class ComparativeRequest(BaseModel):
@@ -236,6 +244,7 @@ class DeviceProfileSummary(BaseModel):
     profile_name: str
     device_model: Optional[str] = "Unknown Device"
     os_build: Optional[str] = "Unknown OS"
+    is_active_context: bool = False
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -245,6 +254,7 @@ class DeviceProfileDetail(BaseModel):
     profile_name: str
     device_model: Optional[str] = "Unknown Device"
     os_build: Optional[str] = "Unknown OS"
+    is_active_context: bool = False
     raw_content: str
     parsed_data: Dict[str, Any]
     analysis_text: Optional[str] = ""

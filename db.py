@@ -5,9 +5,22 @@ import io
 import pandas as pd
 from datetime import datetime
 
-DB_PATH = os.environ.get("BATTERY_ORACLE_DB_PATH", "battery_oracle.db")
+def _resolve_db_path() -> str:
+    env_path = os.environ.get("BATTERY_ORACLE_DB_PATH")
+    if env_path:
+        return env_path
+    if os.path.exists(os.path.join("data", "battery_oracle.db")):
+        return os.path.join("data", "battery_oracle.db")
+    if os.path.exists("data"):
+        return os.path.join("data", "battery_oracle.db")
+    return "battery_oracle.db"
+
+DB_PATH = _resolve_db_path()
 
 def get_connection():
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
@@ -44,6 +57,8 @@ def init_db():
         cursor.execute("ALTER TABLE reports ADD COLUMN custom_night_end TEXT DEFAULT NULL")
     if "analysis_updated_at" not in r_cols:
         cursor.execute("ALTER TABLE reports ADD COLUMN analysis_updated_at TEXT DEFAULT NULL")
+    if "analyses_json" not in r_cols:
+        cursor.execute("ALTER TABLE reports ADD COLUMN analyses_json TEXT DEFAULT '{}'")
     
     # 2. Chat Threads table
     cursor.execute("""
@@ -163,7 +178,8 @@ def init_db():
 # --- Report CRUD ---
 
 def save_report(file_hash, filename, custom_name, description, timestamp_str, device_info,
-                summary_text, chart_df, history_df, initial_analysis, reasoning_trace="", analysis_updated_at=None):
+                summary_text, chart_df, history_df, initial_analysis, reasoning_trace="", analysis_updated_at=None,
+                analyses_json=None):
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -171,14 +187,26 @@ def save_report(file_hash, filename, custom_name, description, timestamp_str, de
     hist_json = history_df.to_json(orient='split', date_format='iso') if history_df is not None and not history_df.empty else "{}"
     now_str = analysis_updated_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    if not analyses_json:
+        init_map = {
+            "all": {
+                "text": initial_analysis or "",
+                "trace": reasoning_trace or "",
+                "updated_at": now_str
+            }
+        }
+        analyses_json_str = json.dumps(init_map)
+    else:
+        analyses_json_str = analyses_json if isinstance(analyses_json, str) else json.dumps(analyses_json)
+
     cursor.execute("""
         INSERT INTO reports (
             file_hash, filename, custom_name, description, timestamp_str, device_info,
-            summary_text, chart_data_json, history_data_json, initial_analysis, reasoning_trace, analysis_updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            summary_text, chart_data_json, history_data_json, initial_analysis, reasoning_trace, analysis_updated_at, analyses_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         file_hash, filename, custom_name, description, timestamp_str, device_info,
-        summary_text, chart_json, hist_json, initial_analysis, reasoning_trace, now_str
+        summary_text, chart_json, hist_json, initial_analysis, reasoning_trace, now_str, analyses_json_str
     ))
     
     report_id = cursor.lastrowid
@@ -273,15 +301,50 @@ def update_report_night_window(report_id, start_dt, end_dt):
     conn.close()
     invalidate_report_cache(report_id)
 
-def update_report_analysis(report_id, analysis_text, reasoning_trace="", updated_at=None):
+def update_report_analysis(report_id, analysis_text, reasoning_trace="", updated_at=None, scope="all"):
     conn = get_connection()
     cursor = conn.cursor()
     now_str = updated_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("""
-        UPDATE reports 
-        SET initial_analysis = ?, reasoning_trace = ?, analysis_updated_at = ?
-        WHERE id = ?
-    """, (analysis_text, reasoning_trace, now_str, report_id))
+
+    # Fetch existing analyses_json and fallback info
+    cursor.execute("SELECT analyses_json, initial_analysis, reasoning_trace, analysis_updated_at FROM reports WHERE id = ?", (report_id,))
+    row = cursor.fetchone()
+    analyses = {}
+    if row:
+        raw_json = row["analyses_json"]
+        if raw_json:
+            try:
+                analyses = json.loads(raw_json)
+            except Exception:
+                analyses = {}
+        if not analyses and row["initial_analysis"]:
+            analyses["all"] = {
+                "text": row["initial_analysis"],
+                "trace": row["reasoning_trace"] or "",
+                "updated_at": row["analysis_updated_at"] or now_str
+            }
+
+    norm_scope = (scope or "all").lower().strip()
+    analyses[norm_scope] = {
+        "text": analysis_text,
+        "trace": reasoning_trace or "",
+        "updated_at": now_str
+    }
+    new_analyses_json = json.dumps(analyses)
+
+    if norm_scope == "all" or not row["initial_analysis"] or "pending" in str(row["initial_analysis"]).lower():
+        cursor.execute("""
+            UPDATE reports 
+            SET initial_analysis = ?, reasoning_trace = ?, analysis_updated_at = ?, analyses_json = ?
+            WHERE id = ?
+        """, (analysis_text, reasoning_trace, now_str, new_analyses_json, report_id))
+    else:
+        cursor.execute("""
+            UPDATE reports 
+            SET analyses_json = ?, analysis_updated_at = ?
+            WHERE id = ?
+        """, (new_analyses_json, now_str, report_id))
+
     conn.commit()
     conn.close()
     invalidate_report_cache(report_id)
@@ -738,10 +801,30 @@ def save_device_profile(profile_name, raw_content, parsed_data, profile_id=None)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (profile_name, device_model, os_build, raw_content, parsed_json, now_str, now_str))
         saved_id = cursor.lastrowid
+        cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('active_device_profile_id', ?)", (str(saved_id),))
 
     conn.commit()
     conn.close()
     return saved_id
+
+def get_active_device_profile_id():
+    """Get the profile ID explicitly designated or defaulted as active context for AI."""
+    active_str = get_setting("active_device_profile_id")
+    if active_str:
+        try:
+            return int(active_str)
+        except Exception:
+            pass
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM device_profiles ORDER BY updated_at DESC LIMIT 1")
+    row = cursor.fetchone()
+    conn.close()
+    return row["id"] if row else None
+
+def set_active_device_profile(profile_id: int):
+    """Set specific device profile as default global context for bugreport analyses."""
+    set_setting("active_device_profile_id", str(profile_id))
 
 def get_all_device_profiles():
     """Retrieve all device inventory profiles ordered by update time descending."""
@@ -777,11 +860,20 @@ def get_device_profile(profile_id):
     return p
 
 def get_latest_device_profile():
-    """Retrieve the most recently saved or updated device profile."""
+    """Retrieve the designated active or most recently updated device profile."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM device_profiles ORDER BY updated_at DESC LIMIT 1")
-    row = cursor.fetchone()
+    active_id_str = get_setting("active_device_profile_id")
+    row = None
+    if active_id_str:
+        try:
+            cursor.execute("SELECT * FROM device_profiles WHERE id = ?", (int(active_id_str),))
+            row = cursor.fetchone()
+        except Exception:
+            row = None
+    if not row:
+        cursor.execute("SELECT * FROM device_profiles ORDER BY updated_at DESC LIMIT 1")
+        row = cursor.fetchone()
     conn.close()
     if not row:
         return None
@@ -979,5 +1071,21 @@ def _deserialize_report(report_dict):
 
     if not report_dict.get("analysis_updated_at"):
         report_dict["analysis_updated_at"] = report_dict.get("created_at") or report_dict.get("timestamp_str") or ""
+
+    raw_analyses = report_dict.get("analyses_json")
+    analyses = {}
+    if raw_analyses:
+        try:
+            analyses = json.loads(raw_analyses)
+        except Exception:
+            analyses = {}
+
+    if not analyses and report_dict.get("initial_analysis"):
+        analyses["all"] = {
+            "text": report_dict.get("initial_analysis") or "",
+            "trace": report_dict.get("reasoning_trace") or "",
+            "updated_at": report_dict.get("analysis_updated_at") or ""
+        }
+    report_dict["analyses"] = analyses
 
     return report_dict
