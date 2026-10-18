@@ -12,8 +12,7 @@ import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
 import { useDialog } from '../ui/DialogContext';
 import { ChatWorkspace } from '../chat/ChatWorkspace';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { MarkdownView } from '../ui/MarkdownView';
 import {
   Shield,
   Wifi,
@@ -753,10 +752,8 @@ export const DeviceProfileView: React.FC = () => {
                   </Button>
                 </div>
                 {compareAuditMarkdown && (
-                  <div className="prose prose-invert prose-sm max-w-none border-t border-slate-800 pt-4">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {compareAuditMarkdown}
-                    </ReactMarkdown>
+                  <div className="border-t border-slate-800 pt-4">
+                    <MarkdownView content={compareAuditMarkdown} />
                   </div>
                 )}
               </Card>
@@ -1043,10 +1040,8 @@ export const DeviceProfileView: React.FC = () => {
                     </div>
 
                     {activeProfile.analysis_text ? (
-                      <div className="prose prose-invert prose-sm max-w-none border-t border-slate-800 pt-4">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {activeProfile.analysis_text}
-                        </ReactMarkdown>
+                      <div className="border-t border-slate-800 pt-4">
+                        <MarkdownView content={activeProfile.analysis_text} />
                       </div>
                     ) : (
                       <div className="text-xs text-slate-500 py-4 text-center border-t border-slate-800/60">

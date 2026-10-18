@@ -456,9 +456,16 @@ def sanitize_ai_output(text, summary_or_map=None):
     # 1. Clean raw <br> HTML markers
     text = clean_markdown_breaks(text)
 
-    # 2. Fix common LLM ADB command syntax errors:
+    # 2. Fix common LLM ADB command syntax errors & ensure host 'adb shell' prefix
     # Android shell does not have a standalone 'deviceidle' binary; it belongs to 'dumpsys deviceidle'
     text = re.sub(r'\badb\s+shell\s+deviceidle\b', 'adb shell dumpsys deviceidle', text)
+
+    # Prefix bare on-device commands (cmd appops, dumpsys, settings, pm, am) with 'adb shell '
+    pattern_lines = r'(?m)^(\s*)(?!(?:adb\s+shell|#|\/\/))\b(cmd\s+appops|cmd\s+package|dumpsys|settings\s+(?:put|get|delete)|pm\s+(?:disable|enable|suspend|grant|revoke)|am\s+broadcast)\b'
+    text = re.sub(pattern_lines, r'\1adb shell \2', text)
+
+    pattern_inline = r'(`)(?!\s*adb\s+shell\s+)\s*(cmd\s+appops|cmd\s+package|dumpsys\s+deviceidle|settings\s+(?:put|get|delete)|pm\s+(?:disable|enable|suspend))\b'
+    text = re.sub(pattern_inline, r'\1adb shell \2', text)
 
     if isinstance(summary_or_map, dict):
         uid_map = summary_or_map

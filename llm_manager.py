@@ -120,7 +120,7 @@ CRITICAL DIAGNOSTIC GUIDELINES:
    - REALITY-BASED SYNTHESIS: Confront the measured drain with the fact that these settings and restrictions are already active.
      * For example: "Even though Instagram / Google App is already set to Restricted in AppOps, it still consumed X mAh via mobile radio sockets."
      * Explain WHY: Android foreground services, high-priority push notifications (FCM), or network socket flush on wakeup bypass basic background restrictions.
-     * Focus ONLY on genuine remaining opportunities: in-app notification & background sync frequency, cellular background data toggles (`Settings > Apps > [App] > Mobile data & Wi-Fi > Background data [Off]`), or safe ADB freeze commands (`cmd package suspend <package>` or `cmd appops set <package> RUN_ANY_IN_BACKGROUND ignore`).
+      * Focus ONLY on genuine remaining opportunities: in-app notification & background sync frequency, cellular background data toggles (`Settings > Apps > [App] > Mobile data & Wi-Fi > Background data [Off]`), or safe ADB freeze commands (`adb shell cmd package suspend <package>` or `adb shell cmd appops set <package> RUN_ANY_IN_BACKGROUND ignore`).
 
 3. GROUND WI-FI RECOMMENDATIONS IN REGISTERED ROUTER ENVIRONMENT:
    - Check the `=== 📡 KNOWN WIFI ROUTER ENVIRONMENT ===` block in the telemetry.
@@ -141,9 +141,18 @@ CRITICAL DIAGNOSTIC GUIDELINES:
      * If Xiaomi: use HyperOS/MIUI paths (Settings > Battery > App battery saver; Apps > Permissions > Autostart).
      * If unknown or generic: state stock Android paths and explicitly note that UI labels may vary by manufacturer skin.
 
-6. ADVANCED CLI / ADB COMMANDS & CODE BLOCK FORMATTING:
-   - When standard GUI settings are exhausted or cannot achieve deeper power savings (e.g. persistent carrier telemetry, location polling daemons, background appops), provide safe, concrete commands (e.g. `cmd appops set <package> RUN_IN_BACKGROUND ignore`, `dumpsys deviceidle force-idle deep` [NOT `deviceidle force-idle`], `cmd appops set <package> WAKE_LOCK ignore`).
-   - CODE FORMATTING MANDATE: NEVER format executable ADB commands, shell scripts, or JSON configurations as inline code backticks (`...`). ALWAYS format all CLI / ADB commands, scripts, and JSON/YAML configs inside dedicated fenced code blocks with explicit language tags (e.g. ```bash, ```json). Place related commands on separate lines within the code block for easy 1-click copying.
+6. ADVANCED CLI / ADB COMMANDS & HOST TERMINAL EXECUTION:
+   - HOST TERMINAL & ADB PREREQUISITES: The user runs commands from their computer terminal (macOS/Linux Terminal, Windows PowerShell, or Command Prompt), NOT on the phone directly. Commands interact with Android through the Android Debug Bridge (ADB).
+   - MANDATORY `adb shell` PREFIX: NEVER output bare on-device commands like `cmd appops ...` or `dumpsys ...` alone. ALWAYS prefix every command in the code block with `adb shell ` so the user can copy and run it directly in Terminal or PowerShell:
+     ```bash
+     adb shell cmd appops set <package> RUN_IN_BACKGROUND ignore
+     adb shell dumpsys deviceidle force-idle deep
+     adb shell cmd appops set <package> WAKE_LOCK ignore
+     ```
+   - EXPLAIN HOW TO EXECUTE: Accompany all CLI suggestions with a brief, clear explanation:
+     * State that commands require ADB installed on the computer and the Android device connected with USB Debugging enabled in Developer Options.
+     * Explain that commands can be executed directly from their desktop terminal (Terminal / PowerShell) with the provided `adb shell <command>` syntax, OR they can enter `adb shell` once for an interactive shell and paste commands without the prefix.
+   - CODE FORMATTING MANDATE: NEVER format executable ADB commands, shell scripts, or JSON configurations as inline code backticks (`...`). ALWAYS format all CLI / ADB commands inside dedicated fenced code blocks with explicit language tags (```bash). Place related commands on separate lines within the code block for easy 1-click copying.
 
 7. MANDATORY TRADE-OFF & USABILITY WARNINGS:
    - For EVERY proposed optimization, you MUST explicitly state the comfort/usability trade-off:
@@ -167,9 +176,9 @@ STRUCTURE YOUR REPORT USING THE FOLLOWING SECTIONS:
 ### 3. 🛠️ Prioritized Action Plan & Trade-Off Matrix
 - If the device is already in a hardened, well-tuned state: EXPLICITLY CONFIRM that previous optimizations (AOD off, wake gestures off, scan toggles off, mobile data always active off, restricted apps) are active and verified. Do NOT repeat instructions to change them.
 - Provide 2 to 4 genuinely NEW, high-impact fixes categorized by:
-  * **Verified App Optimizations**: Target ONLY apps with proven drain in this window that are not already fully restricted. For already-restricted apps that still leak, provide in-app or background data fixes. State the exact menu path for the detected device and OS, followed by `⚠️ Usability & Comfort Impact: ...`.
+  * **Verified App Optimizations**: Target ONLY apps with proven drain in this window that are not already fully restricted. For already-restricted apps that still leak, provide in-app or background data fixes. State the exact menu path for the detected device and OS, followed by `⚠️ Usability & Comfort Impact: ...`. If any commands are suggested (e.g. AppOps), they MUST be formatted in a code block prefixed with `adb shell ` (NEVER bare `cmd appops`).
   * **WiFi Router & Radio Adjustments**: If router profile is defined and Wi-Fi drain occurred, state the exact router model and firmware menu path. Real remaining levers (e.g. cellular band preference if weak signal, or router DTIM interval).
-  * **Advanced CLI / ADB Fallbacks**: Targeted commands for power users.
+  * **Advanced CLI / ADB Fallbacks (Terminal / PowerShell)**: Targeted commands prefixed with `adb shell ` for direct execution in host terminal or PowerShell, with ADB connection prerequisites explained.
 
 Telemetry Data:
 {telemetry_data}
@@ -189,7 +198,7 @@ CRITICAL COMPARATIVE GUIDELINES:
    - Identify the device manufacturer and Android OS version from the session headers and tailor any guidance to that specific phone skin. Do not assume or hardcode any brand.
 5. HONEST TRADE-OFF & PLATEAU ASSESSMENT:
    - If battery drain has plateaued despite aggressive optimizations, explain why environmental factors (e.g. cellular signal quality, Bluetooth smartwatch link, essential background push) prevent reaching theoretical minimums (<0.6%/hr).
-   - Detail the usability cost of pushing optimizations further. Provide advanced `adb shell` options only with clear trade-off warnings.
+   - Detail the usability cost of pushing optimizations further. Provide advanced CLI options strictly as ready-to-run desktop terminal/PowerShell commands prefixed with `adb shell ` (e.g. `adb shell cmd appops set ...`), accompanied by a clear explanation that ADB and USB debugging are required.
 
 STRUCTURE YOUR ANALYSIS:
 ### 1. 📋 Comparative Metrics Table
@@ -202,7 +211,7 @@ STRUCTURE YOUR ANALYSIS:
 
 ### 3. 🎯 Verdict, Trade-offs & Next Optimization Steps
 - Clear assessment of net gain.
-- Highest-yield remaining actions with `⚠️ Usability & Comfort Impact` and advanced `adb shell` fallbacks where appropriate.
+- Highest-yield remaining actions with `⚠️ Usability & Comfort Impact` and advanced `adb shell` fallbacks (explaining ADB execution via computer terminal or PowerShell).
 
 {reports_summary}
 """,
@@ -217,7 +226,7 @@ CRITICAL INSTRUCTIONS:
 - If the user has active WiFi router profiles registered, reference their router model and firmware settings when Wi-Fi sleep or DTIM is discussed.
 - Dynamically adapt settings navigation and advice to the specific device model and OS version detected in the context. Do not make generic or hardcoded brand assumptions.
 - For every proposed change, explicitly highlight the `⚠️ Usability & Comfort Impact`.
-- Suggest safe `adb shell` CLI commands when GUI settings are insufficient or absent.
+- Suggest safe `adb shell` CLI commands when GUI settings are insufficient or absent. Always format them with the `adb shell ` prefix ready to copy and run directly in the user's desktop terminal or PowerShell (e.g. `adb shell cmd appops set <pkg> RUN_IN_BACKGROUND ignore`), and explain that ADB with USB debugging must be active on the connected device.
 
 Active Scope / Context:
 {filter_context}
@@ -240,7 +249,7 @@ CRITICAL SYNTHESIS INSTRUCTIONS:
 3. Account for the user's known device profile and registered WiFi router environment.
 4. If apps are already restricted or settings hardened, acknowledge this reality and do not repeat completed steps.
 5. Dynamically adapt the final recommendations to the detected device model and OS build.
-6. For every permanent optimization in the final blueprint, clearly state the `⚠️ Usability & Comfort Trade-off`. Include advanced `adb shell` commands for deep tuning.
+6. For every permanent optimization in the final blueprint, clearly state the `⚠️ Usability & Comfort Trade-off`. Include advanced `adb shell` commands formatted for desktop terminal / PowerShell with clear ADB connection guidance.
 7. Provide a realistic assessment of the device's physical standby floor given the user's active environment (e.g. radios, wearables, accounts).
 
 STRUCTURE YOUR MASTER SYNTHESIS:
@@ -259,7 +268,7 @@ STRUCTURE YOUR MASTER SYNTHESIS:
 Provide a prioritized, device-tailored cheat sheet:
 - **Verified App Battery Profiles**: Exact settings and `⚠️ Usability Trade-offs`.
 - **Radio, Location & WiFi Router Toggles**: Concrete toggles for the detected device and specific router firmware configurations.
-- **Advanced CLI / ADB Fallbacks**: Safe commands for stubborn background services.
+- **Advanced CLI / ADB Fallbacks**: Safe commands prefixed with `adb shell ` ready to run in terminal or PowerShell, with ADB connection instructions.
 - **Nighttime Routines**: Realistic bedtime configurations.
 
 Chronicle of Experiment Sessions:
@@ -284,11 +293,14 @@ CRITICAL GUIDELINES:
 4. HONEST, CONDITIONAL TUNING PLAN (NO REDUNDANT COMMANDS):
    - If the device is already in a hardened, well-optimized state with no significant power leaks detected, EXPLICITLY DECLARE THIS:
      State clearly that the device is already optimally tuned and that NO further power-reduction tweaks or setting changes are recommended.
-   - In that case, do NOT output redundant `adb shell settings put ...` commands for settings that are already 0 or disabled.
-   - If there ARE remaining active risks or genuine opportunities, provide only those specific changes with menu navigation and `⚠️ Usability & Comfort Impact`.
-   - Optional diagnostic/maintenance commands (like checking batterystats or verifying Doze state) should only be presented as optional diagnostics, NOT labeled as required tuning adjustments.
-5. CLEAN MARKDOWN ONLY (NO RAW HTML TAGS):
-   - In tables or lists, NEVER insert raw HTML tags like `<br>` or `<br/>`. Use standard Markdown formatting (e.g. `App Name - package.id` or separate columns).
+    - In that case, do NOT output redundant `adb shell settings put ...` commands for settings that are already 0 or disabled.
+    - If there ARE remaining active risks or genuine opportunities, provide only those specific changes with menu navigation and `⚠️ Usability & Comfort Impact`.
+    - Format ALL suggested CLI and ADB commands in fenced markdown code blocks with bash syntax highlighting (```bash ... ```) ready for direct execution in the user's computer terminal (Terminal / PowerShell). NEVER output bare commands outside code blocks.
+    - Optional diagnostic/maintenance commands (like checking batterystats or verifying Doze state) should only be presented as optional diagnostics, NOT labeled as required tuning adjustments, and formatted in fenced ```bash code blocks or `adb shell ...` backticks.
+5. CLEAN GFM MARKDOWN ONLY (NO RAW HTML TAGS):
+    - All tables MUST use standard GitHub Flavored Markdown (GFM) pipe table syntax with header row, separator row, and proper columns.
+    - In tables or lists, NEVER insert raw HTML tags like `<br>` or `<br/>`. Use standard Markdown formatting (e.g. `App Name - package.id` or separate columns).
+    - Ensure clean headings (`### 1.`, `### 2.`, `### 3.`, `####`) separated by empty lines before and after.
 
 STRUCTURE YOUR AUDIT:
 ### 1. 🛡️ Power Management Posture Summary
@@ -301,7 +313,7 @@ STRUCTURE YOUR AUDIT:
 
 ### 3. 🛠️ Actionable Tuning Plan & Trade-Off Matrix
 - If the device is already optimized: State that no further tuning is required. List any optional comfort trade-offs (e.g. timeout length) or diagnostic commands separately as optional verification only.
-- If genuine optimizations remain: Provide a focused table and `adb shell` commands for ONLY the settings that actually require changing.
+- If genuine optimizations remain: Provide a focused table and `adb shell` commands for ONLY the settings that actually require changing, explaining how to run them in desktop terminal or PowerShell.
 
 Device Configuration Telemetry:
 {profile_telemetry}
@@ -322,7 +334,8 @@ CRITICAL GUIDELINES:
 3. FACT-GROUNDED DELTA ANALYSIS: Focus on actual changes between the two snapshots (added/removed Doze whitelists, modified AppOps, changed global/secure/system settings).
 4. CONDITIONAL ADVICE (AVOID REDUNDANCY): If changes were successfully applied and no further risks remain, confirm the improvement and do not suggest redundant steps.
 5. MANDATORY USABILITY TRADE-OFFS: For every recommended or applied tweak, state `⚠️ Usability & Comfort Impact`.
-6. Provide actionable, verified `adb shell` commands only when actual adjustments are needed.
+6. Format ALL actionable, verified commands prefixed with `adb shell ` in fenced markdown code blocks with bash syntax highlighting (```bash ... ```) ready for desktop terminal / PowerShell execution only when actual adjustments are needed.
+7. CLEAN GFM MARKDOWN ONLY: All tables must use standard GitHub Flavored Markdown (GFM) pipe table syntax with header row and separators, without raw HTML tags like `<br>`.
 
 STRUCTURE YOUR ANALYSIS:
 ### 1. 📋 Executive Configuration Delta Verdict
@@ -336,7 +349,7 @@ STRUCTURE YOUR ANALYSIS:
 - Flag any changes that could impair push notifications (FCM/GCM), background email/calendar sync, smartwatch/BLE peripheral connection, or alarm delivery.
 
 ### 4. 🎯 Recommended Next Steps & ADB Commands
-- State clearly if no further changes are needed, or provide concrete tweaks with `⚠️ Usability & Comfort Impact` and exact `adb shell` commands if genuine gaps remain.
+- State clearly if no further changes are needed, or provide concrete tweaks with `⚠️ Usability & Comfort Impact` and exact `adb shell` commands ready for terminal / PowerShell.
 
 Configuration Delta Summary:
 {diff_summary}
@@ -349,7 +362,7 @@ CRITICAL INSTRUCTIONS:
 2. ALWAYS identify applications by their real human-readable names and package identifiers.
 3. Dynamically adapt settings navigation and recommendations to the detected device model ({device_model}) and Android version ({android_version}).
 4. For every proposed change or tweak, explicitly state: `⚠️ Usability & Comfort Impact: [Specific consequence]`.
-5. Suggest safe and tested `adb shell` CLI commands when GUI settings are insufficient or absent.
+5. Suggest safe and tested CLI commands formatted for host terminal/PowerShell execution prefixed with `adb shell ` (e.g. `adb shell cmd appops set <package> ...`) and explain ADB prerequisites.
 6. Use pure Markdown only (no raw HTML tags like `<br>`).
 
 Device Profile Info:

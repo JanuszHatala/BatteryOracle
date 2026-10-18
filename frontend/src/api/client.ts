@@ -17,7 +17,8 @@ import {
   ProfileComparisonResponse,
   MasterSynthesisResponse,
   AccountingDashboardResponse,
-  AiErrorDetail
+  AiErrorDetail,
+  UploadProgressEvent
 } from '../types/api';
 
 const BASE_URL = '/api/v1';
@@ -89,6 +90,91 @@ export const api = {
       method: 'POST',
       body: formData
     });
+  },
+
+  uploadReportStream: async (
+    file: File,
+    autoDiagnose = false,
+    timezone?: string,
+    onProgress?: (event: UploadProgressEvent) => void,
+    signal?: AbortSignal
+  ): Promise<ReportDetail> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('auto_diagnose', String(autoDiagnose));
+    if (timezone) {
+      formData.append('timezone', timezone);
+    }
+
+    const res = await fetch(`${BASE_URL}/reports/upload-stream`, {
+      method: 'POST',
+      body: formData,
+      signal
+    });
+
+    if (!res.ok) {
+      let errorMsg = `HTTP ${res.status}: ${res.statusText}`;
+      try {
+        const errData = await res.json();
+        if (errData.detail) {
+          errorMsg = typeof errData.detail === 'string' ? errData.detail : JSON.stringify(errData.detail);
+        }
+      } catch {
+        // ignore
+      }
+      throw new ApiClientError(errorMsg, res.status);
+    }
+
+    if (!res.body) {
+      throw new ApiClientError('Response body is null', res.status);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalReport: ReportDetail | null = null;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const block of lines) {
+          const trimmed = block.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const jsonStr = trimmed.slice(5).trim();
+          if (!jsonStr) continue;
+
+          try {
+            const parsed = JSON.parse(jsonStr) as UploadProgressEvent;
+            if (onProgress) {
+              onProgress(parsed);
+            }
+            if (parsed.type === 'error') {
+              throw new ApiClientError(parsed.message || 'Upload processing failed', res.status);
+            }
+            if (parsed.type === 'done' && parsed.report) {
+              finalReport = parsed.report;
+            }
+          } catch (err) {
+            if (err instanceof ApiClientError) throw err;
+            console.error('Error parsing SSE event:', err);
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    if (!finalReport) {
+      throw new ApiClientError('Report processing completed without report detail.', res.status);
+    }
+
+    return finalReport;
   },
 
   updateReport: (id: number, data: { custom_name?: string; description?: string; custom_night_start?: string | null; custom_night_end?: string | null; reset_night_window?: boolean }) =>

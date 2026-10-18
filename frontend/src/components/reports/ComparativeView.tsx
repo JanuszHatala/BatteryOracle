@@ -5,8 +5,7 @@ import { Card, CardHeader, CardContent } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { useDialog } from '../ui/DialogContext';
 import { api } from '../../api/client';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { MarkdownView } from '../ui/MarkdownView';
 import { GitCompare, Sparkles, Download, Loader2, AlertCircle } from 'lucide-react';
 
 interface ComparativeViewProps {
@@ -175,8 +174,8 @@ export const ComparativeView: React.FC<ComparativeViewProps> = ({
               </Badge>
             )}
           </CardHeader>
-          <CardContent className="prose prose-invert prose-sm max-w-none prose-pre:bg-slate-950 prose-pre:border prose-pre:border-slate-800">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{result.analysis}</ReactMarkdown>
+          <CardContent>
+            <MarkdownView content={result.analysis} />
           </CardContent>
         </Card>
       )}

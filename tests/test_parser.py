@@ -94,3 +94,26 @@ Per-PID Stats:
     screens = list(df["Screen"])
     assert "on" in screens
     assert "off" in screens
+
+
+def test_sanitize_ai_output_adb_commands():
+    raw_ai = """
+Here are recommendations:
+```bash
+cmd appops set janush.tech.whereami RUN_ANY_IN_BACKGROUND ignore
+cmd appops set janush.tech.whereami WAKE_LOCK ignore
+dumpsys deviceidle force-idle deep
+adb shell cmd appops set pkg RUN_IN_BACKGROUND ignore
+settings put global mobile_data_always_on 0
+```
+Also you can run `cmd appops set test ignore` or `adb shell cmd appops set already ignore`.
+"""
+    cleaned = parser.sanitize_ai_output(raw_ai)
+    assert "adb shell cmd appops set janush.tech.whereami RUN_ANY_IN_BACKGROUND ignore" in cleaned
+    assert "adb shell cmd appops set janush.tech.whereami WAKE_LOCK ignore" in cleaned
+    assert "adb shell dumpsys deviceidle force-idle deep" in cleaned
+    assert "adb shell settings put global mobile_data_always_on 0" in cleaned
+    # Ensure no double "adb shell adb shell"
+    assert "adb shell adb shell" not in cleaned
+    assert "`adb shell cmd appops set test ignore`" in cleaned
+    assert "`adb shell cmd appops set already ignore`" in cleaned

@@ -1,5 +1,6 @@
 import io
 import os
+import json
 import zipfile
 import pytest
 from fastapi.testclient import TestClient
@@ -457,4 +458,49 @@ def test_master_synthesis_and_accounting(client, monkeypatch):
     assert "by_report" in acc_data
     assert "by_thread" in acc_data
     assert "over_time" in acc_data
+
+
+def test_upload_report_stream(client):
+    content = """
+== dumpstate: 2026-09-04 06:47:00
+Build: Google/redfin/redfin:14/UP1A.231005.007/10754064:user/release-keys
+Device: Google Pixel 5
+Battery History:
+    0 (10) 100 status=discharging
+    +1m (10) 099
+    Capacity: 4080
+Estimated power use (mAh):
+  Screen: 30.0
+All partial wake locks:
+  Wake lock 1000:*alarm*: 5s (2 times) realtime
+"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("bugreport-stream-test.txt", content)
+
+    res = client.post(
+        "/api/v1/reports/upload-stream",
+        files={"file": ("202609040700_bugreport.zip", buf.getvalue(), "application/zip")},
+        data={"auto_diagnose": "false"}
+    )
+    assert res.status_code == 200
+    assert "text/event-stream" in res.headers.get("content-type", "")
+
+    lines = res.text.strip().split("\n\n")
+    events = []
+    for line in lines:
+        if line.startswith("data:"):
+            events.append(json.loads(line[5:].strip()))
+
+    phases = [e.get("phase") for e in events]
+    assert "unpacking" in phases
+    assert "telemetry" in phases
+    assert "history" in phases
+    assert "saving" in phases
+    assert "completed" in phases
+
+    done_events = [e for e in events if e.get("type") == "done"]
+    assert len(done_events) == 1
+    assert done_events[0]["report"]["filename"] == "202609040700_bugreport.zip"
+    assert done_events[0]["report"]["id"] > 0
 

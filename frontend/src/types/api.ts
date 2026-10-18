@@ -289,3 +289,11 @@ export interface AccountingDashboardResponse {
     total_cost: number;
   }>;
 }
+
+export interface UploadProgressEvent {
+  type: 'progress' | 'done' | 'error';
+  phase?: 'unpacking' | 'telemetry' | 'history' | 'ai_diagnose' | 'saving' | 'completed' | 'error';
+  progress?: number;
+  message?: string;
+  report?: ReportDetail;
+}

@@ -1,10 +1,8 @@
 import React from 'react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { Sparkles, RefreshCw, FileText, Download } from 'lucide-react';
-import { MarkdownPre, MarkdownCode } from '../ui/CodeBlock';
+import { MarkdownView } from '../ui/MarkdownView';
 
 interface DiagnosisCardProps {
   diagnosisMarkdown?: string;
@@ -70,22 +68,7 @@ export const DiagnosisCard: React.FC<DiagnosisCardProps> = ({
             </p>
           </div>
         ) : diagnosisMarkdown ? (
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              h1: ({ ...props }) => <h1 className="text-xl font-bold text-slate-100 mt-4 mb-2" {...props} />,
-              h2: ({ ...props }) => <h2 className="text-lg font-semibold text-slate-200 mt-3 mb-2" {...props} />,
-              h3: ({ ...props }) => <h3 className="text-base font-medium text-slate-300 mt-2 mb-1" {...props} />,
-              ul: ({ ...props }) => <ul className="list-disc pl-5 space-y-1 text-slate-300" {...props} />,
-              ol: ({ ...props }) => <ol className="list-decimal pl-5 space-y-1 text-slate-300" {...props} />,
-              li: ({ ...props }) => <li className="text-slate-300 leading-relaxed" {...props} />,
-              p: ({ ...props }) => <p className="mb-2.5 leading-relaxed text-slate-300" {...props} />,
-              code: MarkdownCode,
-              pre: MarkdownPre
-            }}
-          >
-            {diagnosisMarkdown}
-          </ReactMarkdown>
+          <MarkdownView content={diagnosisMarkdown} />
         ) : (
           <div className="py-8 flex flex-col items-center justify-center text-center space-y-2">
             <FileText className="w-8 h-8 text-slate-600" />

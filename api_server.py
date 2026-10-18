@@ -1,12 +1,13 @@
 import os
 import json
+import asyncio
 from contextlib import asynccontextmanager
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, FileResponse
+from fastapi.responses import PlainTextResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import db
@@ -85,10 +86,11 @@ def _format_wifi_router(r: dict) -> schemas.WifiRouterResponse:
 def _format_report_detail(rep: dict) -> schemas.ReportDetail:
     raw_analyses = rep.get("analyses") or {}
     formatted_analyses = {}
+    summary_text = rep.get("summary_text", "")
     for scope_key, data in raw_analyses.items():
         if isinstance(data, dict):
             formatted_analyses[scope_key] = schemas.ScopeAnalysisDetail(
-                text=data.get("text", ""),
+                text=parser.sanitize_ai_output(data.get("text", ""), summary_text),
                 trace=data.get("trace", ""),
                 updated_at=_to_iso(data.get("updated_at"))
             )
@@ -100,8 +102,8 @@ def _format_report_detail(rep: dict) -> schemas.ReportDetail:
         description=rep.get("description", ""),
         timestamp_str=rep.get("timestamp_str", ""),
         device_info=rep.get("device_info", ""),
-        summary_text=rep.get("summary_text", ""),
-        initial_analysis=rep.get("initial_analysis", ""),
+        summary_text=summary_text,
+        initial_analysis=parser.sanitize_ai_output(rep.get("initial_analysis", ""), summary_text),
         reasoning_trace=rep.get("reasoning_trace", ""),
         custom_night_start=_to_iso(rep.get("custom_night_start")),
         custom_night_end=_to_iso(rep.get("custom_night_end")),
@@ -175,6 +177,103 @@ async def upload_report(
     if not created:
         raise HTTPException(status_code=500, detail="Failed to retrieve persisted report.")
     return _format_report_detail(created)
+
+
+@app.post("/api/v1/reports/upload-stream")
+async def upload_report_stream(
+    file: UploadFile = File(...),
+    auto_diagnose: bool = Form(False),
+    timezone: Optional[str] = Form(None)
+):
+    effective_tz = timezone or db.get_setting("device_timezone", "Europe/Warsaw")
+    filename = file.filename or "unknown_bugreport.zip"
+    try:
+        content = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {e}")
+
+    async def event_generator():
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def progress_callback(phase: str, progress: int, message: str):
+            loop.call_soon_threadsafe(
+                queue.put_nowait,
+                {"type": "progress", "phase": phase, "progress": progress, "message": message}
+            )
+
+        def run_processing():
+            try:
+                progress_callback("unpacking", 10, "Preparing and unpacking bugreport...")
+                processed = telemetry_service.process_bugreport_upload(
+                    filename=filename,
+                    file_bytes=content,
+                    timezone=effective_tz,
+                    auto_diagnose=auto_diagnose,
+                    progress_callback=progress_callback
+                )
+                progress_callback("saving", 95, "Saving report to database...")
+                existing = db.get_report_by_hash(processed["file_hash"])
+                if existing:
+                    rep_detail = _format_report_detail(existing)
+                else:
+                    report_id = db.save_report(
+                        file_hash=processed["file_hash"],
+                        filename=processed["filename"],
+                        custom_name=processed["custom_name"],
+                        description=processed["description"],
+                        timestamp_str=processed["timestamp_str"],
+                        device_info=processed["device_info"],
+                        summary_text=processed["summary_text"],
+                        chart_df=processed["chart_df"],
+                        history_df=processed["history_df"],
+                        initial_analysis=processed["initial_analysis"],
+                        reasoning_trace=processed["reasoning_trace"]
+                    )
+                    created = db.get_report_by_id(report_id)
+                    if not created:
+                        raise ValueError("Failed to retrieve persisted report.")
+                    rep_detail = _format_report_detail(created)
+
+                detail_dict = rep_detail.model_dump() if hasattr(rep_detail, "model_dump") else rep_detail.dict()
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    {
+                        "type": "done",
+                        "phase": "completed",
+                        "progress": 100,
+                        "message": "Import complete!",
+                        "report": detail_dict
+                    }
+                )
+            except Exception as e:
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    {"type": "error", "phase": "error", "message": str(e)}
+                )
+
+        worker_task = asyncio.to_thread(run_processing)
+        fut = asyncio.create_task(worker_task)
+
+        try:
+            while True:
+                item = await queue.get()
+                yield f"data: {json.dumps(item)}\n\n"
+                if item.get("type") in ("done", "error"):
+                    break
+            await fut
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @app.get("/api/v1/reports/{report_id}", response_model=schemas.ReportDetail)

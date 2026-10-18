@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import { Message } from '../../types/api';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { ChevronDown, ChevronRight, GitFork, Trash2, User, Bot, Copy, Check } from 'lucide-react';
-import { MarkdownPre, MarkdownCode } from '../ui/CodeBlock';
+import { MarkdownView } from '../ui/MarkdownView';
 
 interface ChatMessageCardProps {
   message: Message;
@@ -101,23 +99,8 @@ export const ChatMessageCard: React.FC<ChatMessageCardProps> = ({
 
       {/* Message content */}
       {!isCollapsed && (
-        <div className="p-3.5 text-xs text-slate-200 prose prose-invert prose-xs max-w-none leading-relaxed">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              h1: ({ ...props }) => <h1 className="text-base font-bold text-slate-100 my-2" {...props} />,
-              h2: ({ ...props }) => <h2 className="text-sm font-semibold text-slate-200 my-1.5" {...props} />,
-              h3: ({ ...props }) => <h3 className="text-xs font-semibold text-slate-300 my-1" {...props} />,
-              ul: ({ ...props }) => <ul className="list-disc pl-4 space-y-1 my-1" {...props} />,
-              ol: ({ ...props }) => <ol className="list-decimal pl-4 space-y-1 my-1" {...props} />,
-              li: ({ ...props }) => <li className="text-slate-300" {...props} />,
-              p: ({ ...props }) => <p className="mb-2 last:mb-0" {...props} />,
-              code: MarkdownCode,
-              pre: MarkdownPre
-            }}
-          >
-            {message.content}
-          </ReactMarkdown>
+        <div className="p-3.5 text-xs text-slate-200 leading-relaxed">
+          <MarkdownView content={message.content} compact />
         </div>
       )}
     </div>

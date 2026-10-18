@@ -4,7 +4,7 @@ import io
 import zipfile
 import tempfile
 from datetime import datetime
-from typing import Dict, Any, Tuple, Optional, List
+from typing import Dict, Any, Tuple, Optional, List, Callable
 
 import pandas as pd
 
@@ -17,11 +17,15 @@ def process_bugreport_upload(
     filename: str,
     file_bytes: bytes,
     timezone: str = "UTC",
-    auto_diagnose: bool = False
+    auto_diagnose: bool = False,
+    progress_callback: Optional[Callable[[str, int, str], None]] = None
 ) -> Dict[str, Any]:
     """Parse bugreport archive or text file into structured telemetry data."""
     if not file_bytes:
         raise ValueError("Uploaded file is empty.")
+
+    if progress_callback:
+        progress_callback("unpacking", 15, f"Unpacking bugreport archive: {filename}")
 
     file_hash = parser.calculate_sha256(file_bytes)
 
@@ -58,6 +62,8 @@ def process_bugreport_upload(
                 raise ValueError("Invalid bugreport archive: corrupted zip file.") from e
 
         # Extract UIDs
+        if progress_callback:
+            progress_callback("telemetry", 40, "Extracting system UIDs & batterystats...")
         uid_map = parser.extract_uid_mapping(target_txt)
 
         # Extract Batterystats
@@ -70,6 +76,9 @@ def process_bugreport_upload(
         summary_text += "\n\nPartial Wakelocks:\n" + "".join(wake_lines)
         chart_df = parser.extract_chart_data(power_lines, uid_map)
 
+        if progress_callback:
+            progress_callback("history", 65, "Extracting battery discharge history...")
+
         year_match = re.search(r"(\d{4})", file_timestamp or "")
         base_year = year_match.group(1) if year_match else "2026"
         history_df = parser.extract_battery_history(target_txt, base_year=base_year)
@@ -78,6 +87,8 @@ def process_bugreport_upload(
         reasoning_trace = ""
 
         if auto_diagnose:
+            if progress_callback:
+                progress_callback("ai_diagnose", 85, "Generating AI diagnostic plan with LLM...")
             active_llm_cfg = llm_manager.get_active_config()
             diag_prompt_tmpl = llm_manager.get_prompt_template("single_diagnosis")
 

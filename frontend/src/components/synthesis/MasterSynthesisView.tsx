@@ -6,8 +6,7 @@ import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { useDialog } from '../ui/DialogContext';
 import { ChatWorkspace } from '../chat/ChatWorkspace';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { MarkdownView } from '../ui/MarkdownView';
 import {
   Brain,
   Sparkles,
@@ -222,10 +221,8 @@ export const MasterSynthesisView: React.FC = () => {
       {activeTab === 'blueprint' && (
         <Card className="p-6">
           {data?.synthesis_text ? (
-            <div className="prose prose-invert prose-sm max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {data.synthesis_text}
-              </ReactMarkdown>
+            <div>
+              <MarkdownView content={data.synthesis_text} />
             </div>
           ) : (
             <div className="py-12 text-center space-y-3">
