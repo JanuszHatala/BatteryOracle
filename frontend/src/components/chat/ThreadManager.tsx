@@ -43,12 +43,12 @@ export const ThreadManager: React.FC<ThreadManagerProps> = ({
   };
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-900 border-b border-slate-800 text-xs">
-      <div className="flex items-center gap-2 min-w-0 flex-1">
+    <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 sm:p-3 bg-slate-900 border-b border-slate-800 text-xs">
+      <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
         <MessageSquare className="w-4 h-4 text-indigo-400 shrink-0" />
 
         {isEditing ? (
-          <div className="flex items-center gap-1.5 flex-1 max-w-xs">
+          <div className="flex items-center gap-1 flex-1 min-w-0 max-w-xs">
             <input
               type="text"
               value={editTitle}
@@ -58,29 +58,29 @@ export const ThreadManager: React.FC<ThreadManagerProps> = ({
                 if (e.key === 'Escape') setIsEditing(false);
               }}
               autoFocus
-              className="bg-slate-950 border border-indigo-500 rounded px-2 py-1 text-xs text-slate-100 w-full focus:outline-none"
+              className="bg-slate-950 border border-indigo-500 rounded px-2 py-1 text-xs text-slate-100 w-full min-w-0 focus:outline-none"
             />
             <button
               onClick={saveRename}
-              className="text-emerald-400 hover:text-emerald-300 p-1"
+              className="text-emerald-400 hover:text-emerald-300 p-1 shrink-0"
               title="Save Title"
             >
               <Check className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => setIsEditing(false)}
-              className="text-slate-400 hover:text-slate-300 p-1"
+              className="text-slate-400 hover:text-slate-300 p-1 shrink-0"
               title="Cancel"
             >
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
         ) : (
-          <div className="flex items-center gap-1.5 min-w-0">
+          <div className="flex items-center gap-1 min-w-0 flex-1 max-w-[220px]">
             <select
               value={activeThreadId || ''}
               onChange={(e) => onSelectThread(Number(e.target.value))}
-              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 max-w-[200px] truncate"
+              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 w-full min-w-0 truncate"
             >
               {threads.map((t) => (
                 <option key={t.id} value={t.id}>
@@ -91,7 +91,7 @@ export const ThreadManager: React.FC<ThreadManagerProps> = ({
             {activeThread && (
               <button
                 onClick={startRename}
-                className="text-slate-400 hover:text-slate-200 p-1"
+                className="text-slate-400 hover:text-slate-200 p-1 shrink-0"
                 title="Rename Thread"
               >
                 <Edit2 className="w-3 h-3" />
@@ -104,31 +104,32 @@ export const ThreadManager: React.FC<ThreadManagerProps> = ({
           variant="secondary"
           size="sm"
           onClick={onCreateThread}
-          className="h-7 text-xs px-2"
+          className="h-7 text-xs px-2 whitespace-nowrap shrink-0"
+          title="Create New Thread"
         >
-          <Plus className="w-3.5 h-3.5 mr-1" />
-          New Thread
+          <Plus className="w-3.5 h-3.5 mr-1 shrink-0" />
+          <span>New Thread</span>
         </Button>
       </div>
 
       {activeThread && (
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => onExportThread(activeThread.id)}
-            className="h-7 text-xs text-slate-400 hover:text-slate-200 px-2"
+            className="h-7 text-xs text-slate-400 hover:text-slate-200 px-2 whitespace-nowrap shrink-0"
             title="Export Thread Markdown"
           >
-            <Download className="w-3.5 h-3.5 mr-1" />
-            Export
+            <Download className="w-3.5 h-3.5 mr-1 shrink-0" />
+            <span>Export</span>
           </Button>
 
           <Button
             variant="ghost"
             size="sm"
             onClick={() => onClearThread(activeThread.id)}
-            className="h-7 text-xs text-amber-400 hover:text-amber-300 px-2"
+            className="h-7 text-xs text-amber-400 hover:text-amber-300 px-2 whitespace-nowrap shrink-0"
             title="Clear Messages"
           >
             Clear
@@ -139,7 +140,7 @@ export const ThreadManager: React.FC<ThreadManagerProps> = ({
               variant="ghost"
               size="sm"
               onClick={() => onDeleteThread(activeThread.id)}
-              className="h-7 text-xs text-rose-400 hover:text-rose-300 px-2"
+              className="h-7 text-xs text-rose-400 hover:text-rose-300 px-1.5 shrink-0"
               title="Delete Thread"
             >
               <Trash2 className="w-3.5 h-3.5" />
