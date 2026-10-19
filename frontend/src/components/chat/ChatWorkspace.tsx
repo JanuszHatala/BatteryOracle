@@ -272,15 +272,15 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
 
       {/* Scope Context Lens Indicator */}
       {reportId > 0 && activeScope && (
-        <div className="px-4 py-1.5 bg-slate-900/60 border-b border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-          <div className="flex items-center gap-1.5">
+        <div className="px-3 py-1.5 bg-slate-900/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-1 text-[11px] text-slate-400">
+          <div className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             <span>Context Lens:</span>
             <span className="font-semibold text-slate-200 capitalize">
               {activeScope === 'screen_off' ? 'Screen-Off' : activeScope === 'all' ? 'Full Timeline' : activeScope}
             </span>
           </div>
-          <span className="text-slate-500 text-[10px]">Telemetry & prior diagnosis synced</span>
+          <span className="text-slate-500 text-[10px] truncate max-w-full">Telemetry & prior diagnosis synced</span>
         </div>
       )}
 

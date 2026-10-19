@@ -43,62 +43,65 @@ export const ThreadManager: React.FC<ThreadManagerProps> = ({
   };
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 sm:p-3 bg-slate-900 border-b border-slate-800 text-xs">
-      <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
-        <MessageSquare className="w-4 h-4 text-indigo-400 shrink-0" />
+    <div className="p-2.5 sm:p-3 bg-slate-900 border-b border-slate-800 text-xs flex flex-col gap-2">
+      {/* Row 1: Thread Selection & New Thread */}
+      <div className="flex items-center justify-between gap-2 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+          <MessageSquare className="w-4 h-4 text-indigo-400 shrink-0" />
 
-        {isEditing ? (
-          <div className="flex items-center gap-1 flex-1 min-w-0 max-w-xs">
-            <input
-              type="text"
-              value={editTitle}
-              onChange={(e) => setEditTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') saveRename();
-                if (e.key === 'Escape') setIsEditing(false);
-              }}
-              autoFocus
-              className="bg-slate-950 border border-indigo-500 rounded px-2 py-1 text-xs text-slate-100 w-full min-w-0 focus:outline-none"
-            />
-            <button
-              onClick={saveRename}
-              className="text-emerald-400 hover:text-emerald-300 p-1 shrink-0"
-              title="Save Title"
-            >
-              <Check className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setIsEditing(false)}
-              className="text-slate-400 hover:text-slate-300 p-1 shrink-0"
-              title="Cancel"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-1 min-w-0 flex-1 max-w-[220px]">
-            <select
-              value={activeThreadId || ''}
-              onChange={(e) => onSelectThread(Number(e.target.value))}
-              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 w-full min-w-0 truncate"
-            >
-              {threads.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.title} ({t.message_count} msgs)
-                </option>
-              ))}
-            </select>
-            {activeThread && (
+          {isEditing ? (
+            <div className="flex items-center gap-1 flex-1 min-w-0 max-w-xs">
+              <input
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') saveRename();
+                  if (e.key === 'Escape') setIsEditing(false);
+                }}
+                autoFocus
+                className="bg-slate-950 border border-indigo-500 rounded px-2 py-1 text-xs text-slate-100 w-full min-w-0 focus:outline-none"
+              />
               <button
-                onClick={startRename}
-                className="text-slate-400 hover:text-slate-200 p-1 shrink-0"
-                title="Rename Thread"
+                onClick={saveRename}
+                className="text-emerald-400 hover:text-emerald-300 p-1 shrink-0"
+                title="Save Title"
               >
-                <Edit2 className="w-3 h-3" />
+                <Check className="w-3.5 h-3.5" />
               </button>
-            )}
-          </div>
-        )}
+              <button
+                onClick={() => setIsEditing(false)}
+                className="text-slate-400 hover:text-slate-300 p-1 shrink-0"
+                title="Cancel"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 min-w-0 flex-1">
+              <select
+                value={activeThreadId || ''}
+                onChange={(e) => onSelectThread(Number(e.target.value))}
+                className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 w-full min-w-0 truncate"
+              >
+                {threads.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.title} ({t.message_count} msgs)
+                  </option>
+                ))}
+              </select>
+              {activeThread && (
+                <button
+                  onClick={startRename}
+                  className="text-slate-400 hover:text-slate-200 p-1 shrink-0"
+                  title="Rename Thread"
+                >
+                  <Edit2 className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
 
         <Button
           variant="secondary"
@@ -112,40 +115,47 @@ export const ThreadManager: React.FC<ThreadManagerProps> = ({
         </Button>
       </div>
 
+      {/* Row 2: Thread Action Controls */}
       {activeThread && (
-        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onExportThread(activeThread.id)}
-            className="h-7 text-xs text-slate-400 hover:text-slate-200 px-2 whitespace-nowrap shrink-0"
-            title="Export Thread Markdown"
-          >
-            <Download className="w-3.5 h-3.5 mr-1 shrink-0" />
-            <span>Export</span>
-          </Button>
+        <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-800/60 text-[11px]">
+          <span className="text-slate-500 font-mono text-[10px] truncate">
+            Thread #{activeThread.id} ({activeThread.message_count} msgs)
+          </span>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onClearThread(activeThread.id)}
-            className="h-7 text-xs text-amber-400 hover:text-amber-300 px-2 whitespace-nowrap shrink-0"
-            title="Clear Messages"
-          >
-            Clear
-          </Button>
-
-          {threads.length > 1 && (
+          <div className="flex items-center gap-1 shrink-0 ml-auto">
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onDeleteThread(activeThread.id)}
-              className="h-7 text-xs text-rose-400 hover:text-rose-300 px-1.5 shrink-0"
-              title="Delete Thread"
+              onClick={() => onExportThread(activeThread.id)}
+              className="h-6 text-xs text-slate-400 hover:text-slate-200 px-2 whitespace-nowrap shrink-0"
+              title="Export Thread Markdown"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Download className="w-3 h-3 mr-1 shrink-0" />
+              <span>Export</span>
             </Button>
-          )}
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onClearThread(activeThread.id)}
+              className="h-6 text-xs text-amber-400 hover:text-amber-300 px-2 whitespace-nowrap shrink-0"
+              title="Clear Messages"
+            >
+              Clear
+            </Button>
+
+            {threads.length > 1 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onDeleteThread(activeThread.id)}
+                className="h-6 text-xs text-rose-400 hover:text-rose-300 px-1.5 shrink-0"
+                title="Delete Thread"
+              >
+                <Trash2 className="w-3 h-3" />
+              </Button>
+            )}
+          </div>
         </div>
       )}
     </div>
