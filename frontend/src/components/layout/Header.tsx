@@ -34,7 +34,7 @@ interface HeaderProps {
 const WORKSPACE_TABS: { id: WorkspaceViewMode; label: string; shortLabel: string; icon: React.ReactNode }[] = [
   { id: 'single', label: 'Single Report', shortLabel: 'Single', icon: <FileText className="w-3.5 h-3.5" /> },
   { id: 'compare', label: 'Merged & Compare', shortLabel: 'Compare', icon: <GitCompare className="w-3.5 h-3.5" /> },
-  { id: 'profile', label: 'Device Profile & Audit', shortLabel: 'Profile & Routers', icon: <Smartphone className="w-3.5 h-3.5" /> },
+  { id: 'profile', label: 'Device Profile & Audit', shortLabel: 'Profiles', icon: <Smartphone className="w-3.5 h-3.5" /> },
   { id: 'master', label: 'Master Synthesis', shortLabel: 'Synthesis', icon: <FlaskConical className="w-3.5 h-3.5" /> },
   { id: 'accounting', label: 'Token & Cost Accounting', shortLabel: 'Accounting', icon: <Coins className="w-3.5 h-3.5" /> }
 ];
@@ -63,7 +63,7 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Center: 5-Mode Workspace View Switcher */}
-      <div className="flex items-center bg-slate-950/90 border border-slate-800 rounded-xl p-1 gap-0.5 sm:gap-1 overflow-x-auto min-w-0 max-w-fit">
+      <div className="flex items-center bg-slate-950/90 border border-slate-800 rounded-xl p-0.5 sm:p-1 gap-0.5 sm:gap-1 shrink-0">
         {WORKSPACE_TABS.map((tab) => {
           const isActive = workspaceView === tab.id;
           return (
@@ -78,8 +78,8 @@ export const Header: React.FC<HeaderProps> = ({
               title={tab.label}
             >
               {tab.icon}
-              <span className="hidden xl:inline">{tab.label}</span>
-              <span className="xl:hidden hidden md:inline">{tab.shortLabel}</span>
+              <span className="hidden 2xl:inline">{tab.label}</span>
+              <span className="2xl:hidden hidden sm:inline">{tab.shortLabel}</span>
               {tab.id === 'compare' && selectedCount > 0 && (
                 <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-500/30 text-emerald-200 font-bold">
                   {selectedCount}
