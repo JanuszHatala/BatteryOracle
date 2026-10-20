@@ -172,6 +172,8 @@ class SettingsResponse(BaseModel):
     llm_api_base: str = ""
     gemini_key_set: bool = False
     openrouter_key_set: bool = False
+    sidebar_collapsed: bool = False
+    sidebar_width: int = 320
     providers: List[ProviderPresetInfo] = Field(default_factory=list)
 
 
@@ -180,6 +182,8 @@ class SettingsUpdateRequest(BaseModel):
     night_start_hour: Optional[int] = None
     night_end_hour: Optional[int] = None
     chat_enter_mode: Optional[str] = None
+    sidebar_collapsed: Optional[bool] = None
+    sidebar_width: Optional[int] = None
     active_llm_provider: Optional[str] = None
     active_llm_model: Optional[str] = None
     llm_api_key: Optional[str] = None

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from './api/client';
 import { ReportSummary, ReportDetail, Settings } from './types/api';
 import { Header, ChatLayoutMode, WorkspaceViewMode } from './components/layout/Header';
@@ -15,7 +15,7 @@ import { MasterSynthesisView } from './components/synthesis/MasterSynthesisView'
 import { AccountingView } from './components/accounting/AccountingView';
 import { DialogProvider, useDialog } from './components/ui/DialogContext';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
-import { Zap, Loader2 } from 'lucide-react';
+import { Zap, Loader2, PanelLeftOpen } from 'lucide-react';
 
 function AppContent({
   isSettingsOpen,
@@ -35,6 +35,18 @@ function AppContent({
   const [chatLayout, setChatLayout] = useState<ChatLayoutMode>('split');
   const [reportScope, setReportScope] = useState<AnalysisScope>('all');
 
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('battery_oracle_sidebar_width');
+    return saved ? Math.min(Math.max(220, Number(saved)), 600) : 320;
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    const saved = localStorage.getItem('battery_oracle_sidebar_collapsed');
+    return saved === 'true';
+  });
+  const [isPeeking, setIsPeeking] = useState(false);
+  const peekCloseTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const resizeSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -45,7 +57,15 @@ function AppContent({
         api.getSettings().catch(() => null)
       ]);
       setReports(reps);
-      if (s) setSettings(s);
+      if (s) {
+        setSettings(s);
+        if (localStorage.getItem('battery_oracle_sidebar_width') === null && s.sidebar_width) {
+          setSidebarWidth(s.sidebar_width);
+        }
+        if (localStorage.getItem('battery_oracle_sidebar_collapsed') === null && s.sidebar_collapsed !== undefined) {
+          setSidebarCollapsed(s.sidebar_collapsed);
+        }
+      }
       if (reps.length > 0 && selectedReportId === null) {
         setSelectedReportId(reps[0].id);
       }
@@ -53,6 +73,39 @@ function AppContent({
       console.error('Failed to load initial data', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSidebarResize = (newWidth: number) => {
+    setSidebarWidth(newWidth);
+    localStorage.setItem('battery_oracle_sidebar_width', String(newWidth));
+    if (resizeSaveTimerRef.current) clearTimeout(resizeSaveTimerRef.current);
+    resizeSaveTimerRef.current = setTimeout(() => {
+      api.updateSettings({ sidebar_width: newWidth }).catch(() => {});
+    }, 500);
+  };
+
+  const handleToggleSidebarCollapse = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('battery_oracle_sidebar_collapsed', String(next));
+      api.updateSettings({ sidebar_collapsed: next }).catch(() => {});
+      return next;
+    });
+    setIsPeeking(false);
+  };
+
+  const handleSchedulePeekClose = () => {
+    if (peekCloseTimerRef.current) clearTimeout(peekCloseTimerRef.current);
+    peekCloseTimerRef.current = setTimeout(() => {
+      setIsPeeking(false);
+    }, 250);
+  };
+
+  const handleCancelPeekClose = () => {
+    if (peekCloseTimerRef.current) {
+      clearTimeout(peekCloseTimerRef.current);
+      peekCloseTimerRef.current = null;
     }
   };
 
@@ -129,8 +182,22 @@ function AppContent({
 
       {/* Main Container */}
       <div className="flex flex-1 overflow-hidden relative">
+        {/* Hover activation strip on left edge when collapsed */}
+        {showSidebar && sidebarCollapsed && (
+          <div
+            className="absolute left-0 top-0 bottom-0 w-3 z-30 group cursor-pointer flex items-center justify-center hover:bg-sky-500/10 transition-colors"
+            onMouseEnter={() => {
+              handleCancelPeekClose();
+              setIsPeeking(true);
+            }}
+            title="Hover to peek reports sidebar"
+          >
+            <div className="w-1 h-8 rounded-full bg-slate-700 group-hover:bg-sky-400 group-hover:h-16 transition-all" />
+          </div>
+        )}
+
         {/* Sidebar (shown in Single Report and Merged & Compare views) */}
-        {showSidebar && (
+        {showSidebar && !sidebarCollapsed && (
           <Sidebar
             reports={reports}
             selectedReportId={selectedReportId}
@@ -144,7 +211,38 @@ function AppContent({
             isComparativeMode={workspaceView === 'compare'}
             selectedReportIds={selectedReportIds}
             onToggleReportSelection={handleToggleReportSelection}
+            width={sidebarWidth}
+            onResize={handleSidebarResize}
+            onToggleCollapse={handleToggleSidebarCollapse}
           />
+        )}
+
+        {/* Slide-out peek drawer when collapsed and hovered */}
+        {showSidebar && sidebarCollapsed && isPeeking && (
+          <div
+            className="absolute left-0 top-0 bottom-0 z-40 shadow-2xl flex"
+            onMouseEnter={handleCancelPeekClose}
+            onMouseLeave={handleSchedulePeekClose}
+          >
+            <Sidebar
+              reports={reports}
+              selectedReportId={selectedReportId}
+              onSelectReport={(id) => {
+                setSelectedReportId(id);
+                if (workspaceView !== 'single' && workspaceView !== 'compare') {
+                  setWorkspaceView('single');
+                }
+              }}
+              onDeleteReport={handleDeleteReport}
+              isComparativeMode={workspaceView === 'compare'}
+              selectedReportIds={selectedReportIds}
+              onToggleReportSelection={handleToggleReportSelection}
+              width={sidebarWidth}
+              onResize={handleSidebarResize}
+              isPeeking={true}
+              onPin={handleToggleSidebarCollapse}
+            />
+          </div>
         )}
 
         {/* Workspace Area */}

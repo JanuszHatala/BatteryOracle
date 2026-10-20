@@ -146,6 +146,8 @@ export interface Settings {
   llm_api_base?: string;
   gemini_key_set: boolean;
   openrouter_key_set: boolean;
+  sidebar_collapsed?: boolean;
+  sidebar_width?: number;
   providers?: ProviderPresetInfo[];
 }
 

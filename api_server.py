@@ -847,6 +847,8 @@ def get_settings():
         llm_api_base=api_base,
         gemini_key_set=bool(os.getenv("GEMINI_API_KEY") or db.get_setting("gemini_api_key") or (prov == "Google Gemini" and api_key)),
         openrouter_key_set=bool(os.getenv("OPENROUTER_API_KEY") or db.get_setting("openrouter_api_key") or (prov == "OpenRouter" and api_key)),
+        sidebar_collapsed=db.get_setting("sidebar_collapsed", "false").lower() == "true",
+        sidebar_width=int(db.get_setting("sidebar_width", "320")),
         providers=providers_list
     )
 
@@ -861,6 +863,10 @@ def update_settings(req: schemas.SettingsUpdateRequest):
         db.set_setting("night_end_hour", str(req.night_end_hour))
     if req.chat_enter_mode is not None:
         db.set_setting("chat_enter_mode", req.chat_enter_mode)
+    if req.sidebar_collapsed is not None:
+        db.set_setting("sidebar_collapsed", "true" if req.sidebar_collapsed else "false")
+    if req.sidebar_width is not None:
+        db.set_setting("sidebar_width", str(req.sidebar_width))
     if req.active_llm_provider is not None:
         db.set_setting("llm_provider", req.active_llm_provider)
         db.set_setting("active_llm_provider", req.active_llm_provider)
