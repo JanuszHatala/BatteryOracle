@@ -414,14 +414,11 @@ export const DeviceProfileView: React.FC = () => {
 
   const editingSpecs = editingRouter.specs_json || {};
 
-  const customProps: { key: string; value: string }[] = React.useMemo(() => {
-    const raw = editingSpecs.custom_properties;
-    if (Array.isArray(raw)) return raw;
-    if (raw && typeof raw === 'object') {
-      return Object.entries(raw).map(([key, value]) => ({ key, value: String(value ?? '') }));
-    }
-    return [];
-  }, [editingSpecs.custom_properties]);
+  const customProps: { key: string; value: string }[] = Array.isArray(editingSpecs.custom_properties)
+    ? editingSpecs.custom_properties
+    : editingSpecs.custom_properties && typeof editingSpecs.custom_properties === 'object'
+    ? Object.entries(editingSpecs.custom_properties).map(([key, value]) => ({ key, value: String(value ?? '') }))
+    : [];
 
   const updateSpecField = (key: string, value: any) => {
     setEditingRouter({
