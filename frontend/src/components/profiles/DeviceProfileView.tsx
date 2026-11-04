@@ -53,6 +53,7 @@ echo "=== APPOPS_RUN_ANY_IN_BG ==="; cmd appops query-op RUN_ANY_IN_BACKGROUND a
 echo "=== APPOPS_WAKE_LOCK ==="; cmd appops query-op WAKE_LOCK allow; cmd appops query-op WAKE_LOCK ignore;
 echo "=== POWER_MANAGER ==="; dumpsys power;
 echo "=== WIFI_STATUS ==="; cmd wifi status;
+echo "=== PACKAGES_ENABLED ==="; pm list packages -e;
 ' > "$FILENAME"
   echo "Done! Snapshot saved to $FILENAME"
 } || echo "Error: No Android device detected via ADB. Ensure USB debugging is enabled."`;

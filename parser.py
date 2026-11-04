@@ -1124,6 +1124,15 @@ def parse_device_inventory(text):
             break
 
     # 5. Highlights for DeviceProfileView cards
+    packages_lines = sections.get("PACKAGES_ENABLED", []) or sections.get("INSTALLED_PACKAGES", [])
+    enabled_packages = []
+    for l in packages_lines:
+        l = l.strip()
+        if l.startswith("package:"):
+            enabled_packages.append(l[8:].strip())
+        elif l and not l.startswith("="):
+            enabled_packages.append(l)
+
     highlights = {
         "network_radio": {
             "mobile_data_always_on": global_settings.get("mobile_data_always_on", "0"),
@@ -1264,6 +1273,7 @@ def parse_device_inventory(text):
         "android_version": android_version,
         "doze_deep_state": deep_state,
         "doze_light_state": light_state,
+        "enabled_packages": enabled_packages,
         "settings": {
             "global": global_settings,
             "secure": secure_settings,
@@ -1376,6 +1386,7 @@ def get_inventory_summary_for_llm(parsed_profile):
         f"   - Lift / Tilt to Wake: {'ENABLED ⚠️' if tilt_val == '1' else 'DISABLED (Off) ✅'}",
         f"   - Tap to Wake: {'ENABLED ⚠️' if touch_val == '1' else 'DISABLED (Off) ✅'}",
         f"   - Screen Timeout: {screen_to_sec}s",
+        "• PACKAGE EXISTENCE RULE: Only apps confirmed present in this profile or recorded in telemetry exist on this device. NEVER recommend disabling ('pm disable-user') or freezing unlisted packages.",
         "================================================================================================="
     ]
     return "\n".join(lines)
