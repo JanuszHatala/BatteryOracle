@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import urllib.request
 import litellm
@@ -93,7 +94,7 @@ PROVIDER_PRESETS = {
 }
 
 DEFAULT_PROMPTS = {
-    "single_diagnosis": """You are a Principal Android OS Telemetry & Battery Architecture Specialist.
+    "single_diagnosis": r"""You are a Principal Android OS Telemetry & Battery Architecture Specialist.
 The user is diagnosing battery drain using an Android bugreport / batterystats dump and device configuration telemetry.
 
 Report Title: {report_name}
@@ -162,6 +163,16 @@ CRITICAL DIAGNOSTIC GUIDELINES:
 8. DO NOT BLAME "Android System (UID 1000)" OR "Linux Kernel (UID 0)" AS GENERIC CULPRITS:
    - Identify the underlying apps, JobScheduler routines, radio hunting, or sensors executing work through system_server.
 
+9. STRICT PLAIN TEXT FORMATTING (NO LATEX OR KATEX MATH):
+   - NEVER format quantities, durations, percentages, mathematical comparisons, or units using LaTeX math mode or KaTeX delimiters.
+   - PROHIBITED: NEVER output '$1016\\text{{ mAh}}$', '$\\approx 20.85\\%$', '($51\\text{{m }} 25\\text{{s}}$)', '$\\approx$', or '\\text{{...}}' anywhere.
+   - MANDATORY: ALWAYS output natural plain text: '1016 mAh', '~20.85%', '51m 25s', '4h 31m', '1.46%/hr'.
+
+10. MANDATORY SCOPE ATTRIBUTION & WIDER-CAPTURE CLARITY:
+   - Check the `=== 🎯 ACTIVE FOCUS SCOPE ===` header in the telemetry.
+   - Respect the exact timeframe and scope of the active view (e.g. Night Standby Window between specified bedtime start and wake-up hours, Screen-Off Standby, Custom Window, or Full Timeline).
+   - If your diagnostic findings cite cumulative session figures (such as total mAh from Batterystats or long-running wakelocks that span beyond the requested window), you MUST EXPLICITLY CLARIFY in the report text that these figures belong to the wider/cumulative bugreport capture, and clearly delineate them from the metrics belonging strictly to the requested view window.
+
 STRUCTURE YOUR REPORT USING THE FOLLOWING SECTIONS:
 
 ### 1. 📊 Executive Summary & Drain Profile
@@ -199,6 +210,8 @@ CRITICAL COMPARATIVE GUIDELINES:
 5. HONEST TRADE-OFF & PLATEAU ASSESSMENT:
    - If battery drain has plateaued despite aggressive optimizations, explain why environmental factors (e.g. cellular signal quality, Bluetooth smartwatch link, essential background push) prevent reaching theoretical minimums (<0.6%/hr).
    - Detail the usability cost of pushing optimizations further. Provide advanced CLI options strictly as ready-to-run desktop terminal/PowerShell commands prefixed with `adb shell ` (e.g. `adb shell cmd appops set ...`), accompanied by a clear explanation that ADB and USB debugging are required.
+6. STRICT PLAIN TEXT FORMATTING (NO LATEX OR KATEX MATH):
+   - NEVER format quantities, durations, percentages, mathematical comparisons, or units using LaTeX math mode or KaTeX delimiters. Output natural plain text like '1016 mAh', '~20.85%', '51m 25s'.
 
 STRUCTURE YOUR ANALYSIS:
 ### 1. 📋 Comparative Metrics Table
@@ -227,6 +240,7 @@ CRITICAL INSTRUCTIONS:
 - Dynamically adapt settings navigation and advice to the specific device model and OS version detected in the context. Do not make generic or hardcoded brand assumptions.
 - For every proposed change, explicitly highlight the `⚠️ Usability & Comfort Impact`.
 - Suggest safe `adb shell` CLI commands when GUI settings are insufficient or absent. Always format them with the `adb shell ` prefix ready to copy and run directly in the user's desktop terminal or PowerShell (e.g. `adb shell cmd appops set <pkg> RUN_IN_BACKGROUND ignore`), and explain that ADB with USB debugging must be active on the connected device.
+- STRICT PLAIN TEXT FORMATTING (NO LATEX OR KATEX MATH): Never use LaTeX math delimiters or syntax (`$...$`, `\text{{...}}`). Write metrics as plain text ('1016 mAh', '~20.85%', '51m 25s').
 
 Active Scope / Context:
 {filter_context}
@@ -251,6 +265,7 @@ CRITICAL SYNTHESIS INSTRUCTIONS:
 5. Dynamically adapt the final recommendations to the detected device model and OS build.
 6. For every permanent optimization in the final blueprint, clearly state the `⚠️ Usability & Comfort Trade-off`. Include advanced `adb shell` commands formatted for desktop terminal / PowerShell with clear ADB connection guidance.
 7. Provide a realistic assessment of the device's physical standby floor given the user's active environment (e.g. radios, wearables, accounts).
+8. STRICT PLAIN TEXT FORMATTING (NO LATEX OR KATEX MATH): Never format numbers, durations, or units in LaTeX math syntax (`$...$`, `\text{{...}}`). Write plain text ('1016 mAh', '~20.85%').
 
 STRUCTURE YOUR MASTER SYNTHESIS:
 # 🧪 Master Battery Experiment Synthesis & Executive Retrospective
@@ -447,6 +462,70 @@ def get_all_models_for_provider(provider: str) -> list:
             combined.append(m)
     return combined
 
+def resolve_api_key(provider=None, explicit_key=None):
+    """Resolve API key using explicit key, database settings (provider-specific or active general), or env fallback."""
+    if explicit_key and str(explicit_key).strip():
+        return str(explicit_key).strip()
+
+    active_prov = db.get_setting("llm_provider", "Google Gemini")
+    target_prov = provider or active_prov
+
+    # 1. Provider-specific settings in SQLite
+    if target_prov == "Google Gemini":
+        k = db.get_setting("gemini_api_key")
+        if k and str(k).strip():
+            return str(k).strip()
+    elif target_prov == "OpenRouter":
+        k = db.get_setting("openrouter_api_key")
+        if k and str(k).strip():
+            return str(k).strip()
+    elif target_prov == "OpenAI":
+        k = db.get_setting("openai_api_key")
+        if k and str(k).strip():
+            return str(k).strip()
+    elif target_prov == "Anthropic":
+        k = db.get_setting("anthropic_api_key")
+        if k and str(k).strip():
+            return str(k).strip()
+    elif target_prov == "Groq":
+        k = db.get_setting("groq_api_key")
+        if k and str(k).strip():
+            return str(k).strip()
+
+    # 2. General llm_api_key in SQLite
+    stored_general_key = db.get_setting("llm_api_key")
+    if stored_general_key and str(stored_general_key).strip():
+        if target_prov == active_prov or target_prov == "Google Gemini":
+            return str(stored_general_key).strip()
+
+    # 3. Environment variables fallback
+    preset = PROVIDER_PRESETS.get(target_prov, {})
+    env_var = preset.get("env_key")
+    if env_var and os.getenv(env_var):
+        return os.getenv(env_var).strip()
+    if target_prov == "Google Gemini":
+        if os.getenv("GEMINI_API_KEY"):
+            return os.getenv("GEMINI_API_KEY").strip()
+        if os.getenv("GOOGLE_API_KEY"):
+            return os.getenv("GOOGLE_API_KEY").strip()
+
+    return ""
+
+def resolve_api_base(provider=None, explicit_base=None):
+    """Resolve API base URL using explicit base, database settings, or provider preset default."""
+    if explicit_base and str(explicit_base).strip():
+        return str(explicit_base).strip()
+
+    active_prov = db.get_setting("llm_provider", "Google Gemini")
+    target_prov = provider or active_prov
+    if target_prov == active_prov:
+        stored_base = db.get_setting("llm_api_base")
+        if stored_base and str(stored_base).strip():
+            return str(stored_base).strip()
+
+    preset = PROVIDER_PRESETS.get(target_prov, {})
+    return preset.get("default_base")
+
 def get_active_config():
     """Retrieve active LLM configuration from database with fallback to environment."""
     provider = db.get_setting("llm_provider", "Google Gemini")
@@ -455,15 +534,8 @@ def get_active_config():
     default_model = preset["default_model"]
     
     model = db.get_setting("llm_model", default_model)
-    
-    # Check DB for key, then fallback to env
-    api_key = db.get_setting("llm_api_key")
-    if not api_key and preset.get("env_key"):
-        api_key = os.getenv(preset["env_key"], "")
-    elif not api_key:
-        api_key = os.getenv("GEMINI_API_KEY", "")
-        
-    api_base = db.get_setting("llm_api_base", preset.get("default_base"))
+    api_key = resolve_api_key(provider)
+    api_base = resolve_api_base(provider)
     
     return {
         "provider": provider,
@@ -476,11 +548,13 @@ def test_connection(model, api_key=None, api_base=None, provider=None):
     """Send a lightweight test ping to verify credentials and model connectivity."""
     try:
         norm_model = normalize_model_name(provider, model) if provider else model
+        resolved_key = resolve_api_key(provider, api_key)
+        resolved_base = resolve_api_base(provider, api_base)
         kwargs = {"model": norm_model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}
-        if api_key:
-            kwargs["api_key"] = api_key
-        if api_base:
-            kwargs["api_base"] = api_base
+        if resolved_key:
+            kwargs["api_key"] = resolved_key
+        if resolved_base:
+            kwargs["api_base"] = resolved_base
             
         res = completion(**kwargs)
         tokens_used = res.usage.total_tokens if res.usage else "OK"
@@ -493,9 +567,11 @@ def test_connection(model, api_key=None, api_base=None, provider=None):
 def fetch_available_models(provider, api_key=None, api_base=None):
     """Dynamically query the provider's API for available models, preserving custom models."""
     base_models = get_all_models_for_provider(provider)
+    resolved_key = resolve_api_key(provider, api_key)
+    resolved_base = resolve_api_base(provider, api_base)
     
     if provider == "Google Gemini":
-        key = api_key or os.getenv("GEMINI_API_KEY", "")
+        key = resolved_key
         if not key:
             return base_models, "⚠️ No Gemini API key provided to fetch models."
         try:
@@ -554,8 +630,8 @@ def fetch_available_models(provider, api_key=None, api_base=None):
         try:
             url = "https://openrouter.ai/api/v1/models"
             headers = {"User-Agent": "BatteryOracle/1.0"}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
+            if resolved_key:
+                headers["Authorization"] = f"Bearer {resolved_key}"
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -588,7 +664,7 @@ def fetch_available_models(provider, api_key=None, api_base=None):
             return base_models, f"⚠️ Failed to query OpenRouter API: {e}"
 
     elif provider == "Ollama":
-        base = api_base or "http://localhost:11434"
+        base = resolved_base or "http://localhost:11434"
         try:
             url = f"{base.rstrip('/')}/api/tags"
             req = urllib.request.Request(url, headers={"User-Agent": "BatteryOracle/1.0"})
@@ -733,7 +809,24 @@ def call_llm_tracked(messages, report_id=None, thread_id=None, action_type="chat
         action_type=action_type
     )
     
-    return response.choices[0].message.content
+    raw_content = response.choices[0].message.content or ""
+    return clean_latex_math(raw_content)
+
+
+def clean_latex_math(text: str) -> str:
+    """Strip or convert unwanted LaTeX/KaTeX math syntax emitted by LLMs into clean plain text."""
+    if not text:
+        return ""
+    text = text.replace(r"\approx", "~")
+    text = text.replace(r"\le", "<=")
+    text = text.replace(r"\ge", ">=")
+    text = text.replace(r"\times", "x")
+    text = text.replace(r"\%", "%")
+    while r"\text{" in text:
+        text = re.sub(r"\\text\{([^{}]+)\}", r"\1", text)
+    text = re.sub(r"\$([^\$\n]+)\$", r"\1", text)
+    text = re.sub(r"([0-9]+[a-zA-Z%])\s{2,}([0-9]+[a-zA-Z%])", r"\1 \2", text)
+    return text
 
 
 def parse_llm_error(error: Exception) -> dict:
@@ -930,6 +1023,7 @@ Provide the technical profile of this specific router. Return ONLY a valid, pars
 {{
   "wifi_generation": "e.g. Wi-Fi 6 (802.11ax) or Wi-Fi 7 (802.11be) or Wi-Fi 5 (802.11ac)",
   "firmware_family": "e.g. AsusWRT, TP-Link HomeCare/Tether, AVM FRITZ!OS, Ubiquiti UniFi OS, Netgear Orbi/Genie, OpenWrt",
+  "fast_roaming": "e.g. 'Supported (802.11k/v/r)' or 'Unsupported'",
   "dtim_support": "Explain DTIM Interval capability (e.g. 'Configurable 1-255 in Advanced Wireless; default is 1 or 3; recommended is 3 or 4 for Android standby power saving')",
   "twt_support": "Explain 802.11ax Target Wake Time (TWT) support and how to toggle it",
   "band_steering": "Explain Smart Connect / Band Steering feature and beacon interval",
@@ -948,6 +1042,7 @@ Do not include any markdown formatting around the JSON (or wrap it in standard `
         fallback = {
             "wifi_generation": "Wi-Fi 6 (802.11ax)",
             "firmware_family": f"{brand} Firmware",
+            "fast_roaming": "Supported",
             "dtim_support": "Configurable (Recommended: DTIM Interval = 3)",
             "twt_support": "Supported if 802.11ax is active",
             "band_steering": "Smart Connect / Band Steering",
@@ -974,6 +1069,7 @@ Do not include any markdown formatting around the JSON (or wrap it in standard `
         fallback = {
             "wifi_generation": "Wi-Fi 6 (802.11ax)",
             "firmware_family": f"{brand} Firmware",
+            "fast_roaming": "Supported",
             "dtim_support": "Configurable (Recommended: DTIM Interval = 3)",
             "twt_support": "Supported if 802.11ax is active",
             "band_steering": "Smart Connect / Band Steering",

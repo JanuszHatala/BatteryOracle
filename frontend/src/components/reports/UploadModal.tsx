@@ -20,8 +20,10 @@ import {
 interface UploadModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onUploadSuccess: (report: ReportDetail) => void;
+  onUploadSuccess: (report: ReportDetail, autoDiagnosed: boolean) => void;
   defaultTimezone?: string;
+  autoDiagnoseDefault?: boolean;
+  onAutoDiagnoseChange?: (enabled: boolean) => void;
 }
 
 type ModalState = 'idle' | 'uploading' | 'completed' | 'error';
@@ -35,10 +37,25 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   isOpen,
   onClose,
   onUploadSuccess,
-  defaultTimezone = 'Europe/Warsaw'
+  defaultTimezone = 'Europe/Warsaw',
+  autoDiagnoseDefault = false,
+  onAutoDiagnoseChange
 }) => {
   const [file, setFile] = useState<File | null>(null);
-  const [autoDiagnose, setAutoDiagnose] = useState(false);
+  const [autoDiagnose, setAutoDiagnose] = useState(autoDiagnoseDefault);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setAutoDiagnose(autoDiagnoseDefault);
+    }
+  }, [isOpen, autoDiagnoseDefault]);
+
+  const handleToggleAutoDiagnose = (checked: boolean) => {
+    setAutoDiagnose(checked);
+    if (onAutoDiagnoseChange) {
+      onAutoDiagnoseChange(checked);
+    }
+  };
   const [modalState, setModalState] = useState<ModalState>('idle');
   const [currentPhase, setCurrentPhase] = useState<string>('unpacking');
   const [progress, setProgress] = useState<number>(0);
@@ -146,7 +163,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       setTimeout(() => {
         setFile(null);
         resetUploadState();
-        onUploadSuccess(report);
+        onUploadSuccess(report, autoDiagnose);
         onClose();
       }, 600);
     } catch (err: any) {
@@ -279,7 +296,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               <input
                 type="checkbox"
                 checked={autoDiagnose}
-                onChange={(e) => setAutoDiagnose(e.target.checked)}
+                onChange={(e) => handleToggleAutoDiagnose(e.target.checked)}
                 className="rounded border-slate-700 text-emerald-600 focus:ring-emerald-500 bg-slate-900"
               />
               <span className="text-xs text-slate-300 select-none">

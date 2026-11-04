@@ -868,47 +868,72 @@ def validate_device_inventory(text: str) -> tuple[bool, str]:
 
 def get_filtered_telemetry_for_llm(summary_text, filter_mode, kpis):
     """Inject filter context and isolate screen-off / idle telemetry for the LLM prompt."""
-    if filter_mode == "full":
-        return summary_text
-        
-    filter_label = "Night Standby Window (23:00 - 07:00)" if filter_mode == "night" else "Targeted Time Window"
-    if filter_mode == "screen_off":
+    if filter_mode in ["all", "full"]:
+        filter_label = "Full Bugreport Timeline"
+        scope_description = "the complete captured bugreport session across all states (screen-on, screen-off, daytime usage, and standby)"
+        focus_instructions = """- Evaluate both active screen-on usage and background/standby idle drain across the entire timeline.
+- Distinguish clearly between interactive foreground drain (display, CPU, GPU, camera) and background leakages.
+- State explicitly that this analysis encompasses the FULL bugreport window."""
+    elif filter_mode == "night":
+        filter_label = "Night Standby Window (Configured Bedtime Window)"
+        scope_description = f"strictly the night/bedtime interval ({kpis.get('start_time')} to {kpis.get('end_time')})"
+        focus_instructions = """- Focus EXCLUSIVELY on overnight standby loss occurring between the bedtime start and wake-up timestamps above.
+- The bugreport hardware/UID totals below encompass the ENTIRE capture; you MUST EXPLICITLY CLARIFY in your report that while global/screen-off mAh summaries reflect the cumulative session, your root-cause attribution and rate calculations target this specific night window.
+- Scrutinize background wakelocks, cellular/Wi-Fi standby polling, and sensor alarms active during sleep hours.
+- Disregard active daytime usage unless background services or unreleased wakelocks persisted into this night window."""
+    elif filter_mode == "screen_off":
         filter_label = "Screen-Off Standby Focus"
-        
+        scope_description = "cumulative periods when the display was dark/off across the session"
+        focus_instructions = """- Focus EXCLUSIVELY on idle standby consumption when the screen was dark/off.
+- The hardware and UID breakdowns below represent on-battery screen-off/doze consumption.
+- Identify background jobs, partial wakelocks, network pinging, and sensor polling that drained power while the screen was off.
+- Disregard interactive screen-on consumption."""
+    elif filter_mode == "custom":
+        filter_label = "Custom Time Window"
+        scope_description = f"the user-specified custom time slice ({kpis.get('start_time')} to {kpis.get('end_time')})"
+        focus_instructions = f"""- Focus EXCLUSIVELY on battery behavior within this exact interval ({kpis.get('start_time')} to {kpis.get('end_time')}).
+- The bugreport hardware/UID totals below encompass the ENTIRE capture; you MUST EXPLICITLY CLARIFY in your report that your findings target this custom interval while noting any full-capture figures cited.
+- Correlate discharge rate during this slice with background wakelocks and radio conditions active during this timeframe."""
+    else:
+        filter_label = f"Targeted Scope ({filter_mode})"
+        scope_description = f"scope {filter_mode}"
+        focus_instructions = "- Evaluate battery telemetry matching this target scope."
+
     header = f"""
 === 🎯 ACTIVE FOCUS SCOPE: {filter_label} ===
-• Window Time Range: {kpis['start_time']} -> {kpis['end_time']}
-• Duration: {kpis['duration_hrs']:.1f} hours
-• Battery Drop: {kpis['start_level']}% -> {kpis['end_level']}% (Drop: {kpis['drop_pct']}%, Avg Rate: {kpis['rate_per_hr']:.2f}%/hr)
-• Assessment: {kpis['status']}
+• Window Time Range: {kpis.get('start_time', 'N/A')} -> {kpis.get('end_time', 'N/A')}
+• Duration: {kpis.get('duration_hrs', 0.0):.1f} hours
+• Battery Drop: {kpis.get('start_level', 0)}% -> {kpis.get('end_level', 0)}% (Drop: {kpis.get('drop_pct', 0)}%, Avg Rate: {kpis.get('rate_per_hr', 0.0):.2f}%/hr)
+• Assessment: {kpis.get('status', 'Unknown')}
 
-CRITICAL INSTRUCTIONS FOR TARGETED ANALYSIS:
-The user is specifically investigating battery drain during this {filter_label}.
-- Focus exclusively on standby power loss: background wakelocks, cellular/Wi-Fi standby polling, and sensor alarms.
-- Disregard daytime screen-on gaming, streaming, or active user apps unless they left background workers running while the user was inactive.
+CRITICAL INSTRUCTIONS FOR TARGETED SCOPE:
+The user is specifically investigating battery drain for: {scope_description}.
+{focus_instructions}
+- SCOPE CLARITY REQUIREMENT: Because Android dumpsys batterystats reports cumulative totals for the overall capture, whenever citing global or screen-off metrics, clearly state whether a figure belongs to the active {filter_label} or the wider bugreport session.
 - Do NOT attribute drain generically to "Android System (UID 1000)" or "Linux Kernel (UID 0)"; identify the specific apps, background jobs, sync routines, or radio conditions operating during this interval.
 - Explain whether Doze mode (deep sleep) was prevented, and identify what specific wakelock or alarm was responsible.
 =============================================================
 """
     lines = summary_text.splitlines() if isinstance(summary_text, str) else summary_text
-    # Pre-clean any raw UIDs in summary_text before returning to LLM
     uid_map = extract_uid_mapping_from_text(summary_text)
     clean_lines = replace_uids_safely(lines, uid_map)
 
-    # Extract screen-off lines and wakelocks from clean_lines
-    screen_off_lines = []
-    for l in clean_lines:
-        l_lower = l.lower()
-        if any(k in l_lower for k in [
-            "while screen off", "wakelock", "wake_reason", "estimated power use",
-            "cellular", "wifi", "radio", "ambient", "kernel", "alarm"
-        ]):
-            screen_off_lines.append(l)
-        elif l.startswith("    Uid ") or l.startswith("    com.") or " (" in l:
-            screen_off_lines.append(l)
-            
-    if screen_off_lines:
-        return header + "\n".join(screen_off_lines[:150])
+    # For night and screen_off, prioritize standby/screen-off lines
+    if filter_mode in ["night", "screen_off"]:
+        screen_off_lines = []
+        for l in clean_lines:
+            l_lower = l.lower()
+            if any(k in l_lower for k in [
+                "while screen off", "screen off/doze", "wakelock", "wake_reason", "estimated power use",
+                "cellular", "wifi", "radio", "ambient", "kernel", "alarm"
+            ]):
+                screen_off_lines.append(l)
+            elif l.startswith("    Uid ") or l.startswith("    com.") or " (" in l:
+                screen_off_lines.append(l)
+
+        if screen_off_lines:
+            return header + "\n".join(screen_off_lines[:150])
+
     return header + "\n".join(clean_lines[:150])
 
 def parse_device_inventory(text):
@@ -1369,16 +1394,63 @@ def format_router_context_for_llm(active_routers):
     for idx, r in enumerate(active_routers, 1):
         specs = r.get("specs", {})
         dtim_info = specs.get("dtim_support", "Configurable (Typical default: 1; Recommended: 3 for lower standby wakeups)")
-        twt_info = specs.get("twt_support", "Wi-Fi 6 Target Wake Time supported")
+        dtim_val = specs.get("dtim_period") or specs.get("dtim_default")
+        beacon_val = specs.get("beacon_interval")
+        twt_val = specs.get("twt_support", "Wi-Fi 6 Target Wake Time supported")
+        uapsd_val = specs.get("uapsd_support")
         fw_path = specs.get("firmware_path", "Wireless > Advanced / Professional settings")
-        wifi_gen = specs.get("wifi_generation", "Wi-Fi 6 (802.11ax)")
+        wifi_gen = specs.get("wifi_standard") or specs.get("wifi_generation", "Wi-Fi 6 (802.11ax)")
+        bands_val = specs.get("bands")
+        fast_roaming = specs.get("fast_roaming", "").lower().strip()
+        band_steering = specs.get("band_steering", "").lower().strip()
         
         lines.append(f"\n[Router {idx}: {r['router_name']} ({r['brand']} {r['model']}) - Location: {r.get('location_tag', 'Home')}]")
         lines.append(f"• Hardware & Standard: {r['brand']} {r['model']} | {wifi_gen}")
+        if bands_val:
+            lines.append(f"• Supported Bands: {bands_val}")
         lines.append(f"• Firmware OS Family: {specs.get('firmware_family', 'Vendor Default')}")
+        
+        # Active power & roaming configurations
+        if fast_roaming == "disabled":
+            lines.append("• Fast Roaming (802.11r/k/v): DISABLED / OFF (User confirmed disabled in router settings - DO NOT recommend turning this off).")
+        elif fast_roaming == "enabled":
+            lines.append("• Fast Roaming (802.11r/k/v): ENABLED / ON (Consider advising to disable if mesh roaming scans cause standby wakeups).")
+        elif fast_roaming == "unsupported":
+            lines.append("• Fast Roaming (802.11r/k/v): UNSUPPORTED on this router.")
+        elif fast_roaming:
+            lines.append(f"• Fast Roaming: {specs.get('fast_roaming')}")
+
+        if band_steering == "split_ssids":
+            lines.append("• Band Steering: SPLIT SSIDs (Separate 2.4 GHz & 5 GHz networks - recommended for battery testing).")
+        elif band_steering == "combined_ssid":
+            lines.append("• Band Steering: COMBINED SSID (Unified 2.4 GHz / 5 GHz network).")
+        elif band_steering == "unsupported":
+            lines.append("• Band Steering: UNSUPPORTED.")
+        elif band_steering:
+            lines.append(f"• Band Steering / Roaming: {specs.get('band_steering')}")
+        else:
+            lines.append(f"• Band Steering / Roaming: {specs.get('band_steering', 'Supported')}")
+
+        if dtim_val:
+            lines.append(f"• Configured DTIM Period: {dtim_val}")
         lines.append(f"• DTIM Tuning Capability: {dtim_info}")
-        lines.append(f"• Target Wake Time (TWT): {twt_info}")
-        lines.append(f"• Band Steering / Roaming: {specs.get('band_steering', 'Supported')}")
+        if beacon_val:
+            lines.append(f"• Configured Beacon Interval: {beacon_val}")
+        lines.append(f"• Target Wake Time (TWT): {twt_val}")
+        if uapsd_val:
+            lines.append(f"• U-APSD / WMM Power Save: {uapsd_val}")
+
+        # Generic custom properties
+        custom_props = specs.get("custom_properties")
+        if isinstance(custom_props, list):
+            for prop in custom_props:
+                if isinstance(prop, dict) and prop.get("key"):
+                    lines.append(f"• Custom Config [{prop.get('key')}]: {prop.get('value', '')}")
+        elif isinstance(custom_props, dict):
+            for k, v in custom_props.items():
+                if k:
+                    lines.append(f"• Custom Config [{k}]: {v}")
+
         lines.append(f"• Firmware Navigation Path for Power Tuning: `{fw_path}`")
         if r.get("notes"):
             lines.append(f"• User Environment Notes: {r['notes']}")

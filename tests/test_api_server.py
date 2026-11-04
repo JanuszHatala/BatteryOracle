@@ -307,6 +307,7 @@ def test_settings_and_models(client, monkeypatch):
             "night_start_hour": 22,
             "night_end_hour": 6,
             "chat_enter_mode": "send",
+            "auto_diagnose_on_import": True,
             "active_llm_provider": "Google Gemini",
             "active_llm_model": "gemini-3.8-flash"
         }
@@ -316,6 +317,7 @@ def test_settings_and_models(client, monkeypatch):
     assert up_data["device_timezone"] == "Europe/Warsaw"
     assert up_data["night_start_hour"] == 22
     assert up_data["chat_enter_mode"] == "send"
+    assert up_data["auto_diagnose_on_import"] is True
 
     # 3. Get models
     m_res = client.get("/api/v1/models?provider=Google Gemini")
@@ -329,6 +331,38 @@ def test_settings_and_models(client, monkeypatch):
     tc_res = client.post("/api/v1/settings/test-connection", json={"model": "gemini-3.8-flash"})
     assert tc_res.status_code == 200
     assert tc_res.json()["success"] is True
+
+
+def test_llm_key_resolution_and_fallback(client, monkeypatch):
+    import llm_manager
+    import db
+
+    # Clear env keys
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    # 1. When explicit key provided
+    assert llm_manager.resolve_api_key("Google Gemini", explicit_key="explicit-key-123") == "explicit-key-123"
+
+    # 2. When DB has llm_api_key and no explicit key provided
+    db.set_setting("llm_api_key", "db-stored-gemini-key")
+    db.set_setting("llm_provider", "Google Gemini")
+    assert llm_manager.resolve_api_key("Google Gemini") == "db-stored-gemini-key"
+
+    # 3. test_connection resolves stored key when api_key is None
+    captured_kwargs = {}
+    def mock_completion(**kwargs):
+        captured_kwargs.update(kwargs)
+        class MockUsage:
+            total_tokens = 5
+        class MockResponse:
+            usage = MockUsage()
+        return MockResponse()
+
+    monkeypatch.setattr(llm_manager, "completion", mock_completion)
+    ok, msg = llm_manager.test_connection(model="gemini/gemini-3.8-flash", provider="Google Gemini")
+    assert ok is True
+    assert captured_kwargs.get("api_key") == "db-stored-gemini-key"
 
 
 def test_device_profiles(client):
@@ -361,35 +395,60 @@ def test_device_profiles(client):
 
 
 def test_wifi_routers(client):
-    # 1. Create router
+    # 1. Create router with power & roaming configuration and custom properties
     c_res = client.post(
         "/api/v1/wifi-routers",
         json={
-            "router_name": "Home Fritz!Box 7590",
-            "brand": "AVM",
-            "model": "FRITZ!Box 7590 AX",
-            "specs_json": {"wifi_standard": "Wi-Fi 6", "frequency": "2.4GHz / 5GHz"},
-            "location_tag": "Living Room",
+            "router_name": "Deco Mesh (TP-Link M4R)",
+            "brand": "TP-Link",
+            "model": "M4R",
+            "specs_json": {
+                "wifi_standard": "Wi-Fi 5 (802.11ac)",
+                "bands": "2.4/5 GHz",
+                "fast_roaming": "disabled",
+                "band_steering": "split_ssids",
+                "dtim_period": "3",
+                "uapsd_support": "enabled",
+                "twt_support": "unsupported",
+                "custom_properties": [
+                    {"key": "Operation Mode", "value": "Access Point (AP Mode)"},
+                    {"key": "Beamforming", "value": "Disabled"}
+                ]
+            },
+            "location_tag": "Home",
             "is_active": 1,
-            "notes": "Main mesh router"
+            "notes": "Fast roaming disabled in Deco app"
         }
     )
     assert c_res.status_code == 200
     r = c_res.json()
     r_id = r["id"]
-    assert r["router_name"] == "Home Fritz!Box 7590"
+    assert r["router_name"] == "Deco Mesh (TP-Link M4R)"
+    assert r["specs_json"]["fast_roaming"] == "disabled"
+    assert len(r["specs_json"]["custom_properties"]) == 2
 
-    # 2. List routers
+    # 2. Verify router context formatting for LLM contains guardrails
+    import parser
+    active_routers = [{"router_name": r["router_name"], "brand": r["brand"], "model": r["model"], "specs": r["specs_json"], "notes": r["notes"]}]
+    llm_context = parser.format_router_context_for_llm(active_routers)
+    assert "Fast Roaming (802.11r/k/v): DISABLED / OFF" in llm_context
+    assert "DO NOT recommend turning this off" in llm_context
+    assert "SPLIT SSIDs" in llm_context
+    assert "Configured DTIM Period: 3" in llm_context
+    assert "Custom Config [Operation Mode]: Access Point (AP Mode)" in llm_context
+    assert "Custom Config [Beamforming]: Disabled" in llm_context
+
+    # 3. List routers
     l_res = client.get("/api/v1/wifi-routers")
     assert l_res.status_code == 200
     assert any(x["id"] == r_id for x in l_res.json())
 
-    # 3. Update router active status
+    # 4. Update router active status
     u_res = client.put(f"/api/v1/wifi-routers/{r_id}", json={"is_active": 0})
     assert u_res.status_code == 200
     assert u_res.json()["is_active"] == 0
 
-    # 4. Delete router
+    # 5. Delete router
     d_res = client.delete(f"/api/v1/wifi-routers/{r_id}")
     assert d_res.status_code == 200
     assert d_res.json()["deleted"] is True

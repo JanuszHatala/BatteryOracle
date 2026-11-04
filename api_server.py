@@ -841,6 +841,7 @@ def get_settings():
         night_start_hour=int(db.get_setting("night_start_hour", "23")),
         night_end_hour=int(db.get_setting("night_end_hour", "7")),
         chat_enter_mode=db.get_setting("chat_enter_mode", "newline"),
+        auto_diagnose_on_import=db.get_setting("auto_diagnose_on_import", "false").lower() == "true",
         active_llm_provider=prov,
         active_llm_model=mod,
         llm_api_key=api_key,
@@ -863,6 +864,8 @@ def update_settings(req: schemas.SettingsUpdateRequest):
         db.set_setting("night_end_hour", str(req.night_end_hour))
     if req.chat_enter_mode is not None:
         db.set_setting("chat_enter_mode", req.chat_enter_mode)
+    if req.auto_diagnose_on_import is not None:
+        db.set_setting("auto_diagnose_on_import", "true" if req.auto_diagnose_on_import else "false")
     if req.sidebar_collapsed is not None:
         db.set_setting("sidebar_collapsed", "true" if req.sidebar_collapsed else "false")
     if req.sidebar_width is not None:

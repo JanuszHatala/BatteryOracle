@@ -140,6 +140,7 @@ export interface Settings {
   night_start_hour: number;
   night_end_hour: number;
   chat_enter_mode: 'newline' | 'send';
+  auto_diagnose_on_import?: boolean;
   active_llm_provider: string;
   active_llm_model: string;
   llm_api_key?: string;
@@ -185,6 +186,11 @@ export interface PromptsMap {
 export interface PromptsResponse {
   prompts: PromptsMap;
   defaults: PromptsMap;
+}
+
+export interface RouterCustomProperty {
+  key: string;
+  value: string;
 }
 
 export interface WifiRouter {

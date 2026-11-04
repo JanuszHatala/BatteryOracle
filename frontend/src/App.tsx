@@ -32,7 +32,12 @@ function AppContent({
   const [selectedReportIds, setSelectedReportIds] = useState<number[]>([]);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceViewMode>('single');
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [chatLayout, setChatLayout] = useState<ChatLayoutMode>('split');
+  const [chatLayout, setChatLayout] = useState<ChatLayoutMode>(() => {
+    const saved = localStorage.getItem('battery_oracle_chat_layout');
+    return (saved === 'split' || saved === 'stacked' || saved === 'floating' || saved === 'hidden')
+      ? (saved as ChatLayoutMode)
+      : 'split';
+  });
   const [reportScope, setReportScope] = useState<AnalysisScope>('all');
 
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -153,15 +158,21 @@ function AppContent({
     }
   };
 
-  const handleUploadSuccess = (report: ReportDetail) => {
+  const handleUploadSuccess = (report: ReportDetail, _autoDiagnosed = false) => {
     loadData();
     setSelectedReportId(report.id);
     setCurrentReport(report);
     setWorkspaceView('single');
+    setReportScope('all');
   };
 
   const handleChangeEnterMode = (mode: 'newline' | 'send') => {
     setSettings((prev) => (prev ? { ...prev, chat_enter_mode: mode } : prev));
+  };
+
+  const handleSelectChatLayout = (mode: ChatLayoutMode) => {
+    setChatLayout(mode);
+    localStorage.setItem('battery_oracle_chat_layout', mode);
   };
 
   const showSidebar = workspaceView === 'single' || workspaceView === 'compare';
@@ -177,7 +188,7 @@ function AppContent({
         onSelectWorkspaceView={setWorkspaceView}
         selectedCount={selectedReportIds.length}
         chatLayout={chatLayout}
-        onSelectChatLayout={setChatLayout}
+        onSelectChatLayout={handleSelectChatLayout}
       />
 
       {/* Main Container */}
@@ -279,8 +290,12 @@ function AppContent({
           ) : currentReport ? (
             chatLayout === 'split' ? (
               // Side-by-side Resizable Panels (inner wrapper scrolls independently inside Panel)
-              <PanelGroup direction="horizontal" className="flex-1 w-full h-full">
-                <Panel defaultSize={55} minSize={30}>
+              <PanelGroup
+                autoSaveId="battery_oracle_chat_split"
+                direction="horizontal"
+                className="flex-1 w-full h-full"
+              >
+                <Panel id="workspace" defaultSize={55} minSize={30}>
                   <div className="h-full w-full overflow-y-auto p-6">
                     <ReportWorkspace
                       report={currentReport}
@@ -296,7 +311,7 @@ function AppContent({
                   </div>
                 </Panel>
                 <PanelResizeHandle className="w-1.5 bg-slate-800 hover:bg-indigo-500 transition-colors cursor-col-resize" />
-                <Panel defaultSize={45} minSize={25}>
+                <Panel id="chat" defaultSize={45} minSize={25}>
                   <div className="p-4 flex flex-col h-full w-full overflow-hidden bg-slate-900/30">
                     <ChatWorkspace
                       reportId={currentReport.id}
@@ -309,8 +324,12 @@ function AppContent({
               </PanelGroup>
             ) : chatLayout === 'stacked' ? (
               // Stacked Top / Bottom Resizable Panels
-              <PanelGroup direction="vertical" className="flex-1 w-full h-full">
-                <Panel defaultSize={60} minSize={30}>
+              <PanelGroup
+                autoSaveId="battery_oracle_chat_stacked"
+                direction="vertical"
+                className="flex-1 w-full h-full"
+              >
+                <Panel id="workspace" defaultSize={60} minSize={30}>
                   <div className="h-full w-full overflow-y-auto p-6">
                     <ReportWorkspace
                       report={currentReport}
@@ -326,7 +345,7 @@ function AppContent({
                   </div>
                 </Panel>
                 <PanelResizeHandle className="h-1.5 bg-slate-800 hover:bg-indigo-500 transition-colors cursor-row-resize" />
-                <Panel defaultSize={40} minSize={20}>
+                <Panel id="chat" defaultSize={40} minSize={20}>
                   <div className="p-4 flex flex-col h-full w-full overflow-hidden bg-slate-900/30">
                     <ChatWorkspace
                       reportId={currentReport.id}
@@ -353,8 +372,8 @@ function AppContent({
                 />
                 <FloatingWindow
                   isOpen={chatLayout === 'floating'}
-                  onClose={() => setChatLayout('hidden')}
-                  onDock={() => setChatLayout('split')}
+                  onClose={() => handleSelectChatLayout('hidden')}
+                  onDock={() => handleSelectChatLayout('split')}
                   title={`AI Investigation - ${currentReport.custom_name || currentReport.filename}`}
                 >
                   <ChatWorkspace
@@ -386,6 +405,15 @@ function AppContent({
         onClose={() => setIsUploadOpen(false)}
         onUploadSuccess={handleUploadSuccess}
         defaultTimezone={settings?.device_timezone || 'Europe/Warsaw'}
+        autoDiagnoseDefault={Boolean(settings?.auto_diagnose_on_import)}
+        onAutoDiagnoseChange={async (enabled) => {
+          setSettings((prev) => (prev ? { ...prev, auto_diagnose_on_import: enabled } : prev));
+          try {
+            await api.updateSettings({ auto_diagnose_on_import: enabled });
+          } catch (e) {
+            console.error('Failed to persist auto_diagnose_on_import:', e);
+          }
+        }}
       />
 
       {/* Settings Modal */}

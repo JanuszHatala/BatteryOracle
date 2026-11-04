@@ -9,12 +9,28 @@ interface MarkdownViewProps {
   compact?: boolean;
 }
 
+export function cleanLatexMath(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/\\approx/g, '~')
+    .replace(/\\le/g, '<=')
+    .replace(/\\ge/g, '>=')
+    .replace(/\\times/g, 'x')
+    .replace(/\\%/g, '%')
+    .replace(/\\text\{([^{}]+)\}/g, '$1')
+    .replace(/\\text\{([^{}]+)\}/g, '$1')
+    .replace(/\$([^\$\n]+)\$/g, '$1')
+    .replace(/([0-9]+[a-zA-Z%])\s{2,}([0-9]+[a-zA-Z%])/g, '$1 $2');
+}
+
 export const MarkdownView: React.FC<MarkdownViewProps> = ({
   content,
   className = '',
   compact = false
 }) => {
   if (!content) return null;
+
+  const sanitizedContent = React.useMemo(() => cleanLatexMath(content), [content]);
 
   return (
     <div className={`text-slate-200 leading-relaxed ${className}`}>
@@ -133,7 +149,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
           pre: MarkdownPre
         }}
       >
-        {content}
+        {sanitizedContent}
       </ReactMarkdown>
     </div>
   );

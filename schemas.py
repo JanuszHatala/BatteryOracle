@@ -166,6 +166,7 @@ class SettingsResponse(BaseModel):
     night_start_hour: int = 23
     night_end_hour: int = 7
     chat_enter_mode: str = "newline"
+    auto_diagnose_on_import: bool = False
     active_llm_provider: str = "Google Gemini"
     active_llm_model: str = "gemini/gemini-3.8-flash"
     llm_api_key: str = ""
@@ -182,6 +183,7 @@ class SettingsUpdateRequest(BaseModel):
     night_start_hour: Optional[int] = None
     night_end_hour: Optional[int] = None
     chat_enter_mode: Optional[str] = None
+    auto_diagnose_on_import: Optional[bool] = None
     sidebar_collapsed: Optional[bool] = None
     sidebar_width: Optional[int] = None
     active_llm_provider: Optional[str] = None

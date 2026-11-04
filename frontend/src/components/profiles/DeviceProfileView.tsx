@@ -30,6 +30,7 @@ import {
   Copy,
   Star,
   Info,
+  Plus,
   X
 } from 'lucide-react';
 
@@ -412,6 +413,42 @@ export const DeviceProfileView: React.FC = () => {
   }
 
   const editingSpecs = editingRouter.specs_json || {};
+
+  const customProps: { key: string; value: string }[] = React.useMemo(() => {
+    const raw = editingSpecs.custom_properties;
+    if (Array.isArray(raw)) return raw;
+    if (raw && typeof raw === 'object') {
+      return Object.entries(raw).map(([key, value]) => ({ key, value: String(value ?? '') }));
+    }
+    return [];
+  }, [editingSpecs.custom_properties]);
+
+  const updateSpecField = (key: string, value: any) => {
+    setEditingRouter({
+      ...editingRouter,
+      specs_json: {
+        ...editingSpecs,
+        [key]: value
+      }
+    });
+  };
+
+  const handleAddCustomProp = () => {
+    const updated = [...customProps, { key: '', value: '' }];
+    updateSpecField('custom_properties', updated);
+  };
+
+  const handleUpdateCustomProp = (idx: number, field: 'key' | 'value', val: string) => {
+    const updated = customProps.map((item, i) =>
+      i === idx ? { ...item, [field]: val } : item
+    );
+    updateSpecField('custom_properties', updated);
+  };
+
+  const handleRemoveCustomProp = (idx: number) => {
+    const updated = customProps.filter((_, i) => i !== idx);
+    updateSpecField('custom_properties', updated);
+  };
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-12">
@@ -1356,6 +1393,7 @@ export const DeviceProfileView: React.FC = () => {
                         </div>
                       </div>
 
+                      {/* General Router Identity */}
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div>
                           <label className="text-[11px] text-slate-400 block mb-1">Router Display Name</label>
@@ -1381,36 +1419,190 @@ export const DeviceProfileView: React.FC = () => {
                             className="text-xs"
                           />
                         </div>
-                        {[
-                          { key: 'wifi_standard', label: 'WiFi Generation (WiFi 6/6E/7)' },
-                          { key: 'bands', label: 'Supported Bands (2.4/5/6 GHz)' },
-                          { key: 'dtim_default', label: 'DTIM Period (e.g. 1 vs 3)' },
-                          { key: 'beacon_interval', label: 'Beacon Interval (e.g. 100ms)' },
-                          { key: 'twt_support', label: 'Target Wake Time (802.11ax TWT)' },
-                          { key: 'uapsd_support', label: 'U-APSD / WMM Power Save' }
-                        ].map((field) => (
-                          <div key={field.key}>
-                            <label className="text-[11px] text-slate-400 block mb-1">
-                              {field.label}
-                            </label>
-                            <Input
-                              value={editingSpecs[field.key] || ''}
-                              onChange={(e) =>
-                                setEditingRouter({
-                                  ...editingRouter,
-                                  specs_json: {
-                                    ...editingSpecs,
-                                    [field.key]: e.target.value
-                                  }
-                                })
-                              }
-                              className="text-xs"
-                            />
-                          </div>
-                        ))}
                       </div>
 
+                      {/* Hardware / Physical Wi-Fi Specs */}
                       <div>
+                        <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                          Wi-Fi Physical Specs
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div>
+                            <label className="text-[11px] text-slate-400 block mb-1">WiFi Generation (WiFi 5/6/6E/7)</label>
+                            <Input
+                              value={editingSpecs.wifi_standard || editingSpecs.wifi_generation || ''}
+                              onChange={(e) => updateSpecField('wifi_standard', e.target.value)}
+                              className="text-xs"
+                              placeholder="e.g. Wi-Fi 5 (802.11ac)"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] text-slate-400 block mb-1">Supported Bands (2.4/5/6 GHz)</label>
+                            <Input
+                              value={editingSpecs.bands || ''}
+                              onChange={(e) => updateSpecField('bands', e.target.value)}
+                              className="text-xs"
+                              placeholder="e.g. 2.4/5 GHz"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] text-slate-400 block mb-1">Beacon Interval (e.g. 100ms)</label>
+                            <Input
+                              value={editingSpecs.beacon_interval || ''}
+                              onChange={(e) => updateSpecField('beacon_interval', e.target.value)}
+                              className="text-xs"
+                              placeholder="e.g. 100ms"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Power & Roaming Configuration */}
+                      <div className="border-t border-slate-800/80 pt-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                            <Shield className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Active Power & Roaming Configuration (Fed to AI Audits)</span>
+                          </div>
+                          <span className="text-[10px] text-slate-500">Informs LLM of applied network optimizations</span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="text-[11px] text-slate-300">Fast Roaming (802.11r/k/v)</label>
+                              {editingSpecs.fast_roaming === 'disabled' && (
+                                <Badge variant="optimal" className="text-[9px] py-0 px-1">Off (Optimized)</Badge>
+                              )}
+                              {editingSpecs.fast_roaming === 'enabled' && (
+                                <Badge variant="elevated" className="text-[9px] py-0 px-1">On (May Drain)</Badge>
+                              )}
+                            </div>
+                            <select
+                              value={editingSpecs.fast_roaming || ''}
+                              onChange={(e) => updateSpecField('fast_roaming', e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                            >
+                              <option value="">-- Not Specified --</option>
+                              <option value="disabled">Disabled / Off (Recommended for battery)</option>
+                              <option value="enabled">Enabled / On</option>
+                              <option value="unsupported">Unsupported by Router</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] text-slate-300 block mb-1">Band Steering / Smart Connect</label>
+                            <select
+                              value={editingSpecs.band_steering || ''}
+                              onChange={(e) => updateSpecField('band_steering', e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                            >
+                              <option value="">-- Not Specified --</option>
+                              <option value="split_ssids">Split SSIDs (Separate 2.4/5 GHz)</option>
+                              <option value="combined_ssid">Combined SSID (Single unified network)</option>
+                              <option value="unsupported">Unsupported</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] text-slate-300 block mb-1">DTIM Period (e.g. 1 vs 3)</label>
+                            <Input
+                              value={editingSpecs.dtim_period || editingSpecs.dtim_default || ''}
+                              onChange={(e) => updateSpecField('dtim_period', e.target.value)}
+                              className="text-xs"
+                              placeholder="e.g. 3 (recommended: 3)"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] text-slate-300 block mb-1">U-APSD / WMM Power Save</label>
+                            <select
+                              value={editingSpecs.uapsd_support || ''}
+                              onChange={(e) => updateSpecField('uapsd_support', e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                            >
+                              <option value="">-- Not Specified --</option>
+                              <option value="enabled">Enabled</option>
+                              <option value="disabled">Disabled</option>
+                              <option value="unsupported">Unsupported</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] text-slate-300 block mb-1">Target Wake Time (802.11ax/be TWT)</label>
+                            <select
+                              value={editingSpecs.twt_support || ''}
+                              onChange={(e) => updateSpecField('twt_support', e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                            >
+                              <option value="">-- Not Specified --</option>
+                              <option value="enabled">Enabled</option>
+                              <option value="disabled">Disabled</option>
+                              <option value="unsupported">Unsupported</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Generic Custom Properties */}
+                      <div className="border-t border-slate-800/80 pt-4 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider">
+                              Custom Router Configuration Properties
+                            </div>
+                            <div className="text-[10px] text-slate-500">
+                              Map any model-specific settings (e.g. Operation Mode, Beamforming, IGMP Snooping)
+                            </div>
+                          </div>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            type="button"
+                            onClick={handleAddCustomProp}
+                            className="text-xs py-1 h-7 flex items-center gap-1"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>Add Property</span>
+                          </Button>
+                        </div>
+
+                        {customProps.length === 0 ? (
+                          <div className="text-[11px] text-slate-500 italic bg-slate-950/40 border border-dashed border-slate-800/80 rounded-lg p-2.5 text-center">
+                            No custom properties added yet. Click &ldquo;Add Property&rdquo; to define router-specific settings.
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {customProps.map((prop, idx) => (
+                              <div key={idx} className="flex items-center gap-2">
+                                <Input
+                                  value={prop.key}
+                                  placeholder="Property Name (e.g. Operation Mode)"
+                                  onChange={(e) => handleUpdateCustomProp(idx, 'key', e.target.value)}
+                                  className="text-xs flex-1"
+                                />
+                                <Input
+                                  value={prop.value}
+                                  placeholder="Setting Value (e.g. Access Point / AP Mode)"
+                                  onChange={(e) => handleUpdateCustomProp(idx, 'value', e.target.value)}
+                                  className="text-xs flex-1"
+                                />
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  type="button"
+                                  onClick={() => handleRemoveCustomProp(idx)}
+                                  className="text-rose-400 hover:text-rose-300 p-1.5 h-8 w-8"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="border-t border-slate-800/80 pt-4">
                         <label className="text-xs text-slate-400 block mb-1">
                           Custom Configuration Notes & Standby Observations
                         </label>

@@ -92,11 +92,18 @@ def process_bugreport_upload(
             active_llm_cfg = llm_manager.get_active_config()
             diag_prompt_tmpl = llm_manager.get_prompt_template("single_diagnosis")
 
+            kpis = parser.compute_window_kpis(history_df)
+            combined_telemetry = parser.get_filtered_telemetry_for_llm(summary_text, "all", kpis)
+
             active_inv_profile = db.get_latest_device_profile()
             profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
-            combined_telemetry = summary_text[:30000]
             if profile_summary:
                 combined_telemetry = f"{profile_summary}\n\n{combined_telemetry}"
+
+            active_routers = db.get_active_wifi_routers()
+            router_summary = parser.format_router_context_for_llm(active_routers)
+            if router_summary:
+                combined_telemetry = f"{router_summary}\n\n{combined_telemetry}"
 
             formatted_diag_prompt = diag_prompt_tmpl.format(
                 report_name=filename,
@@ -418,7 +425,10 @@ def build_compact_summary(
         night_start=n_start,
         night_end=n_end
     )
-    kpis = parser.compute_window_kpis(sl_df)
+    if filter_mode == "screen_off":
+        kpis = parser.compute_screen_off_kpis(rep.get("history_data"))
+    else:
+        kpis = parser.compute_window_kpis(sl_df)
 
     lines = [
         f"• Active Time Window: {kpis['start_time']} to {kpis['end_time']}",
@@ -427,11 +437,17 @@ def build_compact_summary(
     ]
 
     df_c = rep.get("chart_data")
+    if filter_mode in ["screen_off", "night"]:
+        standby_df = parser.extract_screen_off_chart_data(rep.get("summary_text", ""))
+        if standby_df is not None and not standby_df.empty:
+            df_c = standby_df
+
     if df_c is not None and not df_c.empty:
         clean_df = parser.clean_chart_dataframe(df_c, rep.get("summary_text", ""))
         top_comps = clean_df.head(8)
         c_lines = [f"{r['Component']}: {r['mAh']:.1f} mAh" for _, r in top_comps.iterrows()]
-        lines.append("• Top Drainers: " + ", ".join(c_lines))
+        drain_label = "Top Screen-Off Standby Drainers" if filter_mode in ["screen_off", "night"] else "Top Drainers (Full Timeline)"
+        lines.append(f"• {drain_label}: " + ", ".join(c_lines))
 
     summary_text = rep.get("summary_text", "")
     if summary_text:
@@ -458,7 +474,11 @@ def run_single_diagnosis(
         custom_start_str=custom_start,
         custom_end_str=custom_end
     )
-    kpis = parser.compute_window_kpis(sl_df)
+    if scope == "screen_off":
+        kpis = parser.compute_screen_off_kpis(report.get("history_data"))
+    else:
+        kpis = parser.compute_window_kpis(sl_df)
+
     filtered_telemetry = parser.get_filtered_telemetry_for_llm(report.get("summary_text", ""), scope, kpis)
 
     active_inv_profile = db.get_latest_device_profile()
