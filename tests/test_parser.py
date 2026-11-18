@@ -117,3 +117,27 @@ Also you can run `cmd appops set test ignore` or `adb shell cmd appops set alrea
     assert "adb shell adb shell" not in cleaned
     assert "`adb shell cmd appops set test ignore`" in cleaned
     assert "`adb shell cmd appops set already ignore`" in cleaned
+
+
+def test_timeline_activity_aggregation_in_window():
+    events = [
+        {"time_str": "2026-11-17 14:00:00.000", "tokens": ["+running", "+gps=10147", "+wake_lock=u0a147:\"MotionBurstWakeLock\""]},
+        {"time_str": "2026-11-17 23:00:00.000", "tokens": ["+running", "wakeupap=u0a325:\"\"", "+wake_lock=1001:\"*telephony-radio*\""]},
+        {"time_str": "2026-11-18 04:00:00.000", "tokens": ["+running", "+job=u0a156:\"com.google.android.apps.turbo\""]},
+        {"time_str": "2026-11-18 07:00:00.000", "tokens": ["+running", "+gps=10147"]}
+    ]
+    s_dt = datetime.fromisoformat("2026-11-17 22:30:00")
+    e_dt = datetime.fromisoformat("2026-11-18 06:00:00")
+    uid_map = {"u0a147": "Whereami", "u0a325": "Garmin Connect", "u0a156": "Turbo"}
+
+    agg = parser.aggregate_timeline_events_in_window(events, s_dt, e_dt, uid_map)
+    assert agg["running_count"] == 2
+    assert "u0a325:\"\"" in agg["wakeups"]
+    assert "1001:\"*telephony-radio*\"" in agg["wakelocks"]
+    assert "u0a156:\"com.google.android.apps.turbo\"" in agg["jobs"]
+    assert len(agg["gps"]) == 0  # 0 GPS overnight
+
+    formatted = parser.format_timeline_activity_for_llm(agg, uid_map)
+    assert "VERIFIED TIMELINE ACTIVITY DURING THIS EXACT WINDOW" in formatted
+    assert "Garmin Connect (u0a325): 1 wakeups" in formatted
+    assert "0 GPS locks recorded" in formatted

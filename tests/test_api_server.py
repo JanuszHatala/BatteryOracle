@@ -563,3 +563,48 @@ All partial wake locks:
     assert done_events[0]["report"]["filename"] == "202609040700_bugreport.zip"
     assert done_events[0]["report"]["id"] > 0
 
+
+def test_export_report_markdown_uses_scoped_analysis(client):
+    """Verify that export markdown endpoint exports scope-specific diagnosis text and screen-off table."""
+    content = """========================================================
+== dumpstate: 2026-09-04 06:47:00
+========================================================
+Build: TQ3A.230901.001
+Build fingerprint: 'Google/pixel6/cheetah:13/TQ3A.230901.001/10750761:user/release-keys'
+Battery History:
+    0 (10) 100 status=discharging
+    +1m (10) 099
+    Capacity: 5000
+Estimated power use (mAh):
+  Screen: 50.0
+All partial wake locks:
+  Wake lock 1000:*alarm*: 10s (5 times) realtime
+"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("bugreport-test.txt", content)
+
+    upload_res = client.post(
+        "/api/v1/reports/upload",
+        files={"file": ("202609040647_bugreport.zip", buf.getvalue(), "application/zip")},
+        data={"auto_diagnose": "false"}
+    )
+    assert upload_res.status_code == 200
+    rep_id = upload_res.json()["id"]
+
+    db.update_report_analysis(
+        report_id=rep_id,
+        analysis_text="### Night Scope Specific AI Diagnosis\n- Isolated overnight drain assessment.",
+        reasoning_trace="Analyzed night window.",
+        updated_at="2026-11-18 12:00:00",
+        scope="night"
+    )
+
+    res = client.get(f"/api/v1/reports/{rep_id}/export-md?scope=night")
+    assert res.status_code == 200
+    assert "text/markdown" in res.headers.get("content-type", "")
+    content_md = res.text
+
+    assert "Night Scope Specific AI Diagnosis" in content_md
+    assert "Isolated overnight drain assessment." in content_md
+

@@ -325,12 +325,17 @@ def export_report_markdown(report_id: int, scope: str = "night"):
         raise HTTPException(status_code=404, detail="Report not found.")
 
     payload = telemetry_service.build_telemetry_payload(rep, scope=scope)
+    analyses = rep.get("analyses") or {}
+    scope_detail = analyses.get(scope) or {}
+    diagnosis_text = scope_detail.get("text") or (rep.get("initial_analysis") if scope == "all" else (rep.get("initial_analysis") or ""))
+    gen_timestamp = scope_detail.get("updated_at") or rep.get("analysis_updated_at")
+
     md = telemetry_service.build_single_report_markdown(
         report=rep,
         filter_mode=scope,
         kpis=payload["kpis"],
-        diagnosis_text=rep.get("initial_analysis", ""),
-        gen_timestamp=rep.get("analysis_updated_at")
+        diagnosis_text=diagnosis_text,
+        gen_timestamp=gen_timestamp
     )
 
     clean_filename = f"{rep['custom_name']}_{scope}_diagnostic.md".replace(" ", "_")

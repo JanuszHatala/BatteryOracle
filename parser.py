@@ -1,5 +1,7 @@
 import os
 import re
+import io
+import zipfile
 import hashlib
 from datetime import datetime
 import pandas as pd
@@ -595,6 +597,55 @@ def extract_batterystats(filepath):
     device_info_str = extract_device_info(header_lines, power_use_lines)
     return power_use_lines, wakelock_lines, device_info_str
 
+def extract_timeline_events(filepath, base_year="2026"):
+    """Extract all timestamped Battery History events (wakelocks, wakeups, jobs, syncs, gps, screen, running)."""
+    events = []
+    in_history = False
+    history_regex = re.compile(r'^\s+(\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d{3})\s+[a-f0-9]{8}')
+
+    def _process_file(f):
+        nonlocal in_history, events
+        for line in f:
+            if isinstance(line, bytes):
+                line = line.decode('utf-8', errors='ignore')
+            if "Battery History" in line:
+                in_history = True
+            elif in_history and (line.startswith("Per-PID Stats:") or line.startswith("DUMP OF SERVICE")):
+                break
+
+            if in_history and len(line) > 25 and line[2:4].isdigit() and line[4] == '-':
+                match = history_regex.search(line)
+                if match:
+                    time_str = f"{base_year}-" + match.group(1)
+                    lvl = int(match.group(2))
+                    tokens = line.split()
+                    events.append({
+                        "time_str": time_str,
+                        "level": lvl,
+                        "tokens": tokens[3:] if len(tokens) > 3 else []
+                    })
+
+    if str(filepath).endswith(".zip"):
+        try:
+            with zipfile.ZipFile(filepath, "r") as z:
+                for name in z.namelist():
+                    if name.endswith(".txt") and ("bugreport" in name or name.startswith("bugreport-")):
+                        with z.open(name) as f:
+                            text_f = io.TextIOWrapper(f, encoding='utf-8', errors='ignore')
+                            _process_file(text_f)
+                        break
+        except Exception:
+            pass
+    else:
+        try:
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                _process_file(f)
+        except Exception:
+            pass
+
+    return events
+
+
 def extract_battery_history(filepath, base_year="2026"):
     """Extract battery level over time and screen state from Battery History with change-point sampling."""
     timeline = {"Time": [], "Level": [], "Screen": []}
@@ -672,6 +723,125 @@ def extract_chart_data(power_use_lines, uid_map=None):
             
     df = pd.DataFrame(data)
     return clean_chart_dataframe(df, uid_map)
+
+def aggregate_timeline_events_in_window(events, start_dt, end_dt, uid_map=None):
+    """Aggregate Battery History events occurring strictly between start_dt and end_dt."""
+    if not events:
+        return {}
+
+    wakelocks = {}
+    wakeups = {}
+    jobs = {}
+    syncs = {}
+    gps = {}
+    running_count = 0
+
+    uid_pattern = re.compile(r'(u0a\d+|\b100\d\b)')
+
+    for ev in events:
+        t_str = ev.get("time_str")
+        if not t_str:
+            continue
+        try:
+            ev_dt = pd.to_datetime(t_str)
+            if hasattr(ev_dt, "to_pydatetime"):
+                ev_dt = ev_dt.to_pydatetime()
+        except Exception:
+            continue
+
+        if ev_dt < start_dt or ev_dt > end_dt:
+            continue
+
+        tokens = ev.get("tokens", [])
+        for token in tokens:
+            if token == "+running":
+                running_count += 1
+            elif token.startswith("+wake_lock="):
+                val = token[len("+wake_lock="):]
+                wakelocks[val] = wakelocks.get(val, 0) + 1
+            elif token.startswith("wakeupap="):
+                val = token[len("wakeupap="):]
+                wakeups[val] = wakeups.get(val, 0) + 1
+            elif token.startswith("+job="):
+                val = token[len("+job="):]
+                jobs[val] = jobs.get(val, 0) + 1
+            elif token.startswith("+sync="):
+                val = token[len("+sync="):]
+                syncs[val] = syncs.get(val, 0) + 1
+            elif token.startswith("+gps") or token.startswith("+gps="):
+                val = token[len("+gps="):] if token.startswith("+gps=") else "gnss"
+                gps[val] = gps.get(val, 0) + 1
+
+    return {
+        "running_count": running_count,
+        "wakelocks": wakelocks,
+        "wakeups": wakeups,
+        "jobs": jobs,
+        "syncs": syncs,
+        "gps": gps
+    }
+
+
+def _format_token_target(target: str, uid_map: dict) -> str:
+    """Format token string like u0a167:\"CMWakeLock\" or 1000:\"*alarm*\" with app label."""
+    if not target:
+        return target
+    uid_match = re.match(r'^(u\d+a\d+|\d+)(?::"(.*)")?', target)
+    if not uid_match:
+        return target
+    uid = uid_match.group(1)
+    tag = uid_match.group(2) or ""
+
+    friendly_name = uid_map.get(uid) or uid
+    if uid in COMMON_APP_LABELS:
+        friendly_name = COMMON_APP_LABELS[uid]
+    elif friendly_name in COMMON_APP_LABELS:
+        friendly_name = COMMON_APP_LABELS[friendly_name]
+
+    if tag:
+        return f"{friendly_name} ({uid}) [{tag}]"
+    return f"{friendly_name} ({uid})"
+
+
+def format_timeline_activity_for_llm(activity_data, uid_map=None):
+    """Format aggregated window activity into a clear prompt section."""
+    if not activity_data or not any(activity_data.values()):
+        return ""
+
+    uid_map = uid_map or {}
+    out = []
+    out.append("=== ⏱️ VERIFIED TIMELINE ACTIVITY DURING THIS EXACT WINDOW ===")
+    out.append("The events below ACTUALLY OCCURRED during the audited time slice (not cumulative 24h totals):")
+
+    wakeups = activity_data.get("wakeups", {})
+    if wakeups:
+        out.append("• Scheduled Wakeups / Alarms in Window:")
+        for k, v in sorted(wakeups.items(), key=lambda x: x[1], reverse=True)[:8]:
+            out.append(f"    - {_format_token_target(k, uid_map)}: {v} wakeups")
+
+    wakelocks = activity_data.get("wakelocks", {})
+    if wakelocks:
+        out.append("• Active Wakelocks Held in Window:")
+        for k, v in sorted(wakelocks.items(), key=lambda x: x[1], reverse=True)[:10]:
+            out.append(f"    - {_format_token_target(k, uid_map)}: {v} times")
+
+    jobs = activity_data.get("jobs", {})
+    if jobs:
+        out.append("• Background Jobs Executed in Window:")
+        for k, v in sorted(jobs.items(), key=lambda x: x[1], reverse=True)[:8]:
+            out.append(f"    - {_format_token_target(k, uid_map)}: {v} executions")
+
+    gps = activity_data.get("gps", {})
+    if gps:
+        out.append("• GPS / GNSS Location Activations in Window:")
+        for k, v in sorted(gps.items(), key=lambda x: x[1], reverse=True)[:6]:
+            out.append(f"    - {_format_token_target(k, uid_map)}: {v} activations")
+    else:
+        out.append("• GPS / GNSS Location Activations in Window: 0 GPS locks recorded (GNSS powered down/dormant).")
+
+    out.append("=============================================================")
+    return "\n".join(out)
+
 
 def get_latest_night_window(min_time, max_time, start_hour=23, end_hour=7):
     """Find the most recent contiguous overnight window within [min_time, max_time]."""
@@ -866,7 +1036,7 @@ def validate_device_inventory(text: str) -> tuple[bool, str]:
 
     return True, ""
 
-def get_filtered_telemetry_for_llm(summary_text, filter_mode, kpis):
+def get_filtered_telemetry_for_llm(summary_text, filter_mode, kpis, timeline_activity=""):
     """Inject filter context and isolate screen-off / idle telemetry for the LLM prompt."""
     if filter_mode in ["all", "full"]:
         filter_label = "Full Bugreport Timeline"
@@ -880,7 +1050,8 @@ def get_filtered_telemetry_for_llm(summary_text, filter_mode, kpis):
         focus_instructions = """- Focus EXCLUSIVELY on overnight standby loss occurring between the bedtime start and wake-up timestamps above.
 - The bugreport hardware/UID totals below encompass the ENTIRE capture; you MUST EXPLICITLY CLARIFY in your report that while global/screen-off mAh summaries reflect the cumulative session, your root-cause attribution and rate calculations target this specific night window.
 - Scrutinize background wakelocks, cellular/Wi-Fi standby polling, and sensor alarms active during sleep hours.
-- Disregard active daytime usage unless background services or unreleased wakelocks persisted into this night window."""
+- Disregard active daytime usage unless background services or unreleased wakelocks persisted into this night window.
+- TIMELINE VERIFICATION MANDATE: Check the VERIFIED TIMELINE ACTIVITY section below. If an app had ZERO GPS activations, ZERO waking alarms, and ZERO jobs in this night window, DO NOT BLAME IT, even if it had high daytime drain or appears on the Doze whitelist."""
     elif filter_mode == "screen_off":
         filter_label = "Screen-Off Standby Focus"
         scope_description = "cumulative periods when the display was dark/off across the session"
@@ -893,7 +1064,8 @@ def get_filtered_telemetry_for_llm(summary_text, filter_mode, kpis):
         scope_description = f"the user-specified custom time slice ({kpis.get('start_time')} to {kpis.get('end_time')})"
         focus_instructions = f"""- Focus EXCLUSIVELY on battery behavior within this exact interval ({kpis.get('start_time')} to {kpis.get('end_time')}).
 - The bugreport hardware/UID totals below encompass the ENTIRE capture; you MUST EXPLICITLY CLARIFY in your report that your findings target this custom interval while noting any full-capture figures cited.
-- Correlate discharge rate during this slice with background wakelocks and radio conditions active during this timeframe."""
+- Correlate discharge rate during this slice with background wakelocks and radio conditions active during this timeframe.
+- TIMELINE VERIFICATION MANDATE: Check the VERIFIED TIMELINE ACTIVITY section below. Base culprit identification strictly on events verified in this interval."""
     else:
         filter_label = f"Targeted Scope ({filter_mode})"
         scope_description = f"scope {filter_mode}"
@@ -914,6 +1086,9 @@ The user is specifically investigating battery drain for: {scope_description}.
 - Explain whether Doze mode (deep sleep) was prevented, and identify what specific wakelock or alarm was responsible.
 =============================================================
 """
+    if timeline_activity:
+        header = f"{header}\n{timeline_activity}\n"
+
     lines = summary_text.splitlines() if isinstance(summary_text, str) else summary_text
     uid_map = extract_uid_mapping_from_text(summary_text)
     clean_lines = replace_uids_safely(lines, uid_map)
@@ -921,18 +1096,32 @@ The user is specifically investigating battery drain for: {scope_description}.
     # For night and screen_off, prioritize standby/screen-off lines
     if filter_mode in ["night", "screen_off"]:
         screen_off_lines = []
+
+        # 1. Grab (on battery, screen off/doze) global hardware lines
+        in_global_so = False
+        for l in clean_lines[:60]:
+            if "(on battery, screen off/doze)" in l:
+                in_global_so = True
+            elif in_global_so and ("(not on battery" in l or "(on battery, screen on)" in l or l.startswith("  UID ") or (l.startswith("  ") and not l.startswith("      "))):
+                in_global_so = False
+            if in_global_so:
+                screen_off_lines.append(l)
+
+        # 2. Grab per-app standby lines and wakelock/alarm lines
         for l in clean_lines:
             l_lower = l.lower()
             if any(k in l_lower for k in [
                 "while screen off", "screen off/doze", "wakelock", "wake_reason", "estimated power use",
                 "cellular", "wifi", "radio", "ambient", "kernel", "alarm"
             ]):
-                screen_off_lines.append(l)
+                if l not in screen_off_lines:
+                    screen_off_lines.append(l)
             elif l.startswith("    Uid ") or l.startswith("    com.") or " (" in l:
-                screen_off_lines.append(l)
+                if l not in screen_off_lines:
+                    screen_off_lines.append(l)
 
         if screen_off_lines:
-            return header + "\n".join(screen_off_lines[:150])
+            return header + "\n".join(screen_off_lines[:160])
 
     return header + "\n".join(clean_lines[:150])
 

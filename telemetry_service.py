@@ -366,9 +366,16 @@ def build_single_report_markdown(
     md.append(f"| **Standby Health Status** | {kpis.get('status', 'Unknown')} |\n")
 
     df_c = report.get("chart_data")
+    is_standby_scope = filter_mode in ["night", "screen_off"]
+    if is_standby_scope:
+        standby_df = parser.extract_screen_off_chart_data(report.get("summary_text", ""))
+        if standby_df is not None and not standby_df.empty:
+            df_c = standby_df
+
     if df_c is not None and not df_c.empty:
         clean_df = parser.clean_chart_dataframe(df_c, report.get("summary_text", ""))
-        md.append("## ⚡ Top Power Consumers (mAh)")
+        sec_title = "## ⚡ Top Standby / Screen-Off Power Consumers (mAh)" if is_standby_scope else "## ⚡ Top Power Consumers (mAh)"
+        md.append(sec_title)
         md.append("| App / Component | Energy Consumption (mAh) |")
         md.append("| :--- | :--- |")
         for _, row in clean_df.head(15).iterrows():
@@ -479,7 +486,25 @@ def run_single_diagnosis(
     else:
         kpis = parser.compute_window_kpis(sl_df)
 
-    filtered_telemetry = parser.get_filtered_telemetry_for_llm(report.get("summary_text", ""), scope, kpis)
+    # Extract timeline activity in window if bugreport file exists on disk
+    timeline_activity_str = ""
+    fname = report.get("filename")
+    if fname and os.path.exists(fname) and scope in ["night", "screen_off", "custom"]:
+        try:
+            raw_events = parser.extract_timeline_events(fname)
+            if raw_events:
+                uid_map = parser.extract_uid_mapping_from_text(report.get("summary_text", ""))
+                activity_agg = parser.aggregate_timeline_events_in_window(raw_events, s_dt, e_dt, uid_map)
+                timeline_activity_str = parser.format_timeline_activity_for_llm(activity_agg, uid_map)
+        except Exception:
+            pass
+
+    filtered_telemetry = parser.get_filtered_telemetry_for_llm(
+        report.get("summary_text", ""),
+        scope,
+        kpis,
+        timeline_activity=timeline_activity_str
+    )
 
     active_inv_profile = db.get_latest_device_profile()
     profile_summary = parser.get_inventory_summary_for_llm(active_inv_profile.get("parsed_data", {})) if active_inv_profile else ""
