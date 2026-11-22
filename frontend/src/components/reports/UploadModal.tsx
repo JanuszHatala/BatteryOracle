@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
 import { api } from '../../api/client';
 import { ReportDetail, UploadProgressEvent } from '../../types/api';
@@ -42,6 +43,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   onAutoDiagnoseChange
 }) => {
   const [file, setFile] = useState<File | null>(null);
+  const [reportName, setReportName] = useState<string>('');
   const [autoDiagnose, setAutoDiagnose] = useState(autoDiagnoseDefault);
 
   React.useEffect(() => {
@@ -78,8 +80,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     if (modalState === 'uploading') return;
     resetUploadState();
     setFile(null);
+    setReportName('');
     onClose();
   };
+
+  const deriveDefaultReportName = (f: File) =>
+    f.name.replace(/\.(zip|txt)$/i, '');
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -99,6 +105,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       const dropped = e.dataTransfer.files[0];
       if (dropped.name.endsWith('.zip') || dropped.name.endsWith('.txt')) {
         setFile(dropped);
+        setReportName(deriveDefaultReportName(dropped));
         setError(null);
       } else {
         setError('Please drop a valid Android bugreport archive (.zip) or text file (.txt).');
@@ -108,7 +115,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
+      const selected = e.target.files[0];
+      setFile(selected);
+      setReportName(deriveDefaultReportName(selected));
       setError(null);
     }
   };
@@ -153,7 +162,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             setPhaseMessage(event.message);
           }
         },
-        controller.signal
+        controller.signal,
+        reportName
       );
 
       setModalState('completed');
@@ -162,6 +172,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
       setTimeout(() => {
         setFile(null);
+        setReportName('');
         resetUploadState();
         onUploadSuccess(report, autoDiagnose);
         onClose();
@@ -279,6 +290,26 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               )}
             </div>
           </div>
+
+          {/* Report Name (visible once a file is selected) */}
+          {file && (
+            <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-4 space-y-1.5">
+              <div className="h-5 flex items-center justify-between">
+                <label className="text-xs font-medium text-slate-300">
+                  Report Name
+                </label>
+                <span className="text-[11px] text-slate-500">
+                  Auto-assigned from filename (editable)
+                </span>
+              </div>
+              <Input
+                value={reportName}
+                onChange={(e) => setReportName(e.target.value)}
+                placeholder={deriveDefaultReportName(file)}
+                className="text-xs font-mono"
+              />
+            </div>
+          )}
 
           {/* Options & Read-Only Timezone Info */}
           <div className="space-y-3 bg-slate-950/40 border border-slate-800/80 rounded-xl p-4">

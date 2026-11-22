@@ -139,7 +139,8 @@ def list_reports():
 async def upload_report(
     file: UploadFile = File(...),
     auto_diagnose: bool = Form(False),
-    timezone: Optional[str] = Form(None)
+    timezone: Optional[str] = Form(None),
+    custom_name: Optional[str] = Form(None)
 ):
     effective_tz = timezone or db.get_setting("device_timezone", "Europe/Warsaw")
     try:
@@ -159,10 +160,11 @@ async def upload_report(
     if existing:
         return _format_report_detail(existing)
 
+    resolved_name = custom_name.strip() if custom_name and custom_name.strip() else processed["custom_name"]
     report_id = db.save_report(
         file_hash=processed["file_hash"],
         filename=processed["filename"],
-        custom_name=processed["custom_name"],
+        custom_name=resolved_name,
         description=processed["description"],
         timestamp_str=processed["timestamp_str"],
         device_info=processed["device_info"],
@@ -183,7 +185,8 @@ async def upload_report(
 async def upload_report_stream(
     file: UploadFile = File(...),
     auto_diagnose: bool = Form(False),
-    timezone: Optional[str] = Form(None)
+    timezone: Optional[str] = Form(None),
+    custom_name: Optional[str] = Form(None)
 ):
     effective_tz = timezone or db.get_setting("device_timezone", "Europe/Warsaw")
     filename = file.filename or "unknown_bugreport.zip"
@@ -217,10 +220,11 @@ async def upload_report_stream(
                 if existing:
                     rep_detail = _format_report_detail(existing)
                 else:
+                    resolved_name = custom_name.strip() if custom_name and custom_name.strip() else processed["custom_name"]
                     report_id = db.save_report(
                         file_hash=processed["file_hash"],
                         filename=processed["filename"],
-                        custom_name=processed["custom_name"],
+                        custom_name=resolved_name,
                         description=processed["description"],
                         timestamp_str=processed["timestamp_str"],
                         device_info=processed["device_info"],

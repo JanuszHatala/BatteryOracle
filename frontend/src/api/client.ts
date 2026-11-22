@@ -79,12 +79,15 @@ export const api = {
 
   getReport: (id: number) => request<ReportDetail>(`/reports/${id}`),
 
-  uploadReport: (file: File, autoDiagnose = false, timezone?: string) => {
+  uploadReport: (file: File, autoDiagnose = false, timezone?: string, customName?: string) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('auto_diagnose', String(autoDiagnose));
     if (timezone) {
       formData.append('timezone', timezone);
+    }
+    if (customName && customName.trim()) {
+      formData.append('custom_name', customName.trim());
     }
     return request<ReportDetail>('/reports/upload', {
       method: 'POST',
@@ -97,13 +100,17 @@ export const api = {
     autoDiagnose = false,
     timezone?: string,
     onProgress?: (event: UploadProgressEvent) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    customName?: string
   ): Promise<ReportDetail> => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('auto_diagnose', String(autoDiagnose));
     if (timezone) {
       formData.append('timezone', timezone);
+    }
+    if (customName && customName.trim()) {
+      formData.append('custom_name', customName.trim());
     }
 
     const res = await fetch(`${BASE_URL}/reports/upload-stream`, {
