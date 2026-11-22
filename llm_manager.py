@@ -1,6 +1,10 @@
 import os
+import re
 import json
+import time
+import hashlib
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import litellm
 from litellm import completion
 from tenacity import retry, wait_exponential, stop_after_attempt
@@ -10,32 +14,24 @@ import db
 PROVIDER_PRESETS = {
     "OpenRouter": {
         "models": [
-            "openrouter/google/gemini-3.7-flash",
             "openrouter/google/gemini-3.8-flash",
             "openrouter/anthropic/claude-3.5-sonnet",
             "openrouter/deepseek/deepseek-r1",
-            "openrouter/google/gemini-2.5-flash",
             "openrouter/meta-llama/llama-3.3-70b-instruct"
         ],
-        "default_model": "openrouter/google/gemini-3.7-flash",
+        "default_model": "openrouter/google/gemini-3.8-flash",
         "env_key": "OPENROUTER_API_KEY",
         "default_base": None,
         "requires_key": True
     },
     "Google Gemini": {
         "models": [
+            "gemini/gemini-3.8-flash",
             "gemini/gemini-3.6-flash",
             "gemini/gemini-3.5-flash-lite",
-            "gemini/gemini-3.1-flash-lite",
-            "gemini/gemini-3.5-flash",
-            "gemini/gemini-3.7-flash",
-            "gemini/gemini-3.8-flash",
-            "gemini/gemini-3-flash",
-            "gemini/gemini-2.5-flash-lite",
-            "gemini/gemini-2.5-pro",
-            "gemini/gemini-2.5-flash"
+            "gemini/gemini-3.1-flash-lite"
         ],
-        "default_model": "gemini/gemini-3.6-flash",
+        "default_model": "gemini/gemini-3.8-flash",
         "env_key": "GEMINI_API_KEY",
         "default_base": None,
         "requires_key": True
@@ -101,7 +97,7 @@ PROVIDER_PRESETS = {
 }
 
 DEFAULT_PROMPTS = {
-    "single_diagnosis": """You are a Principal Android OS Telemetry & Battery Architecture Specialist.
+    "single_diagnosis": r"""You are a Principal Android OS Telemetry & Battery Architecture Specialist.
 The user is diagnosing battery drain using an Android bugreport / batterystats dump and device configuration telemetry.
 
 Report Title: {report_name}
@@ -128,7 +124,7 @@ CRITICAL DIAGNOSTIC GUIDELINES:
    - REALITY-BASED SYNTHESIS: Confront the measured drain with the fact that these settings and restrictions are already active.
      * For example: "Even though Instagram / Google App is already set to Restricted in AppOps, it still consumed X mAh via mobile radio sockets."
      * Explain WHY: Android foreground services, high-priority push notifications (FCM), or network socket flush on wakeup bypass basic background restrictions.
-     * Focus ONLY on genuine remaining opportunities: in-app notification & background sync frequency, cellular background data toggles (`Settings > Apps > [App] > Mobile data & Wi-Fi > Background data [Off]`), or safe ADB freeze commands (`cmd package suspend <package>` or `cmd appops set <package> RUN_ANY_IN_BACKGROUND ignore`).
+      * Focus ONLY on genuine remaining opportunities: in-app notification & background sync frequency, cellular background data toggles (`Settings > Apps > [App] > Mobile data & Wi-Fi > Background data [Off]`), or safe ADB freeze commands (`adb shell cmd package suspend <package>` or `adb shell cmd appops set <package> RUN_ANY_IN_BACKGROUND ignore`).
 
 3. GROUND WI-FI RECOMMENDATIONS IN REGISTERED ROUTER ENVIRONMENT:
    - Check the `=== 📡 KNOWN WIFI ROUTER ENVIRONMENT ===` block in the telemetry.
@@ -140,6 +136,7 @@ CRITICAL DIAGNOSTIC GUIDELINES:
 4. FACT-GROUNDED CULPRIT FILTERING (DO NOT BLAME IDLE APPS):
    - Only cite an application as a battery culprit if it exhibits REAL, RECORDED activity in this specific analysis window (e.g. measurable mAh consumed >0.1 mAh, active partial wakelocks, frequent AlarmManager wakeups, or measurable CPU runtime).
    - If an application is whitelisted from Doze or has 'Unrestricted' / 'RUN_IN_BACKGROUND' permissions in the device inventory, but consumed NO energy and held NO wakelocks during this window, DO NOT flag it as a problem. Acknowledge it as well-behaved or omit it. Scrutinize configurations ONLY for apps that actually caused drain.
+   - STRICT PROHIBITION AGAINST BLAMING DORMANT APPS FOR OVERNIGHT DRAIN: Inspect the `=== ⏱️ VERIFIED TIMELINE ACTIVITY DURING THIS EXACT WINDOW ===` header. If an application recorded 0 GPS locks, 0 waking alarms, or was completely inactive during the night window (e.g. WhereAmI entering standby sleep while stationary), you MUST NOT blame it for the night drain or recommend restricting it, even if its cumulative 24-hour daytime total was high (e.g. driving trips) or it is on the Doze whitelist. Attribute night drain to real drivers (e.g. background media playback/video decoding pipelines left in cached states, cellular radio standby, or active wakelocks).
 
 5. DYNAMIC OEM & OS ADAPTATION (NO HARDCODED ASSUMPTIONS):
    - Carefully inspect the `Device Info` and `=== 📱 ACTIVE DEVICE CONFIGURATION ===` headers. Dynamically extract the specific device model, manufacturer, and Android OS version.
@@ -149,8 +146,22 @@ CRITICAL DIAGNOSTIC GUIDELINES:
      * If Xiaomi: use HyperOS/MIUI paths (Settings > Battery > App battery saver; Apps > Permissions > Autostart).
      * If unknown or generic: state stock Android paths and explicitly note that UI labels may vary by manufacturer skin.
 
-6. ADVANCED CLI / ADB COMMANDS:
-   - When standard GUI settings are exhausted or cannot achieve deeper power savings (e.g. persistent carrier telemetry, location polling daemons, background appops), provide safe, concrete `adb shell` commands (e.g. `cmd appops set <package> RUN_IN_BACKGROUND ignore`, `dumpsys deviceidle force-idle deep` [NOT `deviceidle force-idle`], `cmd appops set <package> WAKE_LOCK ignore`).
+6. ADVANCED CLI / ADB COMMANDS & HOST TERMINAL EXECUTION:
+   - HOST TERMINAL & ADB PREREQUISITES: The user runs commands from their computer terminal (macOS/Linux Terminal, Windows PowerShell, or Command Prompt), NOT on the phone directly. Commands interact with Android through the Android Debug Bridge (ADB).
+   - MANDATORY `adb shell` PREFIX: NEVER output bare on-device commands like `cmd appops ...` or `dumpsys ...` alone. ALWAYS prefix every command in the code block with `adb shell ` so the user can copy and run it directly in Terminal or PowerShell:
+     ```bash
+     adb shell cmd appops set <package> RUN_IN_BACKGROUND ignore
+     adb shell dumpsys deviceidle force-idle deep
+     adb shell cmd appops set <package> WAKE_LOCK ignore
+     ```
+   - PACKAGE EXISTENCE & DEFENSIVE EXECUTION: NEVER suggest disabling (`pm disable-user`), freezing, or altering AppOps for ANY package unless that exact package name is confirmed in the provided telemetry or device profile. Do NOT hallucinate packages from generic debloat lists (e.g. `retaildemo`). When package existence is not 100% verified, chain a defensive existence check:
+     ```bash
+     adb shell "pm path <package> >/dev/null 2>&1 && pm disable-user --user 0 <package> || echo '<package> not installed, skipping'"
+     ```
+   - EXPLAIN HOW TO EXECUTE: Accompany all CLI suggestions with a brief, clear explanation:
+     * State that commands require ADB installed on the computer and the Android device connected with USB Debugging enabled in Developer Options.
+     * Explain that commands can be executed directly from their desktop terminal (Terminal / PowerShell) with the provided `adb shell <command>` syntax, OR they can enter `adb shell` once for an interactive shell and paste commands without the prefix.
+   - CODE FORMATTING MANDATE: NEVER format executable ADB commands, shell scripts, or JSON configurations as inline code backticks (`...`). ALWAYS format all CLI / ADB commands inside dedicated fenced code blocks with explicit language tags (```bash). Place related commands on separate lines within the code block for easy 1-click copying.
 
 7. MANDATORY TRADE-OFF & USABILITY WARNINGS:
    - For EVERY proposed optimization, you MUST explicitly state the comfort/usability trade-off:
@@ -159,6 +170,16 @@ CRITICAL DIAGNOSTIC GUIDELINES:
 
 8. DO NOT BLAME "Android System (UID 1000)" OR "Linux Kernel (UID 0)" AS GENERIC CULPRITS:
    - Identify the underlying apps, JobScheduler routines, radio hunting, or sensors executing work through system_server.
+
+9. STRICT PLAIN TEXT FORMATTING (NO LATEX OR KATEX MATH):
+   - NEVER format quantities, durations, percentages, mathematical comparisons, or units using LaTeX math mode or KaTeX delimiters.
+   - PROHIBITED: NEVER output '$1016\\text{{ mAh}}$', '$\\approx 20.85\\%$', '($51\\text{{m }} 25\\text{{s}}$)', '$\\approx$', or '\\text{{...}}' anywhere.
+   - MANDATORY: ALWAYS output natural plain text: '1016 mAh', '~20.85%', '51m 25s', '4h 31m', '1.46%/hr'.
+
+10. MANDATORY SCOPE ATTRIBUTION & WIDER-CAPTURE CLARITY:
+   - Check the `=== 🎯 ACTIVE FOCUS SCOPE ===` header in the telemetry.
+   - Respect the exact timeframe and scope of the active view (e.g. Night Standby Window between specified bedtime start and wake-up hours, Screen-Off Standby, Custom Window, or Full Timeline).
+   - If your diagnostic findings cite cumulative session figures (such as total mAh from Batterystats or long-running wakelocks that span beyond the requested window), you MUST EXPLICITLY CLARIFY in the report text that these figures belong to the wider/cumulative bugreport capture, and clearly delineate them from the metrics belonging strictly to the requested view window.
 
 STRUCTURE YOUR REPORT USING THE FOLLOWING SECTIONS:
 
@@ -174,9 +195,9 @@ STRUCTURE YOUR REPORT USING THE FOLLOWING SECTIONS:
 ### 3. 🛠️ Prioritized Action Plan & Trade-Off Matrix
 - If the device is already in a hardened, well-tuned state: EXPLICITLY CONFIRM that previous optimizations (AOD off, wake gestures off, scan toggles off, mobile data always active off, restricted apps) are active and verified. Do NOT repeat instructions to change them.
 - Provide 2 to 4 genuinely NEW, high-impact fixes categorized by:
-  * **Verified App Optimizations**: Target ONLY apps with proven drain in this window that are not already fully restricted. For already-restricted apps that still leak, provide in-app or background data fixes. State the exact menu path for the detected device and OS, followed by `⚠️ Usability & Comfort Impact: ...`.
+  * **Verified App Optimizations**: Target ONLY apps with proven drain in this window that are not already fully restricted. For already-restricted apps that still leak, provide in-app or background data fixes. State the exact menu path for the detected device and OS, followed by `⚠️ Usability & Comfort Impact: ...`. If any commands are suggested (e.g. AppOps), they MUST be formatted in a code block prefixed with `adb shell ` (NEVER bare `cmd appops`).
   * **WiFi Router & Radio Adjustments**: If router profile is defined and Wi-Fi drain occurred, state the exact router model and firmware menu path. Real remaining levers (e.g. cellular band preference if weak signal, or router DTIM interval).
-  * **Advanced CLI / ADB Fallbacks**: Targeted commands for power users.
+  * **Advanced CLI / ADB Fallbacks (Terminal / PowerShell)**: Targeted commands prefixed with `adb shell ` for direct execution in host terminal or PowerShell, with ADB connection prerequisites explained.
 
 Telemetry Data:
 {telemetry_data}
@@ -196,7 +217,9 @@ CRITICAL COMPARATIVE GUIDELINES:
    - Identify the device manufacturer and Android OS version from the session headers and tailor any guidance to that specific phone skin. Do not assume or hardcode any brand.
 5. HONEST TRADE-OFF & PLATEAU ASSESSMENT:
    - If battery drain has plateaued despite aggressive optimizations, explain why environmental factors (e.g. cellular signal quality, Bluetooth smartwatch link, essential background push) prevent reaching theoretical minimums (<0.6%/hr).
-   - Detail the usability cost of pushing optimizations further. Provide advanced `adb shell` options only with clear trade-off warnings.
+   - Detail the usability cost of pushing optimizations further. Provide advanced CLI options strictly as ready-to-run desktop terminal/PowerShell commands prefixed with `adb shell ` (e.g. `adb shell cmd appops set ...`), accompanied by a clear explanation that ADB and USB debugging are required.
+6. STRICT PLAIN TEXT FORMATTING (NO LATEX OR KATEX MATH):
+   - NEVER format quantities, durations, percentages, mathematical comparisons, or units using LaTeX math mode or KaTeX delimiters. Output natural plain text like '1016 mAh', '~20.85%', '51m 25s'.
 
 STRUCTURE YOUR ANALYSIS:
 ### 1. 📋 Comparative Metrics Table
@@ -209,7 +232,7 @@ STRUCTURE YOUR ANALYSIS:
 
 ### 3. 🎯 Verdict, Trade-offs & Next Optimization Steps
 - Clear assessment of net gain.
-- Highest-yield remaining actions with `⚠️ Usability & Comfort Impact` and advanced `adb shell` fallbacks where appropriate.
+- Highest-yield remaining actions with `⚠️ Usability & Comfort Impact` and advanced `adb shell` fallbacks (explaining ADB execution via computer terminal or PowerShell).
 
 {reports_summary}
 """,
@@ -224,7 +247,8 @@ CRITICAL INSTRUCTIONS:
 - If the user has active WiFi router profiles registered, reference their router model and firmware settings when Wi-Fi sleep or DTIM is discussed.
 - Dynamically adapt settings navigation and advice to the specific device model and OS version detected in the context. Do not make generic or hardcoded brand assumptions.
 - For every proposed change, explicitly highlight the `⚠️ Usability & Comfort Impact`.
-- Suggest safe `adb shell` CLI commands when GUI settings are insufficient or absent.
+- Suggest safe `adb shell` CLI commands when GUI settings are insufficient or absent. Always format them with the `adb shell ` prefix ready to copy and run directly in the user's desktop terminal or PowerShell (e.g. `adb shell cmd appops set <pkg> RUN_IN_BACKGROUND ignore`), and explain that ADB with USB debugging must be active on the connected device.
+- STRICT PLAIN TEXT FORMATTING (NO LATEX OR KATEX MATH): Never use LaTeX math delimiters or syntax (`$...$`, `\text{{...}}`). Write metrics as plain text ('1016 mAh', '~20.85%', '51m 25s').
 
 Active Scope / Context:
 {filter_context}
@@ -247,8 +271,9 @@ CRITICAL SYNTHESIS INSTRUCTIONS:
 3. Account for the user's known device profile and registered WiFi router environment.
 4. If apps are already restricted or settings hardened, acknowledge this reality and do not repeat completed steps.
 5. Dynamically adapt the final recommendations to the detected device model and OS build.
-6. For every permanent optimization in the final blueprint, clearly state the `⚠️ Usability & Comfort Trade-off`. Include advanced `adb shell` commands for deep tuning.
+6. For every permanent optimization in the final blueprint, clearly state the `⚠️ Usability & Comfort Trade-off`. Include advanced `adb shell` commands formatted for desktop terminal / PowerShell with clear ADB connection guidance.
 7. Provide a realistic assessment of the device's physical standby floor given the user's active environment (e.g. radios, wearables, accounts).
+8. STRICT PLAIN TEXT FORMATTING (NO LATEX OR KATEX MATH): Never format numbers, durations, or units in LaTeX math syntax (`$...$`, `\text{{...}}`). Write plain text ('1016 mAh', '~20.85%').
 
 STRUCTURE YOUR MASTER SYNTHESIS:
 # 🧪 Master Battery Experiment Synthesis & Executive Retrospective
@@ -266,7 +291,7 @@ STRUCTURE YOUR MASTER SYNTHESIS:
 Provide a prioritized, device-tailored cheat sheet:
 - **Verified App Battery Profiles**: Exact settings and `⚠️ Usability Trade-offs`.
 - **Radio, Location & WiFi Router Toggles**: Concrete toggles for the detected device and specific router firmware configurations.
-- **Advanced CLI / ADB Fallbacks**: Safe commands for stubborn background services.
+- **Advanced CLI / ADB Fallbacks**: Safe commands prefixed with `adb shell ` ready to run in terminal or PowerShell, with ADB connection instructions.
 - **Nighttime Routines**: Realistic bedtime configurations.
 
 Chronicle of Experiment Sessions:
@@ -285,17 +310,22 @@ CRITICAL GUIDELINES:
    - Tailor all settings navigation and advice to the detected device skin (e.g. Pixel, Samsung OneUI, Xiaomi HyperOS, AOSP).
 3. FACT-BASED RISK AUDIT & REALITY ADAPTATION:
    - Differentiate between active policy risks (e.g. user apps whitelisted from Doze deep sleep, Wi-Fi location scanning always enabled) and benign platform services.
-   - For apps listed in Doze Whitelist or AppOps RUN_IN_BACKGROUND, note whether they are genuinely critical (e.g., dialer, wearable companion) or non-essential bloat (e.g., demo apps, retail apps, games).
+   - For apps listed in Doze Whitelist or AppOps RUN_IN_BACKGROUND, note whether they are genuinely critical (e.g., dialer, wearable companion) or non-essential user apps.
+   - STRICT PACKAGE EXISTENCE MANDATE: NEVER suggest disabling (`pm disable-user`), freezing, or altering AppOps for ANY package unless that EXACT package name is confirmed in the provided telemetry or inventory snapshot. NEVER hallucinate packages from generic online debloat lists (e.g. `retaildemo`, manufacturer bloatware) unless explicitly present in this device's data.
+   - DEFENSIVE COMMAND PATTERN: For any package command, either instruct the user to verify installation first via `adb shell pm path <package>`, or chain the command safely: `adb shell "pm path <package> >/dev/null 2>&1 && pm disable-user --user 0 <package> || echo 'Package not installed, skipping'"`.
    - If an app is disabled or uninstalled according to package flags, do not flag it as an active standby drain culprit.
    - CHECK CURRENT VALUES CAREFULLY: Do NOT recommend turning off a toggle or setting if the inventory shows it is ALREADY disabled (0). Do NOT recommend whitelisting changes if the package is already restricted.
 4. HONEST, CONDITIONAL TUNING PLAN (NO REDUNDANT COMMANDS):
    - If the device is already in a hardened, well-optimized state with no significant power leaks detected, EXPLICITLY DECLARE THIS:
      State clearly that the device is already optimally tuned and that NO further power-reduction tweaks or setting changes are recommended.
-   - In that case, do NOT output redundant `adb shell settings put ...` commands for settings that are already 0 or disabled.
-   - If there ARE remaining active risks or genuine opportunities, provide only those specific changes with menu navigation and `⚠️ Usability & Comfort Impact`.
-   - Optional diagnostic/maintenance commands (like checking batterystats or verifying Doze state) should only be presented as optional diagnostics, NOT labeled as required tuning adjustments.
-5. CLEAN MARKDOWN ONLY (NO RAW HTML TAGS):
-   - In tables or lists, NEVER insert raw HTML tags like `<br>` or `<br/>`. Use standard Markdown formatting (e.g. `App Name - package.id` or separate columns).
+    - In that case, do NOT output redundant `adb shell settings put ...` commands for settings that are already 0 or disabled.
+    - If there ARE remaining active risks or genuine opportunities, provide only those specific changes with menu navigation and `⚠️ Usability & Comfort Impact`.
+    - Format ALL suggested CLI and ADB commands in fenced markdown code blocks with bash syntax highlighting (```bash ... ```) ready for direct execution in the user's computer terminal (Terminal / PowerShell). NEVER output bare commands outside code blocks.
+    - Optional diagnostic/maintenance commands (like checking batterystats or verifying Doze state) should only be presented as optional diagnostics, NOT labeled as required tuning adjustments, and formatted in fenced ```bash code blocks or `adb shell ...` backticks.
+5. CLEAN GFM MARKDOWN ONLY (NO RAW HTML TAGS):
+    - All tables MUST use standard GitHub Flavored Markdown (GFM) pipe table syntax with header row, separator row, and proper columns.
+    - In tables or lists, NEVER insert raw HTML tags like `<br>` or `<br/>`. Use standard Markdown formatting (e.g. `App Name - package.id` or separate columns).
+    - Ensure clean headings (`### 1.`, `### 2.`, `### 3.`, `####`) separated by empty lines before and after.
 
 STRUCTURE YOUR AUDIT:
 ### 1. 🛡️ Power Management Posture Summary
@@ -308,7 +338,7 @@ STRUCTURE YOUR AUDIT:
 
 ### 3. 🛠️ Actionable Tuning Plan & Trade-Off Matrix
 - If the device is already optimized: State that no further tuning is required. List any optional comfort trade-offs (e.g. timeout length) or diagnostic commands separately as optional verification only.
-- If genuine optimizations remain: Provide a focused table and `adb shell` commands for ONLY the settings that actually require changing.
+- If genuine optimizations remain: Provide a focused table and `adb shell` commands for ONLY the settings that actually require changing, explaining how to run them in desktop terminal or PowerShell.
 
 Device Configuration Telemetry:
 {profile_telemetry}
@@ -329,7 +359,8 @@ CRITICAL GUIDELINES:
 3. FACT-GROUNDED DELTA ANALYSIS: Focus on actual changes between the two snapshots (added/removed Doze whitelists, modified AppOps, changed global/secure/system settings).
 4. CONDITIONAL ADVICE (AVOID REDUNDANCY): If changes were successfully applied and no further risks remain, confirm the improvement and do not suggest redundant steps.
 5. MANDATORY USABILITY TRADE-OFFS: For every recommended or applied tweak, state `⚠️ Usability & Comfort Impact`.
-6. Provide actionable, verified `adb shell` commands only when actual adjustments are needed.
+6. Format ALL actionable, verified commands prefixed with `adb shell ` in fenced markdown code blocks with bash syntax highlighting (```bash ... ```) ready for desktop terminal / PowerShell execution only when actual adjustments are needed.
+7. CLEAN GFM MARKDOWN ONLY: All tables must use standard GitHub Flavored Markdown (GFM) pipe table syntax with header row and separators, without raw HTML tags like `<br>`.
 
 STRUCTURE YOUR ANALYSIS:
 ### 1. 📋 Executive Configuration Delta Verdict
@@ -343,7 +374,7 @@ STRUCTURE YOUR ANALYSIS:
 - Flag any changes that could impair push notifications (FCM/GCM), background email/calendar sync, smartwatch/BLE peripheral connection, or alarm delivery.
 
 ### 4. 🎯 Recommended Next Steps & ADB Commands
-- State clearly if no further changes are needed, or provide concrete tweaks with `⚠️ Usability & Comfort Impact` and exact `adb shell` commands if genuine gaps remain.
+- State clearly if no further changes are needed, or provide concrete tweaks with `⚠️ Usability & Comfort Impact` and exact `adb shell` commands ready for terminal / PowerShell.
 
 Configuration Delta Summary:
 {diff_summary}
@@ -356,7 +387,7 @@ CRITICAL INSTRUCTIONS:
 2. ALWAYS identify applications by their real human-readable names and package identifiers.
 3. Dynamically adapt settings navigation and recommendations to the detected device model ({device_model}) and Android version ({android_version}).
 4. For every proposed change or tweak, explicitly state: `⚠️ Usability & Comfort Impact: [Specific consequence]`.
-5. Suggest safe and tested `adb shell` CLI commands when GUI settings are insufficient or absent.
+5. Suggest safe and tested CLI commands formatted for host terminal/PowerShell execution prefixed with `adb shell ` (e.g. `adb shell cmd appops set <package> ...`) and explain ADB prerequisites.
 6. Use pure Markdown only (no raw HTML tags like `<br>`).
 
 Device Profile Info:
@@ -441,6 +472,70 @@ def get_all_models_for_provider(provider: str) -> list:
             combined.append(m)
     return combined
 
+def resolve_api_key(provider=None, explicit_key=None):
+    """Resolve API key using explicit key, database settings (provider-specific or active general), or env fallback."""
+    if explicit_key and str(explicit_key).strip():
+        return str(explicit_key).strip()
+
+    active_prov = db.get_setting("llm_provider", "Google Gemini")
+    target_prov = provider or active_prov
+
+    # 1. Provider-specific settings in SQLite
+    if target_prov == "Google Gemini":
+        k = db.get_setting("gemini_api_key")
+        if k and str(k).strip():
+            return str(k).strip()
+    elif target_prov == "OpenRouter":
+        k = db.get_setting("openrouter_api_key")
+        if k and str(k).strip():
+            return str(k).strip()
+    elif target_prov == "OpenAI":
+        k = db.get_setting("openai_api_key")
+        if k and str(k).strip():
+            return str(k).strip()
+    elif target_prov == "Anthropic":
+        k = db.get_setting("anthropic_api_key")
+        if k and str(k).strip():
+            return str(k).strip()
+    elif target_prov == "Groq":
+        k = db.get_setting("groq_api_key")
+        if k and str(k).strip():
+            return str(k).strip()
+
+    # 2. General llm_api_key in SQLite
+    stored_general_key = db.get_setting("llm_api_key")
+    if stored_general_key and str(stored_general_key).strip():
+        if target_prov == active_prov or target_prov == "Google Gemini":
+            return str(stored_general_key).strip()
+
+    # 3. Environment variables fallback
+    preset = PROVIDER_PRESETS.get(target_prov, {})
+    env_var = preset.get("env_key")
+    if env_var and os.getenv(env_var):
+        return os.getenv(env_var).strip()
+    if target_prov == "Google Gemini":
+        if os.getenv("GEMINI_API_KEY"):
+            return os.getenv("GEMINI_API_KEY").strip()
+        if os.getenv("GOOGLE_API_KEY"):
+            return os.getenv("GOOGLE_API_KEY").strip()
+
+    return ""
+
+def resolve_api_base(provider=None, explicit_base=None):
+    """Resolve API base URL using explicit base, database settings, or provider preset default."""
+    if explicit_base and str(explicit_base).strip():
+        return str(explicit_base).strip()
+
+    active_prov = db.get_setting("llm_provider", "Google Gemini")
+    target_prov = provider or active_prov
+    if target_prov == active_prov:
+        stored_base = db.get_setting("llm_api_base")
+        if stored_base and str(stored_base).strip():
+            return str(stored_base).strip()
+
+    preset = PROVIDER_PRESETS.get(target_prov, {})
+    return preset.get("default_base")
+
 def get_active_config():
     """Retrieve active LLM configuration from database with fallback to environment."""
     provider = db.get_setting("llm_provider", "Google Gemini")
@@ -449,15 +544,8 @@ def get_active_config():
     default_model = preset["default_model"]
     
     model = db.get_setting("llm_model", default_model)
-    
-    # Check DB for key, then fallback to env
-    api_key = db.get_setting("llm_api_key")
-    if not api_key and preset.get("env_key"):
-        api_key = os.getenv(preset["env_key"], "")
-    elif not api_key:
-        api_key = os.getenv("GEMINI_API_KEY", "")
-        
-    api_base = db.get_setting("llm_api_base", preset.get("default_base"))
+    api_key = resolve_api_key(provider)
+    api_base = resolve_api_base(provider)
     
     return {
         "provider": provider,
@@ -470,11 +558,13 @@ def test_connection(model, api_key=None, api_base=None, provider=None):
     """Send a lightweight test ping to verify credentials and model connectivity."""
     try:
         norm_model = normalize_model_name(provider, model) if provider else model
+        resolved_key = resolve_api_key(provider, api_key)
+        resolved_base = resolve_api_base(provider, api_base)
         kwargs = {"model": norm_model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}
-        if api_key:
-            kwargs["api_key"] = api_key
-        if api_base:
-            kwargs["api_base"] = api_base
+        if resolved_key:
+            kwargs["api_key"] = resolved_key
+        if resolved_base:
+            kwargs["api_base"] = resolved_base
             
         res = completion(**kwargs)
         tokens_used = res.usage.total_tokens if res.usage else "OK"
@@ -484,12 +574,121 @@ def test_connection(model, api_key=None, api_base=None, provider=None):
     except Exception as e:
         return False, f"❌ Connection failed: {str(e)}"
 
+NON_CHAT_MODEL_MARKERS = (
+    "-tts",
+    "-image",
+    "-transcribe",
+    "imagen",
+    "veo-",
+    "embedding",
+    "aqa",
+    "lyria",
+)
+
+PROBE_CACHE_TTL_SECONDS = 1800
+MAX_PROBE_MODELS = 35
+
+
+def _is_text_chat_model(model_id: str) -> bool:
+    """Return True if the model ID represents a text/multimodal chat model rather than TTS/image/embedding."""
+    lower = model_id.lower()
+    return not any(marker in lower for marker in NON_CHAT_MODEL_MARKERS)
+
+
+def classify_probe_error(err_str: str) -> tuple[str, str]:
+    """Classify an LLM completion error into a generic availability status and short detail."""
+    low = (err_str or "").lower()
+    if any(tok in low for tok in ("limit: 0", "freetier", "free_tier", "insufficient_quota", "billing", "payment required", "402")):
+        return "no_quota", "No quota / Billing required"
+    if any(tok in low for tok in ("429", "rate_limit", "ratelimit", "503", "serviceunavailable", "overloaded", "high demand")):
+        return "rate_limited", "Accessible (busy / rate-limited)"
+    if any(tok in low for tok in ("401", "403", "authentication", "permission", "unauthorized", "invalid api key")):
+        return "unavailable", "No access / Auth error"
+    if any(tok in low for tok in ("404", "not found", "notfound", "deprecated", "does not exist")):
+        return "unavailable", "Not found / Unsupported"
+    return "unavailable", "Unavailable"
+
+
+def _probe_cache_setting_key(provider: str, api_key: str | None, api_base: str | None) -> str:
+    digest = hashlib.sha256(f"{provider}|{api_key or ''}|{api_base or ''}".encode("utf-8")).hexdigest()[:16]
+    return f"model_probe_cache_{digest}"
+
+
+def probe_models_availability(
+    provider: str,
+    models: list[str],
+    api_key: str | None = None,
+    api_base: str | None = None,
+    max_workers: int = 8,
+    force_refresh: bool = False,
+    cache_only: bool = False,
+) -> dict[str, dict[str, str]]:
+    """Concurrently probe candidate models with a 1-token request and cache results by provider/credentials."""
+    resolved_key = resolve_api_key(provider, api_key)
+    resolved_base = resolve_api_base(provider, api_base)
+    cache_setting_key = _probe_cache_setting_key(provider, resolved_key, resolved_base)
+
+    cached_results: dict[str, dict[str, str]] = {}
+    now = time.time()
+    if not force_refresh:
+        raw_cache = db.get_setting(cache_setting_key)
+        if raw_cache:
+            try:
+                parsed = json.loads(raw_cache)
+                if now - parsed.get("ts", 0) < PROBE_CACHE_TTL_SECONDS:
+                    cached_results = parsed.get("results", {})
+            except Exception:
+                cached_results = {}
+
+    if cache_only:
+        return {m: cached_results[m] for m in models if m in cached_results}
+
+    targets = [m for m in models[:MAX_PROBE_MODELS] if force_refresh or m not in cached_results]
+    if not targets:
+        return {m: cached_results[m] for m in models if m in cached_results}
+
+    def _probe_one(model_id: str) -> tuple[str, dict[str, str]]:
+        try:
+            norm_model = normalize_model_name(provider, model_id) if provider else model_id
+            kwargs = {
+                "model": norm_model,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+                "timeout": 8,
+            }
+            if resolved_key:
+                kwargs["api_key"] = resolved_key
+            if resolved_base:
+                kwargs["api_base"] = resolved_base
+            completion(**kwargs)
+            return model_id, {"status": "available", "detail": "Available"}
+        except Exception as e:
+            status, detail = classify_probe_error(str(e))
+            return model_id, {"status": status, "detail": detail}
+
+    results = dict(cached_results)
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(targets))) as pool:
+        futures = [pool.submit(_probe_one, m) for m in targets]
+        for fut in as_completed(futures):
+            m_id, info = fut.result()
+            results[m_id] = info
+
+    try:
+        db.set_setting(cache_setting_key, json.dumps({"ts": now, "results": results}))
+    except Exception:
+        pass
+
+    return {m: results[m] for m in models if m in results}
+
+
 def fetch_available_models(provider, api_key=None, api_base=None):
     """Dynamically query the provider's API for available models, preserving custom models."""
     base_models = get_all_models_for_provider(provider)
+    resolved_key = resolve_api_key(provider, api_key)
+    resolved_base = resolve_api_base(provider, api_base)
     
     if provider == "Google Gemini":
-        key = api_key or os.getenv("GEMINI_API_KEY", "")
+        key = resolved_key
         if not key:
             return base_models, "⚠️ No Gemini API key provided to fetch models."
         try:
@@ -503,6 +702,8 @@ def fetch_available_models(provider, api_key=None, api_base=None):
                     methods = m.get("supportedGenerationMethods", [])
                     if "generateContent" in methods:
                         m_name = m.get("name", "").replace("models/", "")
+                        if not _is_text_chat_model(m_name):
+                            continue
                         # Prefix with gemini/ for LiteLLM
                         litellm_id = f"gemini/{m_name}"
                         discovered.append(litellm_id)
@@ -548,8 +749,8 @@ def fetch_available_models(provider, api_key=None, api_base=None):
         try:
             url = "https://openrouter.ai/api/v1/models"
             headers = {"User-Agent": "BatteryOracle/1.0"}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
+            if resolved_key:
+                headers["Authorization"] = f"Bearer {resolved_key}"
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -582,7 +783,7 @@ def fetch_available_models(provider, api_key=None, api_base=None):
             return base_models, f"⚠️ Failed to query OpenRouter API: {e}"
 
     elif provider == "Ollama":
-        base = api_base or "http://localhost:11434"
+        base = resolved_base or "http://localhost:11434"
         try:
             url = f"{base.rstrip('/')}/api/tags"
             req = urllib.request.Request(url, headers={"User-Agent": "BatteryOracle/1.0"})
@@ -652,7 +853,20 @@ def get_model_pricing(model_id):
     return "Pricing not listed"
 
 
-@retry(wait=wait_exponential(multiplier=2, min=2, max=15), stop=stop_after_attempt(5), reraise=True)
+def _should_retry_llm_error(exc: BaseException) -> bool:
+    """Only retry transient 503 / connection errors once; never retry 429 quota, 401/403 auth, or 404 not found."""
+    msg = str(exc).lower()
+    if any(k in msg for k in ("429", "ratelimit", "resource_exhausted", "quota", "401", "403", "404", "notfound", "auth")):
+        return False
+    return True
+
+
+@retry(
+    wait=wait_exponential(multiplier=1, min=1, max=3),
+    stop=stop_after_attempt(2),
+    retry=lambda retry_state: _should_retry_llm_error(retry_state.outcome.exception()) if retry_state.outcome and retry_state.outcome.failed else False,
+    reraise=True
+)
 def call_llm_tracked(messages, report_id=None, thread_id=None, action_type="chat"):
     """Execute LLM completion with automatic token and cost accounting saved to SQLite."""
     cfg = get_active_config()
@@ -714,7 +928,190 @@ def call_llm_tracked(messages, report_id=None, thread_id=None, action_type="chat
         action_type=action_type
     )
     
-    return response.choices[0].message.content
+    raw_content = response.choices[0].message.content or ""
+    return clean_latex_math(raw_content)
+
+
+def clean_latex_math(text: str) -> str:
+    """Strip or convert unwanted LaTeX/KaTeX math syntax emitted by LLMs into clean plain text."""
+    if not text:
+        return ""
+    text = text.replace(r"\approx", "~")
+    text = text.replace(r"\le", "<=")
+    text = text.replace(r"\ge", ">=")
+    text = text.replace(r"\times", "x")
+    text = text.replace(r"\%", "%")
+    while r"\text{" in text:
+        text = re.sub(r"\\text\{([^{}]+)\}", r"\1", text)
+    text = re.sub(r"\$([^\$\n]+)\$", r"\1", text)
+    text = re.sub(r"([0-9]+[a-zA-Z%])\s{2,}([0-9]+[a-zA-Z%])", r"\1 \2", text)
+    return text
+
+
+def parse_llm_error(error: Exception) -> dict:
+    """Inspect LLM exception and return structured diagnostic details with actionable recovery suggestions."""
+    import re
+    err_str = str(error)
+    err_lower = err_str.lower()
+
+    category = "API Error"
+    title = "AI Service Request Failed"
+    icon = "⚠️"
+    suggestions = []
+    retry_delay_sec = None
+    rate_limit_meta = None
+
+    if "ratelimit" in err_lower or "429" in err_lower or "resource_exhausted" in err_lower or "quota" in err_lower:
+        category = "Rate Limit & Quota Exhausted (429)"
+        title = "AI Model Quota / Rate Limit Exceeded"
+        icon = "⏳"
+
+        rl = {
+            "retry_delay_sec": None,
+            "model": None,
+            "is_daily": False,
+            "is_minute": False,
+            "is_tokens": False,
+            "is_requests": False,
+            "zero_limit": False,
+            "violations": []
+        }
+
+        json_match = re.search(r"\{.*\}", err_str, re.DOTALL)
+        parsed_json = None
+        if json_match:
+            try:
+                parsed_json = json.loads(json_match.group(0))
+            except Exception:
+                parsed_json = None
+
+        if parsed_json and isinstance(parsed_json, dict) and "error" in parsed_json:
+            err_obj = parsed_json["error"]
+            msg = err_obj.get("message", "")
+            if "limit: 0" in msg:
+                rl["zero_limit"] = True
+
+            details = err_obj.get("details", [])
+            for item in details:
+                if item.get("@type") == "type.googleapis.com/google.rpc.RetryInfo":
+                    delay_str = item.get("retryDelay", "")
+                    m = re.search(r"([0-9]+(?:\.[0-9]+)?)", delay_str)
+                    if m:
+                        rl["retry_delay_sec"] = int(float(m.group(1)))
+                elif item.get("@type") == "type.googleapis.com/google.rpc.QuotaFailure":
+                    for v in item.get("violations", []):
+                        qid = v.get("quotaId", "")
+                        qmetric = v.get("quotaMetric", "")
+                        model = v.get("quotaDimensions", {}).get("model")
+                        if model and not rl["model"]:
+                            rl["model"] = model
+                        if "PerDay" in qid or "Day" in qid:
+                            rl["is_daily"] = True
+                        if "PerMinute" in qid or "Minute" in qid:
+                            rl["is_minute"] = True
+                        if "Token" in qid or "token" in qmetric:
+                            rl["is_tokens"] = True
+                        if "Request" in qid or "request" in qmetric:
+                            rl["is_requests"] = True
+                        rl["violations"].append(qid or qmetric)
+
+        if not rl["retry_delay_sec"]:
+            m_delay = re.search(r"retry\s+(?:in\s+)?([0-9]+(?:\.[0-9]+)?)\s*s", err_str, re.IGNORECASE)
+            if not m_delay:
+                m_delay = re.search(r"retryDelay['\"]?\s*:\s*['\"]?([0-9]+)s?", err_str, re.IGNORECASE)
+            if m_delay:
+                try:
+                    rl["retry_delay_sec"] = int(float(m_delay.group(1)))
+                except Exception:
+                    pass
+
+        if not rl["model"]:
+            m_model = re.search(r"model:\s*([a-zA-Z0-9_\-\.]+)", err_str, re.IGNORECASE)
+            if m_model:
+                rl["model"] = m_model.group(1)
+
+        if not rl["is_daily"] and re.search(r"perday|daily", err_str, re.IGNORECASE):
+            rl["is_daily"] = True
+        if not rl["is_minute"] and re.search(r"perminute|minute", err_str, re.IGNORECASE):
+            rl["is_minute"] = True
+        if not rl["is_tokens"] and re.search(r"token", err_str, re.IGNORECASE):
+            rl["is_tokens"] = True
+        if not rl["is_requests"] and re.search(r"request", err_str, re.IGNORECASE):
+            rl["is_requests"] = True
+
+        retry_delay_sec = rl["retry_delay_sec"]
+        rate_limit_meta = rl
+        model_display = rl["model"] or "your selected model"
+
+        if rl["is_daily"]:
+            icon = "🛑"
+            title = f"Daily Quota Exhausted for {model_display} (Free Tier)"
+            suggestions.append(
+                f"Daily Free Quota Exhausted: Google Gemini API has depleted its daily requests or tokens for {model_display}. Daily free quotas reset at Midnight Pacific Time (09:00 CEST / 07:00 UTC)."
+            )
+            suggestions.append(
+                "Immediate Fix - Switch Model: Open AI & LLM Settings (top header) and click 'Fetch Live Models' or switch to a model with available quota (e.g. gemini/gemini-3-flash-preview or gemini/gemini-3.1-flash-lite-preview)."
+            )
+            suggestions.append(
+                "Switch to Alternative Provider: Select OpenRouter, OpenAI, or Groq in Settings if you have an alternative API key."
+            )
+            suggestions.append(
+                "Add Billing to Google AI Studio: Attaching billing to your Google AI Studio project upgrades your key to Pay-As-You-Go, removing the 20-50 requests/day free limit."
+            )
+        else:
+            if retry_delay_sec:
+                suggestions.append(f"Wait {retry_delay_sec} seconds for the provider's per-minute rate-limiting window to roll over, then retry.")
+            else:
+                suggestions.append("Wait 30-60 seconds for your API provider's rate-limit window to reset, then retry.")
+            suggestions.append("Switch Model in AI & LLM Settings (e.g. gemini/gemini-3-flash-preview or gemini/gemini-3.1-flash-lite-preview).")
+
+    elif "auth" in err_lower or "401" in err_lower or "unauthorized" in err_lower or "api_key" in err_lower or "forbidden" in err_lower:
+        category = "Authentication / Invalid API Key (401/403)"
+        title = "AI Provider Authentication Failed"
+        icon = "🔑"
+        suggestions.append("Check API Key: Open AI & LLM Settings in the top header and verify your API key is correctly pasted.")
+        suggestions.append("Verify Provider Account: Confirm your API key is active in your provider's developer dashboard.")
+
+    elif "context_length_exceeded" in err_lower or "maximum context length" in err_lower or "context window" in err_lower or "too large" in err_lower:
+        category = "Context Length Exceeded"
+        title = "Telemetry Exceeds Model Context Window"
+        icon = "📜"
+        suggestions.append("Narrow Filter Scope: Select Night Drain or Screen-Off interval rather than Full Timeline.")
+        suggestions.append("Switch to a high-context model (up to 1M tokens) in AI & LLM Settings.")
+
+    elif "serviceunavailable" in err_lower or "503" in err_lower or "high demand" in err_lower or "unavailable" in err_lower:
+        category = "Model High Demand / Service Unavailable (503)"
+        title = "Model Temporarily Overloaded (503 High Demand)"
+        icon = "🔥"
+        suggestions.append("Wait a Moment & Retry: Spikes in demand on Google's servers for this model are temporary. Wait 10-30 seconds and retry.")
+        suggestions.append("Switch Model: Open AI & LLM Settings and switch to another model (e.g. gemini/gemini-3.1-flash-lite-preview or gemini/gemini-3-flash-preview).")
+        suggestions.append("Try Another Provider: If Google Gemini is congested, switch provider to OpenRouter or OpenAI in Settings.")
+
+    elif "notfound" in err_lower or "404" in err_lower:
+        category = "Model Not Found (404)"
+        title = "Selected Model ID Not Found on Provider"
+        icon = "🔍"
+        suggestions.append("Fetch Live Models: Open AI & LLM Settings, click 'Fetch Live Models', and select an active model ID.")
+
+    elif "timeout" in err_lower or "connection" in err_lower or "connecterror" in err_lower:
+        category = "Network / Connection Timeout"
+        title = "Cannot Connect to AI Provider"
+        icon = "🌐"
+        suggestions.append("Check Internet Connection: Verify your machine has outbound internet connectivity.")
+        suggestions.append("Local LLM (Ollama): If using Ollama, ensure 'ollama serve' is running on http://localhost:11434.")
+    else:
+        suggestions.append("Retry the operation or check your provider and model configuration in AI & LLM Settings.")
+
+    return {
+        "category": category,
+        "title": title,
+        "icon": icon,
+        "raw_error": err_str,
+        "suggestions": suggestions,
+        "retry_delay_sec": retry_delay_sec,
+        "rate_limit_meta": rate_limit_meta
+    }
+
 
 def get_prompt_template(name):
     """Retrieve customized prompt template or default."""
@@ -745,6 +1142,7 @@ Provide the technical profile of this specific router. Return ONLY a valid, pars
 {{
   "wifi_generation": "e.g. Wi-Fi 6 (802.11ax) or Wi-Fi 7 (802.11be) or Wi-Fi 5 (802.11ac)",
   "firmware_family": "e.g. AsusWRT, TP-Link HomeCare/Tether, AVM FRITZ!OS, Ubiquiti UniFi OS, Netgear Orbi/Genie, OpenWrt",
+  "fast_roaming": "e.g. 'Supported (802.11k/v/r)' or 'Unsupported'",
   "dtim_support": "Explain DTIM Interval capability (e.g. 'Configurable 1-255 in Advanced Wireless; default is 1 or 3; recommended is 3 or 4 for Android standby power saving')",
   "twt_support": "Explain 802.11ax Target Wake Time (TWT) support and how to toggle it",
   "band_steering": "Explain Smart Connect / Band Steering feature and beacon interval",
@@ -763,6 +1161,7 @@ Do not include any markdown formatting around the JSON (or wrap it in standard `
         fallback = {
             "wifi_generation": "Wi-Fi 6 (802.11ax)",
             "firmware_family": f"{brand} Firmware",
+            "fast_roaming": "Supported",
             "dtim_support": "Configurable (Recommended: DTIM Interval = 3)",
             "twt_support": "Supported if 802.11ax is active",
             "band_steering": "Smart Connect / Band Steering",
@@ -789,6 +1188,7 @@ Do not include any markdown formatting around the JSON (or wrap it in standard `
         fallback = {
             "wifi_generation": "Wi-Fi 6 (802.11ax)",
             "firmware_family": f"{brand} Firmware",
+            "fast_roaming": "Supported",
             "dtim_support": "Configurable (Recommended: DTIM Interval = 3)",
             "twt_support": "Supported if 802.11ax is active",
             "band_steering": "Smart Connect / Band Steering",

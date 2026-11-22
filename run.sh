@@ -45,11 +45,31 @@ else
     source "$VENV_PATH/bin/activate"
 fi
 
-# Ensure streamlit is installed
-if ! command -v streamlit >/dev/null 2>&1; then
-    echo "⚠️ Streamlit not found in virtual environment. Installing dependencies..."
-    pip install -r requirements.txt
+# Ensure frontend is built and synced to static/
+BUILD_FRONTEND=0
+ARGS=()
+
+for arg in "$@"; do
+    if [ "$arg" == "--build" ]; then
+        BUILD_FRONTEND=1
+    else
+        ARGS+=("$arg")
+    fi
+done
+
+if [ ! -f "static/index.html" ] || [ "$BUILD_FRONTEND" -eq 1 ]; then
+    echo "🏗️ Building React SPA frontend..."
+    if command -v npm >/dev/null 2>&1; then
+        (cd frontend && npm install && npm run build)
+        mkdir -p static
+        rm -rf static/*
+        cp -R frontend/dist/* static/
+        echo "✅ Frontend built and copied to static/."
+    else
+        echo "⚠️ npm not found. Skipping frontend build. Using existing static bundle if available."
+    fi
 fi
 
-echo "🚀 Launching Battery Oracle in browser..."
-exec streamlit run app.py "$@"
+PORT="${PORT:-8088}"
+echo "🚀 Launching Battery Oracle FastAPI + React Server on http://localhost:$PORT..."
+exec uvicorn api_server:app --host 0.0.0.0 --port "$PORT" "${ARGS[@]}"

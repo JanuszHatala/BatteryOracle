@@ -1,0 +1,14 @@
+.git
+.env
+*.db
+*.zip
+*.txt
+!requirements.txt
+*.log
+_trash
+__pycache__
+data
+node_modules
+frontend/node_modules
+.venv
+venv

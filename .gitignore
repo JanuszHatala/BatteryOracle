@@ -15,7 +15,8 @@ __pycache__/
 *.db-wal
 *.sqlite
 *.sqlite3
-data/
+data/*
+!data/.gitkeep
 
 # Android bugreports and archives
 *.zip
@@ -44,8 +45,9 @@ summary_input.txt
 *.swp
 *.swo
 
-# Docker local overrides
-.dockerignore
-
 # Skills symlinks from packages/venv
 .agents/skills/
+.superpowers/
+node_modules/
+frontend/dist/
+static/

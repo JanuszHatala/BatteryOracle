@@ -33,3 +33,111 @@ def test_standard_components_dictionary():
     assert "0" in parser.STANDARD_COMPONENTS
     assert "1000" in parser.STANDARD_COMPONENTS
     assert "wifi" in parser.STANDARD_COMPONENTS
+
+def test_parse_device_inventory_modern_dump():
+    dump_text = """=== DEVICE_HEADER ===
+model=Pixel 10 Pro
+manufacturer=Google
+android_version=17
+sdk=37
+build_id=CP3A.260905.009
+=== SETTINGS_GLOBAL ===
+mobile_data_always_on=0
+cell_on=1
+wifi_scan_always_enabled=0
+ble_scan_always_enabled=0
+=== SETTINGS_SECURE ===
+location_mode=3
+doze_pulse_on_tap=1
+=== SETTINGS_SYSTEM ===
+peak_refresh_rate=120.0
+screen_off_timeout=15000
+=== DEVICEIDLE ===
+  Whitelist system apps:
+    com.android.providers.calendar
+  Whitelist user apps:
+    com.google.android.retaildemo
+=== APPOPS_RUN_IN_BG ===
+com.google.android.GoogleCamera
+=== APPOPS_RUN_ANY_IN_BG ===
+com.google.android.retaildemo
+=== APPOPS_WAKE_LOCK ===
+com.google.android.iwlan
+"""
+    parsed = parser.parse_device_inventory(dump_text)
+    assert parsed["device_model"] == "Pixel 10 Pro"
+    assert parsed["os_build"] == "CP3A.260905.009"
+    assert parsed["android_version"] == "17"
+    assert "global" in parsed["settings"]
+    assert parsed["settings"]["global"]["mobile_data_always_on"] == "0"
+    assert "retaildemo" in parsed["doze_whitelist"]["user_apps"][0]
+    assert "retaildemo" in parsed["appops_summary"]["unrestricted"][0]
+    assert "network_radio" in parsed["highlights"]
+    assert parsed["kpis"]["whitelisted_user_apps"] == 1
+    assert parsed["kpis"]["total_settings_keys"] == 8
+
+def test_extract_battery_history_screen_tracking(tmp_path):
+    sample_content = """Battery History:
+  10-12 06:58:46.345 095 e4891a10 status=charging
+  10-12 07:30:00.264 095 c4191a10 +screen
+  10-12 07:30:30.968 094 c4091a10 -screen
+  10-12 07:35:00.000 093 c4091a10
+Per-PID Stats:
+"""
+    log_file = tmp_path / "batterystats_sample.txt"
+    log_file.write_text(sample_content)
+
+    df = parser.extract_battery_history(str(log_file), base_year="2026")
+    assert not df.empty
+    assert "Screen" in df.columns
+    assert "Level" in df.columns
+    screens = list(df["Screen"])
+    assert "on" in screens
+    assert "off" in screens
+
+
+def test_sanitize_ai_output_adb_commands():
+    raw_ai = """
+Here are recommendations:
+```bash
+cmd appops set janush.tech.whereami RUN_ANY_IN_BACKGROUND ignore
+cmd appops set janush.tech.whereami WAKE_LOCK ignore
+dumpsys deviceidle force-idle deep
+adb shell cmd appops set pkg RUN_IN_BACKGROUND ignore
+settings put global mobile_data_always_on 0
+```
+Also you can run `cmd appops set test ignore` or `adb shell cmd appops set already ignore`.
+"""
+    cleaned = parser.sanitize_ai_output(raw_ai)
+    assert "adb shell cmd appops set janush.tech.whereami RUN_ANY_IN_BACKGROUND ignore" in cleaned
+    assert "adb shell cmd appops set janush.tech.whereami WAKE_LOCK ignore" in cleaned
+    assert "adb shell dumpsys deviceidle force-idle deep" in cleaned
+    assert "adb shell settings put global mobile_data_always_on 0" in cleaned
+    # Ensure no double "adb shell adb shell"
+    assert "adb shell adb shell" not in cleaned
+    assert "`adb shell cmd appops set test ignore`" in cleaned
+    assert "`adb shell cmd appops set already ignore`" in cleaned
+
+
+def test_timeline_activity_aggregation_in_window():
+    events = [
+        {"time_str": "2026-11-17 14:00:00.000", "tokens": ["+running", "+gps=10147", "+wake_lock=u0a147:\"MotionBurstWakeLock\""]},
+        {"time_str": "2026-11-17 23:00:00.000", "tokens": ["+running", "wakeupap=u0a325:\"\"", "+wake_lock=1001:\"*telephony-radio*\""]},
+        {"time_str": "2026-11-18 04:00:00.000", "tokens": ["+running", "+job=u0a156:\"com.google.android.apps.turbo\""]},
+        {"time_str": "2026-11-18 07:00:00.000", "tokens": ["+running", "+gps=10147"]}
+    ]
+    s_dt = datetime.fromisoformat("2026-11-17 22:30:00")
+    e_dt = datetime.fromisoformat("2026-11-18 06:00:00")
+    uid_map = {"u0a147": "Whereami", "u0a325": "Garmin Connect", "u0a156": "Turbo"}
+
+    agg = parser.aggregate_timeline_events_in_window(events, s_dt, e_dt, uid_map)
+    assert agg["running_count"] == 2
+    assert "u0a325:\"\"" in agg["wakeups"]
+    assert "1001:\"*telephony-radio*\"" in agg["wakelocks"]
+    assert "u0a156:\"com.google.android.apps.turbo\"" in agg["jobs"]
+    assert len(agg["gps"]) == 0  # 0 GPS overnight
+
+    formatted = parser.format_timeline_activity_for_llm(agg, uid_map)
+    assert "VERIFIED TIMELINE ACTIVITY DURING THIS EXACT WINDOW" in formatted
+    assert "Garmin Connect (u0a325): 1 wakeups" in formatted
+    assert "0 GPS locks recorded" in formatted

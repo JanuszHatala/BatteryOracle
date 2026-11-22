@@ -1,0 +1,438 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { api } from './api/client';
+import { ReportSummary, ReportDetail, Settings } from './types/api';
+import { Header, ChatLayoutMode, WorkspaceViewMode } from './components/layout/Header';
+import { Sidebar } from './components/layout/Sidebar';
+import { UploadModal } from './components/reports/UploadModal';
+import { ComparativeView } from './components/reports/ComparativeView';
+import { SettingsModal } from './components/settings/SettingsModal';
+import { ReportWorkspace } from './components/workspace/ReportWorkspace';
+import { AnalysisScope } from './components/workspace/ScopeSelector';
+import { ChatWorkspace } from './components/chat/ChatWorkspace';
+import { FloatingWindow } from './components/chat/FloatingWindow';
+import { DeviceProfileView } from './components/profiles/DeviceProfileView';
+import { MasterSynthesisView } from './components/synthesis/MasterSynthesisView';
+import { AccountingView } from './components/accounting/AccountingView';
+import { DialogProvider, useDialog } from './components/ui/DialogContext';
+import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
+import { Zap, Loader2, PanelLeftOpen } from 'lucide-react';
+
+function AppContent({
+  isSettingsOpen,
+  setIsSettingsOpen
+}: {
+  isSettingsOpen: boolean;
+  setIsSettingsOpen: (open: boolean) => void;
+}) {
+  const { showError } = useDialog();
+  const [reports, setReports] = useState<ReportSummary[]>([]);
+  const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
+  const [currentReport, setCurrentReport] = useState<ReportDetail | null>(null);
+  const [loadingReport, setLoadingReport] = useState(false);
+  const [selectedReportIds, setSelectedReportIds] = useState<number[]>([]);
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceViewMode>('single');
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [chatLayout, setChatLayout] = useState<ChatLayoutMode>(() => {
+    const saved = localStorage.getItem('battery_oracle_chat_layout');
+    return (saved === 'split' || saved === 'stacked' || saved === 'floating' || saved === 'hidden')
+      ? (saved as ChatLayoutMode)
+      : 'split';
+  });
+  const [reportScope, setReportScope] = useState<AnalysisScope>('all');
+
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('battery_oracle_sidebar_width');
+    return saved ? Math.min(Math.max(220, Number(saved)), 600) : 320;
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    const saved = localStorage.getItem('battery_oracle_sidebar_collapsed');
+    return saved === 'true';
+  });
+  const [isPeeking, setIsPeeking] = useState(false);
+  const peekCloseTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const resizeSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const loadData = async () => {
+    try {
+      const [reps, s] = await Promise.all([
+        api.getReports(),
+        api.getSettings().catch(() => null)
+      ]);
+      setReports(reps);
+      if (s) {
+        setSettings(s);
+        if (localStorage.getItem('battery_oracle_sidebar_width') === null && s.sidebar_width) {
+          setSidebarWidth(s.sidebar_width);
+        }
+        if (localStorage.getItem('battery_oracle_sidebar_collapsed') === null && s.sidebar_collapsed !== undefined) {
+          setSidebarCollapsed(s.sidebar_collapsed);
+        }
+      }
+      if (reps.length > 0 && selectedReportId === null) {
+        setSelectedReportId(reps[0].id);
+      }
+    } catch (err) {
+      console.error('Failed to load initial data', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSidebarResize = (newWidth: number) => {
+    setSidebarWidth(newWidth);
+    localStorage.setItem('battery_oracle_sidebar_width', String(newWidth));
+    if (resizeSaveTimerRef.current) clearTimeout(resizeSaveTimerRef.current);
+    resizeSaveTimerRef.current = setTimeout(() => {
+      api.updateSettings({ sidebar_width: newWidth }).catch(() => {});
+    }, 500);
+  };
+
+  const handleToggleSidebarCollapse = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('battery_oracle_sidebar_collapsed', String(next));
+      api.updateSettings({ sidebar_collapsed: next }).catch(() => {});
+      return next;
+    });
+    setIsPeeking(false);
+  };
+
+  const handleSchedulePeekClose = () => {
+    if (peekCloseTimerRef.current) clearTimeout(peekCloseTimerRef.current);
+    peekCloseTimerRef.current = setTimeout(() => {
+      setIsPeeking(false);
+    }, 250);
+  };
+
+  const handleCancelPeekClose = () => {
+    if (peekCloseTimerRef.current) {
+      clearTimeout(peekCloseTimerRef.current);
+      peekCloseTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadReportDetail = async (id: number, silent = false) => {
+    if (!silent) setLoadingReport(true);
+    try {
+      const rep = await api.getReport(id);
+      setCurrentReport(rep);
+    } catch (err) {
+      console.error('Failed to load report detail', err);
+    } finally {
+      if (!silent) setLoadingReport(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedReportId) {
+      loadReportDetail(selectedReportId);
+    } else {
+      setCurrentReport(null);
+    }
+  }, [selectedReportId]);
+
+  const handleToggleReportSelection = (id: number) => {
+    setSelectedReportIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const handleDeleteReport = async (id: number) => {
+    try {
+      await api.deleteReport(id);
+      setReports((prev) => prev.filter((r) => r.id !== id));
+      setSelectedReportIds((prev) => prev.filter((x) => x !== id));
+      if (selectedReportId === id) {
+        const remaining = reports.filter((r) => r.id !== id);
+        setSelectedReportId(remaining.length > 0 ? remaining[0].id : null);
+      }
+    } catch (err: any) {
+      showError(err, 'Deleting Bugreport');
+    }
+  };
+
+  const handleUploadSuccess = (report: ReportDetail, _autoDiagnosed = false) => {
+    loadData();
+    setSelectedReportId(report.id);
+    setCurrentReport(report);
+    setWorkspaceView('single');
+    setReportScope('all');
+  };
+
+  const handleChangeEnterMode = (mode: 'newline' | 'send') => {
+    setSettings((prev) => (prev ? { ...prev, chat_enter_mode: mode } : prev));
+  };
+
+  const handleSelectChatLayout = (mode: ChatLayoutMode) => {
+    setChatLayout(mode);
+    localStorage.setItem('battery_oracle_chat_layout', mode);
+  };
+
+  const showSidebar = workspaceView === 'single' || workspaceView === 'compare';
+
+  return (
+    <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
+      {/* Top Header */}
+      <Header
+        settings={settings}
+        onOpenUpload={() => setIsUploadOpen(true)}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        workspaceView={workspaceView}
+        onSelectWorkspaceView={setWorkspaceView}
+        selectedCount={selectedReportIds.length}
+        chatLayout={chatLayout}
+        onSelectChatLayout={handleSelectChatLayout}
+      />
+
+      {/* Main Container */}
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* Hover activation strip on left edge when collapsed */}
+        {showSidebar && sidebarCollapsed && (
+          <div
+            className="absolute left-0 top-0 bottom-0 w-3 z-30 group cursor-pointer flex items-center justify-center hover:bg-sky-500/10 transition-colors"
+            onMouseEnter={() => {
+              handleCancelPeekClose();
+              setIsPeeking(true);
+            }}
+            title="Hover to peek reports sidebar"
+          >
+            <div className="w-1 h-8 rounded-full bg-slate-700 group-hover:bg-sky-400 group-hover:h-16 transition-all" />
+          </div>
+        )}
+
+        {/* Sidebar (shown in Single Report and Merged & Compare views) */}
+        {showSidebar && !sidebarCollapsed && (
+          <Sidebar
+            reports={reports}
+            selectedReportId={selectedReportId}
+            onSelectReport={(id) => {
+              setSelectedReportId(id);
+              if (workspaceView !== 'single' && workspaceView !== 'compare') {
+                setWorkspaceView('single');
+              }
+            }}
+            onDeleteReport={handleDeleteReport}
+            isComparativeMode={workspaceView === 'compare'}
+            selectedReportIds={selectedReportIds}
+            onToggleReportSelection={handleToggleReportSelection}
+            width={sidebarWidth}
+            onResize={handleSidebarResize}
+            onToggleCollapse={handleToggleSidebarCollapse}
+          />
+        )}
+
+        {/* Slide-out peek drawer when collapsed and hovered */}
+        {showSidebar && sidebarCollapsed && isPeeking && (
+          <div
+            className="absolute left-0 top-0 bottom-0 z-40 shadow-2xl flex"
+            onMouseEnter={handleCancelPeekClose}
+            onMouseLeave={handleSchedulePeekClose}
+          >
+            <Sidebar
+              reports={reports}
+              selectedReportId={selectedReportId}
+              onSelectReport={(id) => {
+                setSelectedReportId(id);
+                if (workspaceView !== 'single' && workspaceView !== 'compare') {
+                  setWorkspaceView('single');
+                }
+              }}
+              onDeleteReport={handleDeleteReport}
+              isComparativeMode={workspaceView === 'compare'}
+              selectedReportIds={selectedReportIds}
+              onToggleReportSelection={handleToggleReportSelection}
+              width={sidebarWidth}
+              onResize={handleSidebarResize}
+              isPeeking={true}
+              onPin={handleToggleSidebarCollapse}
+            />
+          </div>
+        )}
+
+        {/* Workspace Area */}
+        <main className="flex-1 flex flex-col overflow-hidden bg-slate-950">
+          {loading ? (
+            <div className="flex-1 flex items-center justify-center text-slate-500 gap-2">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="text-sm">Loading Battery Oracle Workspace...</span>
+            </div>
+          ) : workspaceView === 'profile' ? (
+            <div className="flex-1 overflow-y-auto p-6">
+              <DeviceProfileView />
+            </div>
+          ) : workspaceView === 'master' ? (
+            <div className="flex-1 overflow-y-auto p-6">
+              <MasterSynthesisView />
+            </div>
+          ) : workspaceView === 'accounting' ? (
+            <div className="flex-1 overflow-y-auto p-6">
+              <AccountingView />
+            </div>
+          ) : workspaceView === 'compare' ? (
+            <div className="flex-1 overflow-y-auto p-6">
+              <ComparativeView
+                selectedReportIds={selectedReportIds}
+                reports={reports}
+              />
+            </div>
+          ) : loadingReport ? (
+            <div className="flex-1 flex items-center justify-center text-slate-500 gap-2">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="text-sm">Loading report telemetry...</span>
+            </div>
+          ) : currentReport ? (
+            chatLayout === 'split' ? (
+              // Side-by-side Resizable Panels (inner wrapper scrolls independently inside Panel)
+              <PanelGroup
+                autoSaveId="battery_oracle_chat_split"
+                direction="horizontal"
+                className="flex-1 w-full h-full"
+              >
+                <Panel id="workspace" defaultSize={55} minSize={30}>
+                  <div className="h-full w-full overflow-y-auto p-6">
+                    <ReportWorkspace
+                      report={currentReport}
+                      nightStartHour={settings?.night_start_hour}
+                      nightEndHour={settings?.night_end_hour}
+                      activeScope={reportScope}
+                      onScopeChange={setReportScope}
+                      onRefreshReport={() => {
+                        if (selectedReportId) loadReportDetail(selectedReportId, true);
+                        loadData();
+                      }}
+                    />
+                  </div>
+                </Panel>
+                <PanelResizeHandle className="w-1.5 bg-slate-800 hover:bg-indigo-500 transition-colors cursor-col-resize" />
+                <Panel id="chat" defaultSize={45} minSize={25}>
+                  <div className="p-4 flex flex-col h-full w-full overflow-hidden bg-slate-900/30">
+                    <ChatWorkspace
+                      reportId={currentReport.id}
+                      enterMode={settings?.chat_enter_mode || 'newline'}
+                      onChangeEnterMode={handleChangeEnterMode}
+                      activeScope={reportScope}
+                    />
+                  </div>
+                </Panel>
+              </PanelGroup>
+            ) : chatLayout === 'stacked' ? (
+              // Stacked Top / Bottom Resizable Panels
+              <PanelGroup
+                autoSaveId="battery_oracle_chat_stacked"
+                direction="vertical"
+                className="flex-1 w-full h-full"
+              >
+                <Panel id="workspace" defaultSize={60} minSize={30}>
+                  <div className="h-full w-full overflow-y-auto p-6">
+                    <ReportWorkspace
+                      report={currentReport}
+                      nightStartHour={settings?.night_start_hour}
+                      nightEndHour={settings?.night_end_hour}
+                      activeScope={reportScope}
+                      onScopeChange={setReportScope}
+                      onRefreshReport={() => {
+                        if (selectedReportId) loadReportDetail(selectedReportId, true);
+                        loadData();
+                      }}
+                    />
+                  </div>
+                </Panel>
+                <PanelResizeHandle className="h-1.5 bg-slate-800 hover:bg-indigo-500 transition-colors cursor-row-resize" />
+                <Panel id="chat" defaultSize={40} minSize={20}>
+                  <div className="p-4 flex flex-col h-full w-full overflow-hidden bg-slate-900/30">
+                    <ChatWorkspace
+                      reportId={currentReport.id}
+                      enterMode={settings?.chat_enter_mode || 'newline'}
+                      onChangeEnterMode={handleChangeEnterMode}
+                      activeScope={reportScope}
+                    />
+                  </div>
+                </Panel>
+              </PanelGroup>
+            ) : (
+              // Floating / Full View
+              <div className="flex-1 overflow-y-auto p-6">
+                <ReportWorkspace
+                  report={currentReport}
+                  nightStartHour={settings?.night_start_hour}
+                  nightEndHour={settings?.night_end_hour}
+                  activeScope={reportScope}
+                  onScopeChange={setReportScope}
+                  onRefreshReport={() => {
+                    if (selectedReportId) loadReportDetail(selectedReportId, true);
+                    loadData();
+                  }}
+                />
+                <FloatingWindow
+                  isOpen={chatLayout === 'floating'}
+                  onClose={() => handleSelectChatLayout('hidden')}
+                  onDock={() => handleSelectChatLayout('split')}
+                  title={`AI Investigation - ${currentReport.custom_name || currentReport.filename}`}
+                >
+                  <ChatWorkspace
+                    reportId={currentReport.id}
+                    enterMode={settings?.chat_enter_mode || 'newline'}
+                    onChangeEnterMode={handleChangeEnterMode}
+                    activeScope={reportScope}
+                  />
+                </FloatingWindow>
+              </div>
+            )
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+              <div className="w-12 h-12 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400 mb-3">
+                <Zap className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-semibold text-slate-200">No Report Selected</h3>
+              <p className="text-xs text-slate-400 max-w-sm mt-1">
+                Select an Android bugreport from the sidebar or click "Upload Bugreport" above to begin.
+              </p>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* Upload Modal */}
+      <UploadModal
+        isOpen={isUploadOpen}
+        onClose={() => setIsUploadOpen(false)}
+        onUploadSuccess={handleUploadSuccess}
+        defaultTimezone={settings?.device_timezone || 'Europe/Warsaw'}
+        autoDiagnoseDefault={Boolean(settings?.auto_diagnose_on_import)}
+        onAutoDiagnoseChange={async (enabled) => {
+          setSettings((prev) => (prev ? { ...prev, auto_diagnose_on_import: enabled } : prev));
+          try {
+            await api.updateSettings({ auto_diagnose_on_import: enabled });
+          } catch (e) {
+            console.error('Failed to persist auto_diagnose_on_import:', e);
+          }
+        }}
+      />
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        currentSettings={settings}
+        onSettingsUpdated={(newSettings) => setSettings(newSettings)}
+      />
+    </div>
+  );
+}
+
+export default function App() {
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  return (
+    <DialogProvider onOpenSettings={() => setIsSettingsOpen(true)}>
+      <AppContent isSettingsOpen={isSettingsOpen} setIsSettingsOpen={setIsSettingsOpen} />
+    </DialogProvider>
+  );
+}
