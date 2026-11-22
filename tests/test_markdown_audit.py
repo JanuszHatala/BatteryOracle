@@ -1,6 +1,13 @@
 import pytest
+import db
 import llm_manager
 import parser
+
+
+@pytest.fixture(autouse=True)
+def setup_test_db(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "test_markdown_audit.db"))
+    db.init_db()
 
 def test_profile_audit_prompt_enforces_markdown_standards():
     prompt = llm_manager.get_prompt_template("profile_audit")
