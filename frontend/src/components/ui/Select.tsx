@@ -41,10 +41,12 @@ export const Select: React.FC<SelectProps> = ({
   const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
   const [coords, setCoords] = useState<{
     top: number;
-    left: number;
-    width: number;
+    left?: number;
+    right?: number;
+    minWidth: number;
+    maxWidth: number;
     openUpward: boolean;
-  }>({ top: 0, left: 0, width: 0, openUpward: false });
+  }>({ top: 0, left: 0, minWidth: 200, maxWidth: 680, openUpward: false });
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -75,11 +77,17 @@ export const Select: React.FC<SelectProps> = ({
     const spaceBelow = window.innerHeight - rect.bottom;
     const spaceAbove = rect.top;
     const openUpward = spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow;
+    const alignRight = rect.left + rect.width / 2 > window.innerWidth / 2;
 
     setCoords({
       top: openUpward ? rect.top - 6 : rect.bottom + 6,
-      left: rect.left,
-      width: Math.max(rect.width, 200),
+      ...(alignRight
+        ? { right: Math.max(12, window.innerWidth - rect.right) }
+        : { left: Math.max(12, rect.left) }),
+      minWidth: rect.width,
+      maxWidth: alignRight
+        ? Math.max(rect.width, rect.right - 12)
+        : Math.max(rect.width, window.innerWidth - rect.left - 12),
       openUpward,
     });
   };
@@ -211,8 +219,11 @@ export const Select: React.FC<SelectProps> = ({
             onKeyDown={handleKeyDown}
             style={{
               position: 'fixed',
-              left: coords.left,
-              width: coords.width,
+              ...(coords.left !== undefined ? { left: coords.left } : {}),
+              ...(coords.right !== undefined ? { right: coords.right } : {}),
+              minWidth: coords.minWidth,
+              maxWidth: coords.maxWidth,
+              width: 'max-content',
               ...(coords.openUpward
                 ? { bottom: window.innerHeight - coords.top }
                 : { top: coords.top }),
@@ -269,7 +280,7 @@ export const Select: React.FC<SelectProps> = ({
                         opt.disabled && 'opacity-40 cursor-not-allowed'
                       )}
                     >
-                      <span className="truncate flex-1 min-w-0">{opt.label}</span>
+                      <span className="whitespace-nowrap truncate flex-1 min-w-0">{opt.label}</span>
                       <span className="flex items-center gap-2 shrink-0">
                         {opt.badge && (
                           <span className="text-[11px] font-mono text-slate-400">
