@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { Select } from '../ui/Select';
 import { Badge } from '../ui/Badge';
 import { useDialog } from '../ui/DialogContext';
 import { api } from '../../api/client';
@@ -16,6 +17,7 @@ import {
   Sliders,
   Key,
   Check,
+  CheckCircle2,
   AlertCircle,
   Loader2,
   RefreshCw,
@@ -94,6 +96,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   // Live models & custom model registration state
   const [fetchingLive, setFetchingLive] = useState(false);
+  const [verifyingAccess, setVerifyingAccess] = useState(false);
+  const [hideUnavailable, setHideUnavailable] = useState(false);
   const [liveFetchMsg, setLiveFetchMsg] = useState<string | null>(null);
   const [showCustomManager, setShowCustomManager] = useState(false);
   const [newCustomModelId, setNewCustomModelId] = useState('');
@@ -207,28 +211,57 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const formatModelLabel = (m: ModelItemDetail): string => {
-    return `${m.id}  [${m.pricing || 'Pricing N/A'}]${m.is_custom ? ' ★' : ''}`;
+    const statusPrefix =
+      m.status === 'available'
+        ? '✅ '
+        : m.status === 'rate_limited'
+        ? '⚠️ '
+        : m.status === 'no_quota'
+        ? '🔒 '
+        : m.status === 'unavailable'
+        ? '❌ '
+        : '';
+    return `${statusPrefix}${m.id}  [${m.pricing || 'Pricing N/A'}]${m.is_custom ? ' ★' : ''}`;
   };
 
-  const handleFetchLiveModels = async () => {
-    setFetchingLive(true);
+  const handleFetchLiveModels = async (verifyAccess = false) => {
+    if (verifyAccess) {
+      setVerifyingAccess(true);
+    } else {
+      setFetchingLive(true);
+    }
     setLiveFetchMsg(null);
     try {
       const res = await api.fetchLiveModels(
         provider,
         apiKey.trim() || undefined,
-        apiBase.trim() || undefined
+        apiBase.trim() || undefined,
+        verifyAccess,
+        verifyAccess
       );
       if (res.model_details && res.model_details.length > 0) {
         setModelDetails(res.model_details);
+        if (verifyAccess) {
+          setHideUnavailable(true);
+        }
       }
       setLiveFetchMsg(res.message || `Fetched ${res.models.length} models.`);
     } catch (err: any) {
       setLiveFetchMsg(`Error: ${err.message || 'Failed to fetch live models'}`);
     } finally {
       setFetchingLive(false);
+      setVerifyingAccess(false);
     }
   };
+
+  const hasProbedStatuses = modelDetails.some((m) => Boolean(m.status));
+  const visibleModelDetails = hideUnavailable
+    ? modelDetails.filter(
+        (m) =>
+          m.id === selectedModelOption ||
+          (m.status !== 'no_quota' && m.status !== 'unavailable')
+      )
+    : modelDetails;
 
   const handleAddCustomModel = async () => {
     if (!newCustomModelId.trim()) return;
@@ -429,54 +462,92 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* TAB 1: LLM Provider & Credentials */}
         {activeTab === 'llm' && (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
               <div>
-                <label className="text-xs font-medium text-slate-300 block mb-1">
-                  LLM Provider
-                </label>
-                <select
+                <div className="h-6 flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-medium text-slate-300 whitespace-nowrap">
+                    LLM Provider
+                  </label>
+                </div>
+                <Select
                   value={provider}
-                  onChange={(e) => handleProviderChange(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                >
-                  {providersList.map((p) => (
-                    <option key={p.name} value={p.name}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={handleProviderChange}
+                  searchable={false}
+                  options={providersList.map((p) => ({
+                    value: p.name,
+                    label: p.name,
+                  }))}
+                />
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium text-slate-300">
-                    Model Selection & Pricing
+                <div className="h-6 flex items-center justify-between gap-2 mb-1.5">
+                  <label className="text-xs font-medium text-slate-300 whitespace-nowrap">
+                    Model Selection
                   </label>
-                  <button
-                    type="button"
-                    onClick={handleFetchLiveModels}
-                    disabled={fetchingLive}
-                    className="flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
-                    title="Query provider API for live available models"
-                  >
-                    <RefreshCw className={`w-3 h-3 ${fetchingLive ? 'animate-spin' : ''}`} />
-                    <span>Fetch Live Models</span>
-                  </button>
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleFetchLiveModels(false)}
+                      disabled={fetchingLive || verifyingAccess}
+                      className="flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 disabled:opacity-50 whitespace-nowrap"
+                      title="Query provider API for live available models"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${fetchingLive ? 'animate-spin' : ''}`} />
+                      <span>Fetch Live</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleFetchLiveModels(true)}
+                      disabled={fetchingLive || verifyingAccess}
+                      className="flex items-center gap-1 text-[11px] text-emerald-400 hover:text-emerald-300 disabled:opacity-50 whitespace-nowrap"
+                      title="Concurrently probe models with a 1-token ping to detect usable vs locked/quota-0 models"
+                    >
+                      <CheckCircle2 className={`w-3 h-3 ${verifyingAccess ? 'animate-pulse' : ''}`} />
+                      <span>{verifyingAccess ? 'Probing...' : 'Verify Access'}</span>
+                    </button>
+                  </div>
                 </div>
-                <select
+                <Select
                   value={selectedModelOption}
-                  onChange={(e) => setSelectedModelOption(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
-                >
-                  {modelDetails.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {formatModelLabel(m)}
-                    </option>
-                  ))}
-                  <option value={CUSTOM_MODEL_SENTINEL}>
-                    ➕ Type Custom Model ID...
-                  </option>
-                </select>
+                  onChange={setSelectedModelOption}
+                  className="font-mono"
+                  searchable
+                  options={[
+                    ...visibleModelDetails.map((m) => {
+                      const statusPrefix =
+                        m.status === 'available'
+                          ? '✅ '
+                          : m.status === 'rate_limited'
+                          ? '⚠️ '
+                          : m.status === 'no_quota'
+                          ? '🔒 '
+                          : m.status === 'unavailable'
+                          ? '❌ '
+                          : '';
+                      return {
+                        value: m.id,
+                        label: `${statusPrefix}${m.id}${m.is_custom ? ' ★' : ''}`,
+                        badge: m.pricing || 'Pricing N/A',
+                      };
+                    }),
+                    {
+                      value: CUSTOM_MODEL_SENTINEL,
+                      label: '➕ Type Custom Model ID...',
+                    },
+                  ]}
+                />
+                {hasProbedStatuses && (
+                  <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={hideUnavailable}
+                      onChange={(e) => setHideUnavailable(e.target.checked)}
+                      className="rounded border-slate-700 bg-slate-950 text-indigo-500 focus:ring-0"
+                    />
+                    <span>Hide locked / unavailable models ({modelDetails.filter((m) => m.status === 'no_quota' || m.status === 'unavailable').length} hidden)</span>
+                  </label>
+                )}
               </div>
             </div>
 
@@ -519,8 +590,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* API Key & API Base URL */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium text-slate-300">
+                <div className="h-6 flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-medium text-slate-300 whitespace-nowrap">
                     API Key ({provider})
                   </label>
                   {hasStoredKey && (
@@ -543,9 +614,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
 
               <div>
-                <label className="text-xs font-medium text-slate-300 block mb-1">
-                  API Base URL (Optional / Local / Proxy)
-                </label>
+                <div className="h-6 flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-medium text-slate-300 whitespace-nowrap">
+                    API Base URL (Optional / Local / Proxy)
+                  </label>
+                </div>
                 <Input
                   value={apiBase}
                   onChange={(e) => setApiBase(e.target.value)}
@@ -775,23 +848,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <label className="text-xs font-medium text-slate-300 block mb-1">
                 Preferred Device Timezone
               </label>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <select
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-center">
+                <Select
                   value={COMMON_TIMEZONES.includes(timezone) ? timezone : '__custom__'}
-                  onChange={(e) => {
-                    if (e.target.value !== '__custom__') {
-                      setTimezone(e.target.value);
+                  onChange={(val) => {
+                    if (val !== '__custom__') {
+                      setTimezone(val);
                     }
                   }}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                >
-                  {COMMON_TIMEZONES.map((tz) => (
-                    <option key={tz} value={tz}>
-                      {tz}
-                    </option>
-                  ))}
-                  <option value="__custom__">Custom IANA Timezone...</option>
-                </select>
+                  searchable
+                  options={[
+                    ...COMMON_TIMEZONES.map((tz) => ({ value: tz, label: tz })),
+                    { value: '__custom__', label: 'Custom IANA Timezone...' },
+                  ]}
+                />
                 <Input
                   value={timezone}
                   onChange={(e) => setTimezone(e.target.value)}

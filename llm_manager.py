@@ -1,7 +1,10 @@
 import os
 import re
 import json
+import time
+import hashlib
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import litellm
 from litellm import completion
 from tenacity import retry, wait_exponential, stop_after_attempt
@@ -571,6 +574,113 @@ def test_connection(model, api_key=None, api_base=None, provider=None):
     except Exception as e:
         return False, f"❌ Connection failed: {str(e)}"
 
+NON_CHAT_MODEL_MARKERS = (
+    "-tts",
+    "-image",
+    "-transcribe",
+    "imagen",
+    "veo-",
+    "embedding",
+    "aqa",
+    "lyria",
+)
+
+PROBE_CACHE_TTL_SECONDS = 1800
+MAX_PROBE_MODELS = 35
+
+
+def _is_text_chat_model(model_id: str) -> bool:
+    """Return True if the model ID represents a text/multimodal chat model rather than TTS/image/embedding."""
+    lower = model_id.lower()
+    return not any(marker in lower for marker in NON_CHAT_MODEL_MARKERS)
+
+
+def classify_probe_error(err_str: str) -> tuple[str, str]:
+    """Classify an LLM completion error into a generic availability status and short detail."""
+    low = (err_str or "").lower()
+    if any(tok in low for tok in ("limit: 0", "freetier", "free_tier", "insufficient_quota", "billing", "payment required", "402")):
+        return "no_quota", "No quota / Billing required"
+    if any(tok in low for tok in ("429", "rate_limit", "ratelimit", "503", "serviceunavailable", "overloaded", "high demand")):
+        return "rate_limited", "Accessible (busy / rate-limited)"
+    if any(tok in low for tok in ("401", "403", "authentication", "permission", "unauthorized", "invalid api key")):
+        return "unavailable", "No access / Auth error"
+    if any(tok in low for tok in ("404", "not found", "notfound", "deprecated", "does not exist")):
+        return "unavailable", "Not found / Unsupported"
+    return "unavailable", "Unavailable"
+
+
+def _probe_cache_setting_key(provider: str, api_key: str | None, api_base: str | None) -> str:
+    digest = hashlib.sha256(f"{provider}|{api_key or ''}|{api_base or ''}".encode("utf-8")).hexdigest()[:16]
+    return f"model_probe_cache_{digest}"
+
+
+def probe_models_availability(
+    provider: str,
+    models: list[str],
+    api_key: str | None = None,
+    api_base: str | None = None,
+    max_workers: int = 8,
+    force_refresh: bool = False,
+    cache_only: bool = False,
+) -> dict[str, dict[str, str]]:
+    """Concurrently probe candidate models with a 1-token request and cache results by provider/credentials."""
+    resolved_key = resolve_api_key(provider, api_key)
+    resolved_base = resolve_api_base(provider, api_base)
+    cache_setting_key = _probe_cache_setting_key(provider, resolved_key, resolved_base)
+
+    cached_results: dict[str, dict[str, str]] = {}
+    now = time.time()
+    if not force_refresh:
+        raw_cache = db.get_setting(cache_setting_key)
+        if raw_cache:
+            try:
+                parsed = json.loads(raw_cache)
+                if now - parsed.get("ts", 0) < PROBE_CACHE_TTL_SECONDS:
+                    cached_results = parsed.get("results", {})
+            except Exception:
+                cached_results = {}
+
+    if cache_only:
+        return {m: cached_results[m] for m in models if m in cached_results}
+
+    targets = [m for m in models[:MAX_PROBE_MODELS] if force_refresh or m not in cached_results]
+    if not targets:
+        return {m: cached_results[m] for m in models if m in cached_results}
+
+    def _probe_one(model_id: str) -> tuple[str, dict[str, str]]:
+        try:
+            norm_model = normalize_model_name(provider, model_id) if provider else model_id
+            kwargs = {
+                "model": norm_model,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+                "timeout": 8,
+            }
+            if resolved_key:
+                kwargs["api_key"] = resolved_key
+            if resolved_base:
+                kwargs["api_base"] = resolved_base
+            completion(**kwargs)
+            return model_id, {"status": "available", "detail": "Available"}
+        except Exception as e:
+            status, detail = classify_probe_error(str(e))
+            return model_id, {"status": status, "detail": detail}
+
+    results = dict(cached_results)
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(targets))) as pool:
+        futures = [pool.submit(_probe_one, m) for m in targets]
+        for fut in as_completed(futures):
+            m_id, info = fut.result()
+            results[m_id] = info
+
+    try:
+        db.set_setting(cache_setting_key, json.dumps({"ts": now, "results": results}))
+    except Exception:
+        pass
+
+    return {m: results[m] for m in models if m in results}
+
+
 def fetch_available_models(provider, api_key=None, api_base=None):
     """Dynamically query the provider's API for available models, preserving custom models."""
     base_models = get_all_models_for_provider(provider)
@@ -592,6 +702,8 @@ def fetch_available_models(provider, api_key=None, api_base=None):
                     methods = m.get("supportedGenerationMethods", [])
                     if "generateContent" in methods:
                         m_name = m.get("name", "").replace("models/", "")
+                        if not _is_text_chat_model(m_name):
+                            continue
                         # Prefix with gemini/ for LiteLLM
                         litellm_id = f"gemini/{m_name}"
                         discovered.append(litellm_id)

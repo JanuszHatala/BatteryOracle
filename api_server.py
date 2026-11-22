@@ -913,11 +913,19 @@ def get_models(provider: str = "Google Gemini"):
         if short not in combined_list:
             combined_list.append(short)
 
+    probe_map = llm_manager.probe_models_availability(
+        provider="Ollama" if provider == "Ollama / Local" else provider,
+        models=models,
+        cache_only=True,
+    )
+
     details = [
         schemas.ModelItemDetail(
             id=m,
             pricing=llm_manager.get_model_pricing(m),
-            is_custom=(m in custom_models)
+            is_custom=(m in custom_models),
+            status=probe_map.get(m, {}).get("status"),
+            status_detail=probe_map.get(m, {}).get("detail"),
         )
         for m in models
     ]
@@ -939,12 +947,34 @@ def fetch_live_models_endpoint(req: schemas.FetchLiveModelsRequest):
         api_key=req.api_key,
         api_base=req.api_base
     )
+    probe_map = llm_manager.probe_models_availability(
+        provider=prov_arg,
+        models=discovered,
+        api_key=req.api_key,
+        api_base=req.api_base,
+        force_refresh=req.force_refresh,
+        cache_only=not req.verify_access,
+    )
+    if probe_map:
+        status_rank = {"available": 0, "rate_limited": 1, None: 2, "no_quota": 3, "unavailable": 4}
+        discovered = sorted(
+            discovered,
+            key=lambda m: status_rank.get(probe_map.get(m, {}).get("status"), 2),
+        )
+        if req.verify_access:
+            avail_cnt = sum(1 for v in probe_map.values() if v.get("status") == "available")
+            busy_cnt = sum(1 for v in probe_map.values() if v.get("status") == "rate_limited")
+            locked_cnt = sum(1 for v in probe_map.values() if v.get("status") in ("no_quota", "unavailable"))
+            msg = f"✅ Verified {len(probe_map)} models: {avail_cnt} available, {busy_cnt} busy, {locked_cnt} no quota/unavailable."
+
     custom_models = llm_manager.get_custom_models(req.provider)
     details = [
         schemas.ModelItemDetail(
             id=m,
             pricing=llm_manager.get_model_pricing(m),
-            is_custom=(m in custom_models)
+            is_custom=(m in custom_models),
+            status=probe_map.get(m, {}).get("status"),
+            status_detail=probe_map.get(m, {}).get("detail"),
         )
         for m in discovered
     ]

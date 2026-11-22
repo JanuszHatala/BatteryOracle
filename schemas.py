@@ -198,6 +198,8 @@ class ModelItemDetail(BaseModel):
     id: str
     pricing: str
     is_custom: bool = False
+    status: Optional[str] = None
+    status_detail: Optional[str] = None
 
 
 class ModelsResponse(BaseModel):
@@ -217,6 +219,8 @@ class FetchLiveModelsRequest(BaseModel):
     provider: str
     api_key: Optional[str] = None
     api_base: Optional[str] = None
+    verify_access: bool = False
+    force_refresh: bool = False
 
 
 class FetchLiveModelsResponse(BaseModel):

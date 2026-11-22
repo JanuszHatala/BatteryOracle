@@ -277,10 +277,16 @@ export const api = {
 
   getModels: (provider = 'Google Gemini') => request<ModelsResponse>(`/models?provider=${encodeURIComponent(provider)}`),
 
-  fetchLiveModels: (provider: string, api_key?: string, api_base?: string) =>
+  fetchLiveModels: (
+    provider: string,
+    api_key?: string,
+    api_base?: string,
+    verify_access = false,
+    force_refresh = false
+  ) =>
     request<FetchLiveModelsResponse>('/models/fetch-live', {
       method: 'POST',
-      body: JSON.stringify({ provider, api_key, api_base })
+      body: JSON.stringify({ provider, api_key, api_base, verify_access, force_refresh })
     }),
 
   addCustomModel: (provider: string, model_name: string) =>

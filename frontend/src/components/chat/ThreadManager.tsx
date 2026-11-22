@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Thread } from '../../types/api';
 import { Button } from '../ui/Button';
+import { Select } from '../ui/Select';
 import { Plus, Edit2, Check, X, Trash2, Download, MessageSquare } from 'lucide-react';
 
 interface ThreadManagerProps {
@@ -79,17 +80,17 @@ export const ThreadManager: React.FC<ThreadManagerProps> = ({
             </div>
           ) : (
             <div className="flex items-center gap-1 min-w-0 flex-1">
-              <select
-                value={activeThreadId || ''}
-                onChange={(e) => onSelectThread(Number(e.target.value))}
-                className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 w-full min-w-0 truncate"
-              >
-                {threads.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.title} ({t.message_count} msgs)
-                  </option>
-                ))}
-              </select>
+              <Select
+                size="sm"
+                value={activeThreadId ? String(activeThreadId) : ''}
+                onChange={(val) => onSelectThread(Number(val))}
+                searchable={false}
+                className="flex-1 min-w-0"
+                options={threads.map((t) => ({
+                  value: String(t.id),
+                  label: `${t.title} (${t.message_count} msgs)`,
+                }))}
+              />
               {activeThread && (
                 <button
                   onClick={startRename}

@@ -9,6 +9,7 @@ import {
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { Select } from '../ui/Select';
 import { Badge } from '../ui/Badge';
 import { useDialog } from '../ui/DialogContext';
 import { ChatWorkspace } from '../chat/ChatWorkspace';
@@ -696,33 +697,27 @@ export const DeviceProfileView: React.FC = () => {
                 <label className="text-xs font-medium text-slate-400 block mb-1">
                   Baseline Profile (Before)
                 </label>
-                <select
-                  value={compareBaselineId || ''}
-                  onChange={(e) => setCompareBaselineId(Number(e.target.value))}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200"
-                >
-                  {profiles.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      #{p.id} - {p.profile_name || p.device_model} ({p.created_at})
-                    </option>
-                  ))}
-                </select>
+                <Select
+                  value={compareBaselineId ? String(compareBaselineId) : ''}
+                  onChange={(val) => setCompareBaselineId(Number(val))}
+                  options={profiles.map((p) => ({
+                    value: String(p.id),
+                    label: `#${p.id} - ${p.profile_name || p.device_model} (${p.created_at})`,
+                  }))}
+                />
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-400 block mb-1">
                   Target Profile (After)
                 </label>
-                <select
-                  value={compareTargetId || ''}
-                  onChange={(e) => setCompareTargetId(Number(e.target.value))}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200"
-                >
-                  {profiles.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      #{p.id} - {p.profile_name || p.device_model} ({p.created_at})
-                    </option>
-                  ))}
-                </select>
+                <Select
+                  value={compareTargetId ? String(compareTargetId) : ''}
+                  onChange={(val) => setCompareTargetId(Number(val))}
+                  options={profiles.map((p) => ({
+                    value: String(p.id),
+                    label: `#${p.id} - ${p.profile_name || p.device_model} (${p.created_at})`,
+                  }))}
+                />
               </div>
             </div>
           </Card>
@@ -872,17 +867,15 @@ export const DeviceProfileView: React.FC = () => {
               {/* Profile Selector & Context Indicator Bar */}
               <Card className="p-4 flex flex-wrap items-center justify-between gap-4">
                 <div className="flex flex-wrap items-center gap-3 flex-1">
-                  <select
-                    value={selectedProfileId || ''}
-                    onChange={(e) => setSelectedProfileId(Number(e.target.value))}
-                    className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-semibold text-slate-200 min-w-[280px]"
-                  >
-                    {profiles.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.is_active_context ? '⭐ ' : ''}#{p.id} • {p.profile_name} ({p.device_model} / {p.os_build}) {p.is_active_context ? '[Default Context]' : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <Select
+                    value={selectedProfileId ? String(selectedProfileId) : ''}
+                    onChange={(val) => setSelectedProfileId(Number(val))}
+                    className="w-auto min-w-[280px] max-w-full font-semibold"
+                    options={profiles.map((p) => ({
+                      value: String(p.id),
+                      label: `${p.is_active_context ? '⭐ ' : ''}#${p.id} • ${p.profile_name} (${p.device_model} / ${p.os_build})${p.is_active_context ? ' [Default Context]' : ''}`,
+                    }))}
+                  />
 
                   {/* Active Context Profile Badge & Switcher */}
                   {activeProfile?.is_active_context ? (
@@ -1228,16 +1221,19 @@ export const DeviceProfileView: React.FC = () => {
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
-                        <select
+                        <Select
+                          size="sm"
                           value={settingsNamespace}
-                          onChange={(e) => setSettingsNamespace(e.target.value as any)}
-                          className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200"
-                        >
-                          <option value="all">All Namespaces</option>
-                          <option value="global">global</option>
-                          <option value="secure">secure</option>
-                          <option value="system">system</option>
-                        </select>
+                          onChange={(val) => setSettingsNamespace(val as any)}
+                          searchable={false}
+                          className="w-36"
+                          options={[
+                            { value: 'all', label: 'All Namespaces' },
+                            { value: 'global', label: 'global' },
+                            { value: 'secure', label: 'secure' },
+                            { value: 'system', label: 'system' },
+                          ]}
+                        />
                         <div className="relative">
                           <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
                           <input
@@ -1336,23 +1332,21 @@ export const DeviceProfileView: React.FC = () => {
                     <Card className="p-5 space-y-4">
                       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
                         <div className="flex items-center gap-3">
-                          <select
-                            value={selectedRouterId || ''}
-                            onChange={(e) => {
-                              const id = Number(e.target.value);
+                          <Select
+                            value={selectedRouterId ? String(selectedRouterId) : ''}
+                            onChange={(val) => {
+                              const id = Number(val);
                               setSelectedRouterId(id);
                               const found = routers.find((r) => r.id === id);
                               if (found) setEditingRouter(found);
                             }}
-                            className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-semibold text-slate-200"
-                          >
-                            {routers.map((r) => (
-                              <option key={r.id} value={r.id}>
-                                {r.is_active ? '🟢 ' : '⚪ '}
-                                {r.router_name} ({r.brand} {r.model})
-                              </option>
-                            ))}
-                          </select>
+                            searchable={false}
+                            className="w-auto min-w-[240px] font-semibold"
+                            options={routers.map((r) => ({
+                              value: String(r.id),
+                              label: `${r.is_active ? '🟢 ' : '⚪ '}${r.router_name} (${r.brand} ${r.model})`,
+                            }))}
+                          />
 
                           <label className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer">
                             <input
@@ -1467,7 +1461,7 @@ export const DeviceProfileView: React.FC = () => {
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           <div>
-                            <div className="flex items-center justify-between mb-1">
+                            <div className="h-5 flex items-center justify-between mb-1">
                               <label className="text-[11px] text-slate-300">Fast Roaming (802.11r/k/v)</label>
                               {editingSpecs.fast_roaming === 'disabled' && (
                                 <Badge variant="optimal" className="text-[9px] py-0 px-1">Off (Optimized)</Badge>
@@ -1476,68 +1470,80 @@ export const DeviceProfileView: React.FC = () => {
                                 <Badge variant="elevated" className="text-[9px] py-0 px-1">On (May Drain)</Badge>
                               )}
                             </div>
-                            <select
+                            <Select
                               value={editingSpecs.fast_roaming || ''}
-                              onChange={(e) => updateSpecField('fast_roaming', e.target.value)}
-                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                            >
-                              <option value="">-- Not Specified --</option>
-                              <option value="disabled">Disabled / Off (Recommended for battery)</option>
-                              <option value="enabled">Enabled / On</option>
-                              <option value="unsupported">Unsupported by Router</option>
-                            </select>
+                              onChange={(val) => updateSpecField('fast_roaming', val)}
+                              searchable={false}
+                              options={[
+                                { value: '', label: '-- Not Specified --' },
+                                { value: 'disabled', label: 'Disabled / Off (Recommended for battery)' },
+                                { value: 'enabled', label: 'Enabled / On' },
+                                { value: 'unsupported', label: 'Unsupported by Router' },
+                              ]}
+                            />
                           </div>
 
                           <div>
-                            <label className="text-[11px] text-slate-300 block mb-1">Band Steering / Smart Connect</label>
-                            <select
+                            <div className="h-5 flex items-center mb-1">
+                              <label className="text-[11px] text-slate-300">Band Steering / Smart Connect</label>
+                            </div>
+                            <Select
                               value={editingSpecs.band_steering || ''}
-                              onChange={(e) => updateSpecField('band_steering', e.target.value)}
-                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                            >
-                              <option value="">-- Not Specified --</option>
-                              <option value="split_ssids">Split SSIDs (Separate 2.4/5 GHz)</option>
-                              <option value="combined_ssid">Combined SSID (Single unified network)</option>
-                              <option value="unsupported">Unsupported</option>
-                            </select>
+                              onChange={(val) => updateSpecField('band_steering', val)}
+                              searchable={false}
+                              options={[
+                                { value: '', label: '-- Not Specified --' },
+                                { value: 'split_ssids', label: 'Split SSIDs (Separate 2.4/5 GHz)' },
+                                { value: 'combined_ssid', label: 'Combined SSID (Single unified network)' },
+                                { value: 'unsupported', label: 'Unsupported' },
+                              ]}
+                            />
                           </div>
 
                           <div>
-                            <label className="text-[11px] text-slate-300 block mb-1">DTIM Period (e.g. 1 vs 3)</label>
+                            <div className="h-5 flex items-center mb-1">
+                              <label className="text-[11px] text-slate-300">DTIM Period (e.g. 1 vs 3)</label>
+                            </div>
                             <Input
                               value={editingSpecs.dtim_period || editingSpecs.dtim_default || ''}
                               onChange={(e) => updateSpecField('dtim_period', e.target.value)}
-                              className="text-xs"
+                              className="text-xs px-3 py-2"
                               placeholder="e.g. 3 (recommended: 3)"
                             />
                           </div>
 
                           <div>
-                            <label className="text-[11px] text-slate-300 block mb-1">U-APSD / WMM Power Save</label>
-                            <select
+                            <div className="h-5 flex items-center mb-1">
+                              <label className="text-[11px] text-slate-300">U-APSD / WMM Power Save</label>
+                            </div>
+                            <Select
                               value={editingSpecs.uapsd_support || ''}
-                              onChange={(e) => updateSpecField('uapsd_support', e.target.value)}
-                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                            >
-                              <option value="">-- Not Specified --</option>
-                              <option value="enabled">Enabled</option>
-                              <option value="disabled">Disabled</option>
-                              <option value="unsupported">Unsupported</option>
-                            </select>
+                              onChange={(val) => updateSpecField('uapsd_support', val)}
+                              searchable={false}
+                              options={[
+                                { value: '', label: '-- Not Specified --' },
+                                { value: 'enabled', label: 'Enabled' },
+                                { value: 'disabled', label: 'Disabled' },
+                                { value: 'unsupported', label: 'Unsupported' },
+                              ]}
+                            />
                           </div>
 
                           <div>
-                            <label className="text-[11px] text-slate-300 block mb-1">Target Wake Time (802.11ax/be TWT)</label>
-                            <select
+                            <div className="h-5 flex items-center mb-1">
+                              <label className="text-[11px] text-slate-300">Target Wake Time (802.11ax/be TWT)</label>
+                            </div>
+                            <Select
                               value={editingSpecs.twt_support || ''}
-                              onChange={(e) => updateSpecField('twt_support', e.target.value)}
-                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                            >
-                              <option value="">-- Not Specified --</option>
-                              <option value="enabled">Enabled</option>
-                              <option value="disabled">Disabled</option>
-                              <option value="unsupported">Unsupported</option>
-                            </select>
+                              onChange={(val) => updateSpecField('twt_support', val)}
+                              searchable={false}
+                              options={[
+                                { value: '', label: '-- Not Specified --' },
+                                { value: 'enabled', label: 'Enabled' },
+                                { value: 'disabled', label: 'Disabled' },
+                                { value: 'unsupported', label: 'Unsupported' },
+                              ]}
+                            />
                           </div>
                         </div>
                       </div>

@@ -156,6 +156,8 @@ export interface ModelItemDetail {
   id: string;
   pricing: string;
   is_custom: boolean;
+  status?: 'available' | 'no_quota' | 'rate_limited' | 'unavailable' | null;
+  status_detail?: string | null;
 }
 
 export interface ModelsResponse {
