@@ -649,7 +649,7 @@ def get_token_summary_by_report():
         FROM token_ledger tl
         LEFT JOIN reports r ON tl.report_id = r.id
         GROUP BY tl.report_id, r.custom_name
-        ORDER BY total_tokens DESC
+        ORDER BY COALESCE(NULLIF(r.timestamp_str, ''), r.created_at, MAX(tl.created_at)) DESC, MAX(tl.created_at) DESC
     """)
     rows = cursor.fetchall()
     conn.close()
@@ -670,7 +670,7 @@ def get_token_summary_by_thread():
         LEFT JOIN chat_threads ct ON tl.thread_id = ct.id
         LEFT JOIN reports r ON tl.report_id = r.id
         GROUP BY tl.thread_id, ct.title, r.custom_name
-        ORDER BY total_tokens DESC
+        ORDER BY COALESCE(NULLIF(r.timestamp_str, ''), r.created_at, MAX(tl.created_at)) DESC, MAX(tl.created_at) DESC
     """)
     rows = cursor.fetchall()
     conn.close()
@@ -691,7 +691,7 @@ def get_token_summary_over_time():
             SUM(cost_usd) as total_cost
         FROM token_ledger
         GROUP BY DATE(created_at), model
-        ORDER BY date ASC
+        ORDER BY date DESC, MAX(created_at) DESC
     """)
     rows = cursor.fetchall()
     conn.close()
